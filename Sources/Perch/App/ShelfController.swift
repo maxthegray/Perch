@@ -1,5 +1,4 @@
 import AppKit
-import SwiftUI
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
 @MainActor
@@ -9,7 +8,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let store: ItemStore
     private let snapshotter: PasteboardSnapshotter
     private let dropView: ShelfDropView
-    private let hostingView: NSHostingView<ShelfContentView>
+    private let hostView: ShelfHostView
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -17,12 +16,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         snapshotter = PasteboardSnapshotter(holding: holding)
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostingView = PassthroughHostingView(rootView: ShelfContentView(store: store))
+        hostView = ShelfHostView(store: store)
         dropView.autoresizingMask = [.width, .height]
         dropView.dropHandler = self
-        hostingView.frame = dropView.bounds
-        hostingView.autoresizingMask = [.width, .height]
-        dropView.addSubview(hostingView)
+        hostView.frame = dropView.bounds
+        hostView.autoresizingMask = [.width, .height]
+        dropView.addSubview(hostView)
         panel.contentView = dropView
     }
 
@@ -76,11 +75,5 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             width: width,
             height: visibleFrame.height
         )
-    }
-}
-
-private final class PassthroughHostingView<Content: View>: NSHostingView<Content> {
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        nil
     }
 }
