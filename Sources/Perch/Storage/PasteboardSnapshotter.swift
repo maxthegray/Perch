@@ -27,7 +27,9 @@ struct PasteboardSnapshotter {
                 id: directory.id,
                 directoryURL: directory.url
             )
-            store.insert(result.item, at: nil)
+            if result.pendingPromises.isEmpty {
+                store.insert(result.item, at: nil)
+            }
             return result
         } catch {
             try? FileManager.default.removeItem(at: directory.url)

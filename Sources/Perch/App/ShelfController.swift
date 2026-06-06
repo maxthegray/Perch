@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
 @MainActor
@@ -7,6 +8,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let holding: HoldingDirectory
     private let store: ItemStore
     private let snapshotter: PasteboardSnapshotter
+    private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
 
@@ -14,6 +16,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         holding = try HoldingDirectory.standard()
         store = ItemStore(holding: holding)
         snapshotter = PasteboardSnapshotter(holding: holding)
+        promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
         hostView = ShelfHostView(store: store)
@@ -51,6 +54,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog(
                 "Perch drop stored item \(result.item.id.uuidString); count \(beforeCount)->\(afterCount); reps [\(repTypes)]; files [\(backingFiles)]; pendingPromises \(result.pendingPromises.count)"
             )
+
+            if !result.pendingPromises.isEmpty {
+                materializePendingPromises(for: result.item, receivers: result.pendingPromises, initialCount: beforeCount)
+            }
+
             return true
         } catch {
             NSLog("Perch drop failed: \(error)")
@@ -75,5 +83,59 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             width: width,
             height: visibleFrame.height
         )
+    }
+
+    private func materializePendingPromises(
+        for item: StoredItem,
+        receivers: [NSFilePromiseReceiver],
+        initialCount: Int
+    ) {
+        let filesDir = item.directoryURL.appendingPathComponent("files", isDirectory: true)
+
+        promiseMaterializer.materialize(receivers, into: filesDir) { [weak self] materializedURLs in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                let beforeInsertMainThread = pthread_main_np() == 1
+                do {
+                    let finalItem = try self.itemByAppendingMaterializedFiles(
+                        materializedURLs,
+                        to: item
+                    )
+                    self.store.insert(finalItem, at: nil)
+
+                    let repTypes = finalItem.metadata.representations.map(\.typeIdentifier).joined(separator: ",")
+                    let backingFiles = finalItem.backingFileURLs().map(\.lastPathComponent).joined(separator: ",")
+                    NSLog(
+                        "Perch promise materialization stored item \(finalItem.id.uuidString); count \(initialCount)->\(self.store.items.count); reps [\(repTypes)]; files [\(backingFiles)]; mainThread \(beforeInsertMainThread)"
+                    )
+                } catch {
+                    NSLog("Perch promise materialization failed for item \(item.id.uuidString): \(error)")
+                    try? FileManager.default.removeItem(at: item.directoryURL)
+                }
+            }
+        }
+    }
+
+    private func itemByAppendingMaterializedFiles(
+        _ materializedURLs: [URL],
+        to item: StoredItem
+    ) throws -> StoredItem {
+        var metadata = item.metadata
+        let existingFileNames = Set(metadata.backingFileNames)
+        let newFileNames = materializedURLs
+            .map(\.lastPathComponent)
+            .filter { !$0.isEmpty && !existingFileNames.contains($0) }
+
+        metadata.backingFileNames.append(contentsOf: newFileNames)
+        if metadata.backingFileNames.count == newFileNames.count,
+           let firstFileName = newFileNames.first {
+            metadata.title = firstFileName
+        }
+
+        let metaURL = item.directoryURL.appendingPathComponent("meta.json", isDirectory: false)
+        try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
+
+        return StoredItem(metadata: metadata, directoryURL: item.directoryURL)
     }
 }

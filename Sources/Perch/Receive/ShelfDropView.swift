@@ -10,9 +10,7 @@ protocol ShelfDropHandling: AnyObject {
 final class ShelfDropView: NSView {
     weak var dropHandler: ShelfDropHandling?
 
-    /// Dragged types the shelf accepts (file URL, file promise, string, RTF, TIFF,
-    /// URL, HTML, …). Populated in T3.
-    static let acceptedTypes: [NSPasteboard.PasteboardType] = [
+    private static let concreteAcceptedTypes: [NSPasteboard.PasteboardType] = [
         .fileURL,
         .string,
         .rtf,
@@ -20,6 +18,13 @@ final class ShelfDropView: NSView {
         .URL,
         .html
     ]
+
+    /// Dragged types the shelf accepts (file URL, file promise, string, RTF, TIFF,
+    /// URL, HTML, …). Populated in T3.
+    static let acceptedTypes: [NSPasteboard.PasteboardType] =
+        concreteAcceptedTypes + NSFilePromiseReceiver.readableDraggedTypes.map {
+            NSPasteboard.PasteboardType($0)
+        }
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
