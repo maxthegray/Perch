@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 
 /// One persisted pasteboard representation, recorded in `meta.json`.
 struct RepRecord: Codable, Equatable {
@@ -25,25 +26,52 @@ final class StoredItem: Identifiable {
     let directoryURL: URL
 
     init(metadata: ItemMetadata, directoryURL: URL) {
-        fatalError("unimplemented")
+        self.metadata = metadata
+        self.directoryURL = directoryURL
     }
 
     nonisolated var id: UUID {
-        fatalError("unimplemented")
+        metadata.id
     }
 
     /// Raw data for a representation, read from `reps/rep-N.dat`.
     func data(forType type: NSPasteboard.PasteboardType) -> Data? {
-        fatalError("unimplemented")
+        guard let record = metadata.representations.first(where: {
+            $0.typeIdentifier == type.rawValue && !$0.isPromisePlaceholder
+        }) else {
+            return nil
+        }
+
+        let url = directoryURL
+            .appendingPathComponent("reps", isDirectory: true)
+            .appendingPathComponent(record.fileName, isDirectory: false)
+        return try? Data(contentsOf: url)
     }
 
     /// Real files this item can vend (everything under `files/`).
     func backingFileURLs() -> [URL] {
-        fatalError("unimplemented")
+        let filesDir = directoryURL.appendingPathComponent("files", isDirectory: true)
+        return metadata.backingFileNames.map {
+            filesDir.appendingPathComponent($0, isDirectory: false)
+        }
     }
 
     /// Display icon (Quick Look thumbnail or UTType icon).
     func iconImage() -> NSImage {
-        fatalError("unimplemented")
+        if let fileURL = backingFileURLs().first {
+            return NSWorkspace.shared.icon(forFile: fileURL.path)
+        }
+
+        if let primaryFileType = metadata.primaryFileType,
+           let contentType = UTType(primaryFileType) {
+            return NSWorkspace.shared.icon(for: contentType)
+        }
+
+        if let firstType = metadata.representations.first?.typeIdentifier,
+           let contentType = UTType(firstType) {
+            return NSWorkspace.shared.icon(for: contentType)
+        }
+
+        return NSWorkspace.shared.icon(for: .data)
     }
 }

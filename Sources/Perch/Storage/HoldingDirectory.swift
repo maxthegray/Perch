@@ -8,18 +8,28 @@ struct HoldingDirectory {
 
     /// Resolve (creating if absent) the standard holding directory.
     static func standard() throws -> HoldingDirectory {
-        fatalError("unimplemented")
+        let applicationSupport = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        let holding = HoldingDirectory(
+            root: applicationSupport.appendingPathComponent("Perch", isDirectory: true)
+        )
+        try FileManager.default.createDirectory(at: holding.itemsDir, withIntermediateDirectories: true)
+        return holding
     }
 
     var itemsDir: URL {
-        fatalError("unimplemented")
+        root.appendingPathComponent("items", isDirectory: true)
     }
 
     var indexFile: URL {
-        fatalError("unimplemented")
+        root.appendingPathComponent("index.json", isDirectory: false)
     }
 
     func itemDir(_ id: UUID) -> URL {
-        fatalError("unimplemented")
+        itemsDir.appendingPathComponent(id.uuidString, isDirectory: true)
     }
 }
