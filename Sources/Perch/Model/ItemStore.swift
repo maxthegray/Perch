@@ -53,6 +53,22 @@ final class ItemStore: ObservableObject {
         persistIndexOrLogFailure()
     }
 
+    /// Remove every item and delete all `items/<uuid>/` directories.
+    func clearAll() {
+        for item in items {
+            do {
+                try FileManager.default.removeItem(at: item.directoryURL)
+            } catch CocoaError.fileNoSuchFile {
+                // Already absent; continue.
+            } catch {
+                NSLog("Perch failed to remove item directory \(item.directoryURL.path): \(error)")
+            }
+        }
+
+        items.removeAll()
+        persistIndexOrLogFailure()
+    }
+
     /// Create a fresh `items/<uuid>/{reps,files}` directory and return its id + url.
     func newItemDirectory() -> (id: UUID, url: URL) {
         let id = UUID()
