@@ -26,15 +26,21 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
             return super.writableTypes(for: pasteboard)
         }
 
+        let providerTypes = super.writableTypes(for: pasteboard)
+        let providerTypeSet = Set(providerTypes)
         var types: [NSPasteboard.PasteboardType] = []
-        if !snapshot.backingFileURLs.isEmpty {
-            types.append(contentsOf: super.writableTypes(for: pasteboard))
+        let hasBackingFile = !snapshot.backingFileURLs.isEmpty
+        if hasBackingFile {
+            types.append(contentsOf: providerTypes)
             types.append(.fileURL)
         }
 
         for record in snapshot.representations where !record.isPromisePlaceholder {
             let type = NSPasteboard.PasteboardType(record.typeIdentifier)
-            if type == .fileURL, !snapshot.backingFileURLs.isEmpty {
+            if type == .fileURL, hasBackingFile {
+                continue
+            }
+            if providerTypeSet.contains(type) || isFilePromiseControlType(type) {
                 continue
             }
             types.append(type)
@@ -55,6 +61,10 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
             return []
         }
 
+        if type == .string {
+            return []
+        }
+
         return .promised
     }
 
@@ -63,8 +73,12 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
             return super.pasteboardPropertyList(forType: type)
         }
 
+        if isFilePromiseControlType(type) {
+            return super.pasteboardPropertyList(forType: type)
+        }
+
         if type == .fileURL, let backingFileURL = snapshot.backingFileURLs.first {
-            return backingFileURL.absoluteString
+            return (backingFileURL as NSURL).pasteboardPropertyList(forType: .fileURL)
         }
 
         guard let data = snapshot.data(forType: type) else {
@@ -114,13 +128,24 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
             return
         }
 
+        let fileManager = FileManager.default
+        let destinationURL = promisedDestinationURL(
+            promiseURL: url,
+            fileName: sourceURL.lastPathComponent,
+            fileManager: fileManager
+        )
         do {
-            if FileManager.default.fileExists(atPath: url.path) {
-                try FileManager.default.removeItem(at: url)
+            var isDirectory = ObjCBool(false)
+            if fileManager.fileExists(atPath: destinationURL.path, isDirectory: &isDirectory),
+               isDirectory.boolValue {
+                throw StoredItemDragWriterError.destinationIsDirectory(destinationURL)
             }
-            try FileManager.default.copyItem(at: sourceURL, to: url)
+
+            try Data(contentsOf: sourceURL).write(to: destinationURL, options: .atomic)
+            NSLog("Perch promised file wrote \(sourceURL.lastPathComponent) to \(destinationURL.path)")
             completionHandler(nil)
         } catch {
+            NSLog("Perch promised file write failed for \(sourceURL.lastPathComponent) to \(destinationURL.path): \(error)")
             completionHandler(error)
         }
     }
@@ -132,6 +157,65 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
 
 private enum StoredItemDragWriterError: Error {
     case noBackingFile
+    case destinationIsDirectory(URL)
+}
+
+private func isFilePromiseControlType(_ type: NSPasteboard.PasteboardType) -> Bool {
+    let identifier = type.rawValue
+    return identifier == "com.apple.NSFilePromiseItemMetaData"
+        || identifier == "com.apple.pasteboard.NSFilePromiseID"
+        || identifier.hasPrefix("com.apple.pasteboard.promised-")
+        || NSFilePromiseReceiver.readableDraggedTypes.contains(identifier)
+}
+
+private func promisedDestinationURL(
+    promiseURL: URL,
+    fileName: String,
+    fileManager: FileManager
+) -> URL {
+    var isDirectory = ObjCBool(false)
+    if fileManager.fileExists(atPath: promiseURL.path, isDirectory: &isDirectory),
+       isDirectory.boolValue {
+        return uniqueDestinationURL(for: fileName, in: promiseURL, fileManager: fileManager)
+    }
+
+    if promiseURL.hasDirectoryPath {
+        return uniqueDestinationURL(for: fileName, in: promiseURL, fileManager: fileManager)
+    }
+
+    return promiseURL
+}
+
+private func uniqueDestinationURL(
+    for fileName: String,
+    in directoryURL: URL,
+    fileManager: FileManager
+) -> URL {
+    let baseName = fileName.isEmpty ? "file" : fileName
+    let initialURL = directoryURL.appendingPathComponent(baseName, isDirectory: false)
+    guard fileManager.fileExists(atPath: initialURL.path) else {
+        return initialURL
+    }
+
+    let originalName = (baseName as NSString).deletingPathExtension
+    let pathExtension = (baseName as NSString).pathExtension
+    var suffix = 2
+
+    while true {
+        let candidateName: String
+        if pathExtension.isEmpty {
+            candidateName = "\(originalName)-\(suffix)"
+        } else {
+            candidateName = "\(originalName)-\(suffix).\(pathExtension)"
+        }
+
+        let candidateURL = directoryURL.appendingPathComponent(candidateName, isDirectory: false)
+        if !fileManager.fileExists(atPath: candidateURL.path) {
+            return candidateURL
+        }
+
+        suffix += 1
+    }
 }
 
 private struct StoredItemDragSnapshot {

@@ -7,6 +7,7 @@ import AppKit
 @MainActor
 final class ItemDragSource: NSObject, NSDraggingSource {
     private let item: StoredItem
+    private var activeWriter: StoredItemDragWriter?
 
     init(item: StoredItem) {
         self.item = item
@@ -31,31 +32,10 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// The single dragging item backing this drag (promise-preferred file delivery
     /// + lazy generic data + convenience file URL — see `StoredItemDragWriter`).
     func draggingItem() -> NSDraggingItem {
-        let pasteboardItem = NSPasteboardItem()
-        let backingFileURL = item.backingFileURLs().first
+        let writer = StoredItemDragWriter(item: item)
+        activeWriter = writer
 
-        if let backingFileURL {
-            pasteboardItem.setString(backingFileURL.absoluteString, forType: .fileURL)
-        }
-
-        for record in item.metadata.representations where !record.isPromisePlaceholder {
-            let type = NSPasteboard.PasteboardType(record.typeIdentifier)
-            if type == .fileURL, backingFileURL != nil {
-                continue
-            }
-
-            guard let data = item.data(forType: type) else {
-                continue
-            }
-
-            if type == .string, let string = String(data: data, encoding: .utf8) {
-                pasteboardItem.setString(string, forType: type)
-            } else {
-                pasteboardItem.setData(data, forType: type)
-            }
-        }
-
-        let draggingItem = NSDraggingItem(pasteboardWriter: pasteboardItem)
+        let draggingItem = NSDraggingItem(pasteboardWriter: writer)
         draggingItem.setDraggingFrame(
             NSRect(x: 0, y: 0, width: 48, height: 48),
             contents: item.iconImage()
