@@ -6,6 +6,7 @@ final class ShelfWindowController {
     let panel: ShelfPanel
     private static let persistedFrameKey = "Perch.ShelfWindowController.frame"
     private var revealedFrame: NSRect
+    private var edge: ShelfEdge = .right
 
     init(panel: ShelfPanel) {
         self.panel = panel
@@ -13,36 +14,51 @@ final class ShelfWindowController {
     }
 
     func reveal(animated: Bool) {
-        reveal(animated: animated, targetFrame: revealedFrame)
+        reveal(animated: animated, targetFrame: revealedFrame, edge: edge)
     }
 
-    /// Reveal at a specific frame (e.g. the right edge of the screen whose tab was
-    /// used), sliding in from off that screen's edge.
-    func reveal(animated: Bool, targetFrame: NSRect) {
+    /// Reveal at a specific frame, easing + fading in from off that frame's edge
+    /// (the side for left/right, the top for the notch).
+    func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge) {
+        self.edge = edge
         revealedFrame = targetFrame
+
+        guard animated else {
+            panel.alphaValue = 1
+            panel.setFrame(targetFrame, display: true)
+            panel.orderFrontRegardless()
+            return
+        }
+
         panel.setFrame(hiddenFrame(for: targetFrame), display: false)
+        panel.alphaValue = 0
         panel.orderFrontRegardless()
-        setPanelFrame(targetFrame, animated: animated)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.26
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            panel.animator().setFrame(targetFrame, display: true)
+            panel.animator().alphaValue = 1
+        }
     }
 
     func hide(animated: Bool) {
-        if panel.isVisible {
-            revealedFrame = panel.frame
-            persistFrame()
-        }
-
         let targetFrame = hiddenFrame(for: revealedFrame)
         guard animated else {
             panel.setFrame(targetFrame, display: false)
             panel.orderOut(nil)
+            panel.alphaValue = 1
             return
         }
 
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
+            context.duration = 0.2
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
             panel.animator().setFrame(targetFrame, display: true)
+            panel.animator().alphaValue = 0
         } completionHandler: { [weak panel] in
             panel?.orderOut(nil)
+            panel?.alphaValue = 1
         }
     }
 
@@ -66,32 +82,20 @@ final class ShelfWindowController {
         UserDefaults.standard.set(NSStringFromRect(revealedFrame), forKey: Self.persistedFrameKey)
     }
 
-    private func setPanelFrame(_ frame: NSRect, animated: Bool) {
-        guard animated else {
-            panel.setFrame(frame, display: true)
-            return
-        }
-
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.18
-            panel.animator().setFrame(frame, display: true)
-        }
-    }
-
     private func hiddenFrame(for frame: NSRect) -> NSRect {
         guard let screenFrame = screen(for: frame)?.frame else {
             return frame.offsetBy(dx: frame.width, dy: 0)
         }
 
-        // Slide off whichever edge the panel is closer to.
-        let isLeftEdge = frame.midX < screenFrame.midX
-        let x = isLeftEdge ? screenFrame.minX - frame.width : screenFrame.maxX
-        return NSRect(
-            x: x,
-            y: frame.minY,
-            width: frame.width,
-            height: frame.height
-        )
+        switch edge {
+        case .left:
+            return NSRect(x: screenFrame.minX - frame.width, y: frame.minY, width: frame.width, height: frame.height)
+        case .right:
+            return NSRect(x: screenFrame.maxX, y: frame.minY, width: frame.width, height: frame.height)
+        case .notch:
+            // Slide up behind the menu bar / notch.
+            return NSRect(x: frame.minX, y: screenFrame.maxY, width: frame.width, height: frame.height)
+        }
     }
 
     private func screen(for frame: NSRect) -> NSScreen? {

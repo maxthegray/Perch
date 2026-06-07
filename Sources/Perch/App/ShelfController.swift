@@ -53,9 +53,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         windowController.hide(animated: false)
         installEdgeStripIfNeeded()
 
-        // Show the edge tab only while a drag is in progress.
+        // During a drag, show only the tab nearest the cursor; hide all when it ends.
         mouseMonitor.onDragSessionChange = { [weak self] active in
-            self?.setTabsShown(active)
+            guard let self else { return }
+            if active {
+                self.showNearestTab(to: NSEvent.mouseLocation)
+            } else {
+                self.setTabsShown(false)
+            }
+        }
+        mouseMonitor.onDragMoved = { [weak self] point in
+            self?.showNearestTab(to: point)
         }
         mouseMonitor.start()
 
@@ -73,6 +81,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         for strip in edgeStrips {
             strip.showsTab = shown
         }
+    }
+
+    /// Show only the tab whose catch zone is nearest the cursor.
+    private func showNearestTab(to point: NSPoint) {
+        guard let nearest = edgeStrips.min(by: {
+            Self.distance(from: point, to: $0.frame) < Self.distance(from: point, to: $1.frame)
+        }) else {
+            return
+        }
+        for strip in edgeStrips {
+            strip.showsTab = (strip === nearest)
+        }
+    }
+
+    private static func distance(from point: NSPoint, to rect: NSRect) -> CGFloat {
+        let dx = max(rect.minX - point.x, 0, point.x - rect.maxX)
+        let dy = max(rect.minY - point.y, 0, point.y - rect.maxY)
+        return (dx * dx + dy * dy).squareRoot()
     }
 
     // MARK: ShelfDropHandling
@@ -141,6 +167,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// dead zone on the hand-off.
     private static func panelFrame(for screen: NSScreen, edge: ShelfEdge) -> NSRect {
         let visibleFrame = screen.visibleFrame
+
+        if edge == .notch {
+            // A card hanging from the notch: centered on it, dropping down from just
+            // below the menu bar.
+            let width: CGFloat = 360
+            let height = min(CGFloat(180), visibleFrame.height - 40)
+            let interval = EdgeStripWindow.notchXInterval(for: screen)
+            let centerX = (interval.min + interval.max) / 2
+            let x = min(max(centerX - width / 2, visibleFrame.minX + 8), visibleFrame.maxX - width - 8)
+            let y = visibleFrame.maxY - height
+            return NSRect(x: x, y: y, width: width, height: height)
+        }
+
         let margin: CGFloat = 12
         let width = min(CGFloat(300), visibleFrame.width - margin)
         let height = min(CGFloat(460), visibleFrame.height - 80)
@@ -166,6 +205,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         for screen in Self.screensWithOuterEdge(.left) {
             strips.append(makeStrip(on: screen, edge: .left))
+        }
+        for screen in NSScreen.screens where EdgeStripWindow.hasNotch(screen) {
+            strips.append(makeStrip(on: screen, edge: .notch))
         }
         edgeStrips = strips
         NSLog("Perch installed \(strips.count) edge tab(s) across \(NSScreen.screens.count) screen(s)")
@@ -251,7 +293,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
         let frame = screen.map { Self.panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
-        windowController.reveal(animated: true, targetFrame: frame)
+        windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge)
     }
 
     private func cancelOpen() {

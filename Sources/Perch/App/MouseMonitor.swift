@@ -11,6 +11,9 @@ final class MouseMonitor {
     /// Fired on the main actor when a drag begins (`true`) or ends (`false`).
     var onDragSessionChange: ((Bool) -> Void)?
 
+    /// Fired on each drag movement with the current cursor location (screen coords).
+    var onDragMoved: ((NSPoint) -> Void)?
+
     private var monitor: Any?
     private var isDragging = false
 
@@ -48,6 +51,7 @@ final class MouseMonitor {
                 isDragging = true
                 onDragSessionChange?(true)
             }
+            onDragMoved?(NSEvent.mouseLocation)
         case .leftMouseUp:
             if isDragging {
                 isDragging = false
