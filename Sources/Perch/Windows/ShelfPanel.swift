@@ -25,7 +25,7 @@ final class ShelfPanel: NSPanel {
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
         hasShadow = true
-        isOpaque = true
-        backgroundColor = .windowBackgroundColor
+        isOpaque = false
+        backgroundColor = .clear
     }
 }

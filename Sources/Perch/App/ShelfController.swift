@@ -13,7 +13,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private var edgeStrips: [EdgeStripWindow] = []
-    private var hideTask: Task<Void, Never>?
+    private let mouseMonitor = MouseMonitor()
+    private var openTask: Task<Void, Never>?
+    private var retractTask: Task<Void, Never>?
+    private var pointerInRegion = false
+    private var preferredScreen: NSScreen?
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -41,9 +45,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch failed to load stored items: \(error)")
         }
 
-        windowController.restorePersistedFrame()
+        // Panel geometry is app-computed (a floating card), not user-movable, so we
+        // always use the freshly computed frame rather than a stale persisted one.
         windowController.hide(animated: false)
         installEdgeStripIfNeeded()
+
+        // Show the edge tab only while a drag is in progress.
+        mouseMonitor.onDragSessionChange = { [weak self] active in
+            self?.setTabsShown(active)
+        }
+        mouseMonitor.start()
+    }
+
+    private func setTabsShown(_ shown: Bool) {
+        for strip in edgeStrips {
+            strip.showsTab = shown
+        }
     }
 
     // MARK: ShelfDropHandling
@@ -65,7 +82,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 materializePendingPromises(for: result.item, receivers: result.pendingPromises, initialCount: beforeCount)
             }
 
-            hideShelf(animated: true)
+            // Keep the shelf open after a drop (the pointer is over it); it closes
+            // when the pointer leaves.
+            cancelOpen()
+            cancelRetract()
             return true
         } catch {
             NSLog("Perch drop failed: \(error)")
@@ -73,24 +93,51 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    func pointerDidEnterShelf() {
+        // Pointer (hover or drag) is inside the panel — keep it open.
+        enterRegion(immediate: true)
+    }
+
+    func pointerDidExitShelf() {
+        exitRegion()
+    }
+
     // MARK: EdgeStripDelegate
 
-    func edgeStripDidReceiveDrag(_ strip: EdgeStripWindow) {
-        NSLog("Perch edge strip received drag at frame \(NSStringFromRect(strip.frame))")
-        windowController.reveal(animated: true)
-        scheduleAutoHide()
+    func edgeStrip(_ strip: EdgeStripWindow, pointerDidEnterViaDrag viaDrag: Bool) {
+        // Open the shelf on whichever screen's tab was used.
+        preferredScreen = strip.pinnedScreen
+        // Drags open immediately; a plain hover waits briefly so brushing past the
+        // edge does not pop the shelf open.
+        enterRegion(immediate: viaDrag)
+    }
+
+    func edgeStripPointerDidExit(_ strip: EdgeStripWindow) {
+        exitRegion()
     }
 
     private static func initialPanelFrame() -> NSRect {
-        let fallbackFrame = NSRect(x: 0, y: 0, width: 320, height: 640)
-        let visibleFrame = NSScreen.main?.visibleFrame ?? NSScreen.screens.first?.visibleFrame ?? fallbackFrame
-        let width = min(CGFloat(320), visibleFrame.width)
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else {
+            return NSRect(x: 0, y: 0, width: 300, height: 640)
+        }
+        return panelFrame(for: screen)
+    }
+
+    /// The floating-card frame on a given screen: inset from the right edge so the
+    /// always-visible edge tab peeks out beside the open panel. The tab's catch zone
+    /// is wider than this margin, so it still overlaps the panel (no dead zone).
+    private static func panelFrame(for screen: NSScreen) -> NSRect {
+        let visibleFrame = screen.visibleFrame
+        let rightMargin: CGFloat = 12
+        let width = min(CGFloat(300), visibleFrame.width - rightMargin)
+        let height = min(CGFloat(460), visibleFrame.height - 80)
+        let y = visibleFrame.minY + (visibleFrame.height - height) / 2
 
         return NSRect(
-            x: visibleFrame.maxX - width,
-            y: visibleFrame.minY,
+            x: visibleFrame.maxX - width - rightMargin,
+            y: y,
             width: width,
-            height: visibleFrame.height
+            height: height
         )
     }
 
@@ -100,7 +147,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         guard !NSScreen.screens.isEmpty else {
-            NSLog("Perch edge strip not installed: no screen available")
+            NSLog("Perch edge tab not installed: no screen available")
             return
         }
 
@@ -108,28 +155,76 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             let strip = EdgeStripWindow(screen: screen)
             strip.stripDelegate = self
             strip.orderFrontRegardless()
-            NSLog("Perch edge strip installed at frame \(NSStringFromRect(strip.frame))")
+            NSLog("Perch edge tab installed at frame \(NSStringFromRect(strip.frame))")
             return strip
         }
     }
 
-    private func scheduleAutoHide() {
-        hideTask?.cancel()
-        hideTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(nanoseconds: 5_000_000_000)
-            } catch {
-                return
-            }
+    /// The pointer (hover or drag) entered the tab or panel. Drags reveal at once;
+    /// a plain hover waits briefly so brushing past the edge does not pop it open.
+    private func enterRegion(immediate: Bool) {
+        cancelRetract()
 
-            self?.windowController.hide(animated: true)
-            self?.hideTask = nil
+        if immediate {
+            cancelOpen()
+            pointerInRegion = true
+            revealIfNeeded()
+            return
+        }
+
+        cancelOpen()
+        openTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard let self, !Task.isCancelled else { return }
+            self.pointerInRegion = true
+            self.revealIfNeeded()
+            self.openTask = nil
+        }
+    }
+
+    /// The pointer left the region — retract the shelf (after a short grace).
+    private func exitRegion() {
+        cancelOpen()
+        pointerInRegion = false
+        scheduleRetract()
+    }
+
+    private func revealIfNeeded() {
+        cancelRetract()
+        guard !panel.isVisible else { return }
+
+        let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
+        let frame = screen.map(Self.panelFrame(for:)) ?? Self.initialPanelFrame()
+        windowController.reveal(animated: true, targetFrame: frame)
+    }
+
+    private func cancelOpen() {
+        openTask?.cancel()
+        openTask = nil
+    }
+
+    private func cancelRetract() {
+        retractTask?.cancel()
+        retractTask = nil
+    }
+
+    /// Retract the shelf shortly after it should close. The small grace lets the
+    /// pointer hand off between the edge tab and the panel without flicker; a
+    /// re-enter (or new content) cancels it.
+    private func scheduleRetract() {
+        cancelRetract()
+        retractTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 130_000_000)
+            guard let self, !Task.isCancelled else { return }
+            // Re-check: the pointer may have re-entered during the grace.
+            guard !self.pointerInRegion else { return }
+            self.windowController.hide(animated: true)
+            self.retractTask = nil
         }
     }
 
     private func hideShelf(animated: Bool) {
-        hideTask?.cancel()
-        hideTask = nil
+        cancelRetract()
         windowController.hide(animated: animated)
     }
 

@@ -43,6 +43,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         let dragSource = ItemDragSource(item: item)
+        dragSource.onEnded = { [weak self] operation in
+            guard let self else { return }
+            self.activeDragSource = nil
+            // Move semantics: once the item has landed somewhere, remove it from the
+            // shelf. Deferred briefly so any in-flight file-promise write (which
+            // copies from the holding dir) can finish before the dir is deleted.
+            guard !operation.isEmpty else { return }
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(600))
+                self?.store.remove(item)
+            }
+        }
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
         NSLog("Perch row drag started from ShelfHostView.mouseDragged for item \(item.id.uuidString)")

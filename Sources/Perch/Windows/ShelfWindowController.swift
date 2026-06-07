@@ -13,7 +13,13 @@ final class ShelfWindowController {
     }
 
     func reveal(animated: Bool) {
-        let targetFrame = revealedFrame
+        reveal(animated: animated, targetFrame: revealedFrame)
+    }
+
+    /// Reveal at a specific frame (e.g. the right edge of the screen whose tab was
+    /// used), sliding in from off that screen's edge.
+    func reveal(animated: Bool, targetFrame: NSRect) {
+        revealedFrame = targetFrame
         panel.setFrame(hiddenFrame(for: targetFrame), display: false)
         panel.orderFrontRegardless()
         setPanelFrame(targetFrame, animated: animated)

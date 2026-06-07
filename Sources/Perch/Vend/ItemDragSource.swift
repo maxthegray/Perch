@@ -9,6 +9,11 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     private let item: StoredItem
     private var activeWriter: StoredItemDragWriter?
 
+    /// Called when the drag session ends, with the operation the destination
+    /// performed (empty == no drop). Used to apply move semantics (remove the row
+    /// once it has actually landed somewhere).
+    var onEnded: ((NSDragOperation) -> Void)?
+
     init(item: StoredItem) {
         self.item = item
         super.init()
@@ -50,7 +55,16 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
         // `.copy` for file-backed items, in BOTH .withinApplication and
-        // .outsideApplication contexts (Decision K) — never move the master.
+        // .outsideApplication contexts — the destination receives a fresh copy; the
+        // shelf then removes its own copy (move semantics handled in `onEnded`).
         .copy
+    }
+
+    func draggingSession(
+        _ session: NSDraggingSession,
+        endedAt screenPoint: NSPoint,
+        operation: NSDragOperation
+    ) {
+        onEnded?(operation)
     }
 }
