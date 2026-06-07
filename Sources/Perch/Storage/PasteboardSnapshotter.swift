@@ -97,7 +97,16 @@ struct PasteboardSnapshotter {
                         in: filesDir,
                         fileManager: fileManager
                     )
-                    try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                    // Take ownership: MOVE the original into the shelf so it leaves
+                    // its source. Fall back to copy if the move isn't permitted
+                    // (e.g. read-only source or cross-volume restriction) so the drop
+                    // still succeeds rather than failing.
+                    do {
+                        try fileManager.moveItem(at: sourceURL, to: destinationURL)
+                    } catch {
+                        NSLog("Perch could not move \(sourceURL.path) into shelf (\(error)); copying instead")
+                        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                    }
                     backingFileNames.append(destinationURL.lastPathComponent)
                 }
             }

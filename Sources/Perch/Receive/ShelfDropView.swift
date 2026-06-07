@@ -62,16 +62,26 @@ final class ShelfDropView: NSView {
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard sender.draggingPasteboard.availableType(from: Self.acceptedTypes) != nil else {
-            return []
+        let operation = dragOperation(for: sender)
+        if !operation.isEmpty {
+            dropHandler?.pointerDidEnterShelf()
         }
+        return operation
+    }
 
-        dropHandler?.pointerDidEnterShelf()
-        return .copy
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        dragOperation(for: sender)
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         dropHandler?.pointerDidExitShelf()
+    }
+
+    /// Report `.copy` so the source app takes no action on the original — the shelf
+    /// performs the actual move itself (the snapshotter moves the file into the
+    /// holding dir), which avoids a conflict with the source's own handling.
+    private func dragOperation(for sender: NSDraggingInfo) -> NSDragOperation {
+        sender.draggingPasteboard.availableType(from: Self.acceptedTypes) != nil ? .copy : []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
