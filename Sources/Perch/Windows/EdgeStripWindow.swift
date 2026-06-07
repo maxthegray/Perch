@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 
 /// Which screen edge a shelf tab / panel is attached to.
 enum ShelfEdge {
@@ -41,6 +42,9 @@ final class EdgeStripWindow: NSPanel {
     /// Which edge of the screen this tab hugs.
     let edge: ShelfEdge
 
+    /// Active look — the drawn handle follows it.
+    let themeStore: ThemeStore
+
     /// Whether the visible tab is drawn. The window itself is always present (so it
     /// can catch hover + drag), but the accent handle only shows while dragging.
     var showsTab = false {
@@ -50,9 +54,10 @@ final class EdgeStripWindow: NSPanel {
         }
     }
 
-    init(screen: NSScreen, edge: ShelfEdge) {
+    init(screen: NSScreen, edge: ShelfEdge, themeStore: ThemeStore) {
         self.pinnedScreen = screen
         self.edge = edge
+        self.themeStore = themeStore
         let contentRect = Self.triggerFrame(for: screen, edge: edge)
 
         super.init(
@@ -124,7 +129,10 @@ final class EdgeStripWindow: NSPanel {
 }
 
 private final class EdgeStripTriggerView: NSView {
-    weak var strip: EdgeStripWindow?
+    weak var strip: EdgeStripWindow? {
+        didSet { observeTheme() }
+    }
+    private var themeCancellable: AnyCancellable?
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -138,6 +146,13 @@ private final class EdgeStripTriggerView: NSView {
         wantsLayer = true
         alphaValue = 0
         registerForDraggedTypes(ShelfDropView.acceptedTypes)
+    }
+
+    /// Redraw the handle whenever the active look changes.
+    private func observeTheme() {
+        themeCancellable = strip?.themeStore.$style
+            .removeDuplicates()
+            .sink { [weak self] _ in self?.needsDisplay = true }
     }
 
     /// Fade the drawn tab in/out (events keep flowing regardless of alpha).
@@ -165,9 +180,8 @@ private final class EdgeStripTriggerView: NSView {
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
 
-        // The tab is always drawn; its visibility is driven by the view's animated
-        // alpha (see setTabVisible).
-        NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
+        let theme = strip?.themeStore.theme ?? ShelfTheme.resolve(.glass)
+        let accent = theme.tabAccent
 
         // Notch: trace the real notch contour — up both vertical sides to the screen
         // top, around the two rounded bottom corners.
@@ -192,26 +206,55 @@ private final class EdgeStripTriggerView: NSView {
                 radius: cornerR, startAngle: 270, endAngle: 360
             )
             path.line(to: NSPoint(x: right, y: topY))
-            path.lineWidth = 3
+            path.lineWidth = theme.tabUsesGlow ? 3 : 1.5
             path.lineCapStyle = .round
-            NSColor.controlAccentColor.withAlphaComponent(0.95).setStroke()
-            path.stroke()
+            withOptionalGlow(theme.tabUsesGlow ? accent : nil) {
+                accent.withAlphaComponent(theme.tabUsesGlow ? 0.95 : 0.6).setStroke()
+                path.stroke()
+            }
             return
         }
 
-        // A visible accent handle hugging the edge: rounded on the inner side, run
-        // flush off the screen edge on the outer side.
-        let visibleWidth: CGFloat = 8
+        // A visible handle hugging the edge: rounded on the inner side, run flush off
+        // the screen edge on the outer side.
+        let visibleWidth = theme.tabVisibleWidth
         let originX = strip?.edge == .left ? bounds.minX - visibleWidth : bounds.maxX - visibleWidth
-        let barRect = NSRect(
-            x: originX,
-            y: 0,
-            width: visibleWidth * 2,
-            height: bounds.height
+        let barRect = NSRect(x: originX, y: 0, width: visibleWidth * 2, height: bounds.height)
+        let path = NSBezierPath(
+            roundedRect: barRect,
+            xRadius: theme.tabCornerRadius,
+            yRadius: theme.tabCornerRadius
         )
-        let path = NSBezierPath(roundedRect: barRect, xRadius: visibleWidth, yRadius: visibleWidth)
-        NSColor.controlAccentColor.withAlphaComponent(0.9).setFill()
-        path.fill()
+
+        if theme.tabUsesGlow {
+            // Glass: a soft accent pill with a vertical gradient and a gentle glow.
+            withOptionalGlow(accent) {
+                let gradient = NSGradient(
+                    colors: [accent.withAlphaComponent(0.95), accent.withAlphaComponent(0.7)]
+                )
+                gradient?.draw(in: path, angle: 90)
+            }
+        } else {
+            // Minimal: a quiet, flat hairline.
+            accent.withAlphaComponent(0.55).setFill()
+            path.fill()
+        }
+    }
+
+    /// Run `draw` with an optional soft glow shadow applied.
+    private func withOptionalGlow(_ color: NSColor?, _ draw: () -> Void) {
+        guard let color else {
+            draw()
+            return
+        }
+        NSGraphicsContext.saveGraphicsState()
+        let glow = NSShadow()
+        glow.shadowColor = color.withAlphaComponent(0.55)
+        glow.shadowBlurRadius = 8
+        glow.shadowOffset = .zero
+        glow.set()
+        draw()
+        NSGraphicsContext.restoreGraphicsState()
     }
 
     override func mouseEntered(with event: NSEvent) {

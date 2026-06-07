@@ -13,11 +13,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
+    private let themeStore = ThemeStore()
     private var edgeStrips: [EdgeStripWindow] = []
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
+    /// Tracks the last empty/non-empty state so open/retract only runs on a real flip.
+    private var wasEmpty: Bool?
+    /// Latest measured SwiftUI content height, used to size the window to fit.
+    private var measuredContentHeight: CGFloat?
     private var preferredScreen: NSScreen?
     private var preferredEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
@@ -30,13 +35,28 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store)
+        hostView = ShelfHostView(store: store, themeStore: themeStore)
         dropView.autoresizingMask = [.width, .height]
+        // Layer-backed so the reveal/hide can animate a content-layer transform.
+        dropView.wantsLayer = true
         dropView.dropHandler = self
-        hostView.frame = dropView.bounds
-        hostView.autoresizingMask = [.width, .height]
+
+        // Pin the host to fill the content view exactly (constraints, not autoresizing,
+        // so it can't drift when the window resizes to fit its contents).
+        hostView.translatesAutoresizingMaskIntoConstraints = false
         dropView.addSubview(hostView)
+        NSLayoutConstraint.activate([
+            hostView.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
+            hostView.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
+            hostView.topAnchor.constraint(equalTo: dropView.topAnchor),
+            hostView.bottomAnchor.constraint(equalTo: dropView.bottomAnchor)
+        ])
         panel.contentView = dropView
+
+        // Grow/shrink the window to the SwiftUI content's actual measured height.
+        hostView.onContentHeight = { [weak self] height in
+            self?.contentHeightDidChange(height)
+        }
     }
 
     /// Build the windows, load the store, and start observing drags.
@@ -67,14 +87,33 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         mouseMonitor.start()
 
-        // Stay open while the shelf holds items; retract to the tab when empty.
-        // Subscribing fires immediately with the loaded items.
+        // Resize the card to hug its contents on every change, and stay open while it
+        // holds items / retract when empty. Subscribing fires immediately with the
+        // loaded items.
         itemsCancellable = store.$items
-            .map(\.isEmpty)
-            .removeDuplicates()
-            .sink { [weak self] isEmpty in
-                self?.shelfContentDidChange(isEmpty: isEmpty)
+            .sink { [weak self] items in
+                self?.shelfItemsDidChange(items)
             }
+    }
+
+    /// React to the item list changing: run the open/retract logic only when the
+    /// empty↔non-empty state actually flips. (Window resizing is driven separately by
+    /// the SwiftUI content's measured height — see `contentHeightDidChange`.)
+    private func shelfItemsDidChange(_ items: [StoredItem]) {
+        let isEmpty = items.isEmpty
+        guard isEmpty != wasEmpty else { return }
+        wasEmpty = isEmpty
+        shelfContentDidChange(isEmpty: isEmpty)
+    }
+
+    /// The SwiftUI content reported a new natural height — size the visible window to
+    /// fit it exactly.
+    private func contentHeightDidChange(_ height: CGFloat) {
+        guard height > 0 else { return }
+        measuredContentHeight = height
+        guard panel.isVisible,
+              let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        windowController.resize(to: Self.panelFrame(for: screen, edge: preferredEdge, contentHeight: height))
     }
 
     private func setTabsShown(_ shown: Bool) {
@@ -155,24 +194,46 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         exitRegion()
     }
 
+    /// Height of the "Drop here" empty state — also the card's minimum size.
+    private static let emptyStateHeight: CGFloat = 100
+
     private static func initialPanelFrame() -> NSRect {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
-            return NSRect(x: 0, y: 0, width: 300, height: 640)
+            return NSRect(x: 0, y: 0, width: 300, height: emptyStateHeight)
         }
-        return panelFrame(for: screen, edge: .right)
+        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight)
+    }
+
+    /// The card height that hugs `itemCount` rows (or the empty-state height when zero).
+    private func contentHeight(for itemCount: Int) -> CGFloat {
+        guard itemCount > 0 else { return Self.emptyStateHeight }
+        let theme = themeStore.theme
+        let rows = CGFloat(itemCount) * RowMetrics.height
+            + CGFloat(itemCount - 1) * theme.rowSpacing
+        return theme.contentPadding * 2 + rows
+    }
+
+    /// The content-hugging card frame on a screen + edge. Prefers the actual measured
+    /// SwiftUI height; falls back to a per-item estimate before the first measurement.
+    private func panelFrame(for screen: NSScreen, edge: ShelfEdge) -> NSRect {
+        Self.panelFrame(
+            for: screen,
+            edge: edge,
+            contentHeight: measuredContentHeight ?? contentHeight(for: store.items.count)
+        )
     }
 
     /// The floating-card frame on a given screen + edge: inset from that edge so the
     /// edge tab's catch zone (wider than the margin) still overlaps the panel — no
-    /// dead zone on the hand-off.
-    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge) -> NSRect {
+    /// dead zone on the hand-off. Height tracks the content, capped to the screen.
+    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge, contentHeight: CGFloat) -> NSRect {
         let visibleFrame = screen.visibleFrame
 
         if edge == .notch {
             // A card hanging from the notch: centered on it, dropping down from just
             // below the menu bar.
             let width: CGFloat = 360
-            let height = min(CGFloat(180), visibleFrame.height - 40)
+            let height = min(contentHeight, visibleFrame.height - 40)
             let interval = EdgeStripWindow.notchXInterval(for: screen)
             let centerX = (interval.min + interval.max) / 2
             let x = min(max(centerX - width / 2, visibleFrame.minX + 8), visibleFrame.maxX - width - 8)
@@ -182,7 +243,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let margin: CGFloat = 12
         let width = min(CGFloat(300), visibleFrame.width - margin)
-        let height = min(CGFloat(460), visibleFrame.height - 80)
+        // Grow freely to fit the contents; only the physical screen height bounds it.
+        let height = min(contentHeight, visibleFrame.height - 24)
         let y = visibleFrame.minY + (visibleFrame.height - height) / 2
         let x = edge == .left ? visibleFrame.minX + margin : visibleFrame.maxX - width - margin
 
@@ -214,7 +276,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func makeStrip(on screen: NSScreen, edge: ShelfEdge) -> EdgeStripWindow {
-        let strip = EdgeStripWindow(screen: screen, edge: edge)
+        let strip = EdgeStripWindow(screen: screen, edge: edge, themeStore: themeStore)
         strip.stripDelegate = self
         strip.orderFrontRegardless()
         NSLog("Perch edge tab (\(edge)) installed at frame \(NSStringFromRect(strip.frame))")
@@ -292,7 +354,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard !panel.isVisible else { return }
 
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
-        let frame = screen.map { Self.panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
+        let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
         windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge)
     }
 

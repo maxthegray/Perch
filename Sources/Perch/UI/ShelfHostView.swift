@@ -10,21 +10,48 @@ import SwiftUI
 /// SwiftUI gestures/controls. SwiftUI gestures are off the critical path.
 final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     private let store: ItemStore
+    private let themeStore: ThemeStore
+    private let interaction = RowInteractionState()
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
+    /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
+    /// is released still over the button, deletes the item.
+    private var pendingDeleteItem: StoredItem?
     /// URLs currently fed to `QLPreviewPanel`.
     private var quickLookURLs: [URL] = []
 
-    init(store: ItemStore) {
+    /// Called with the SwiftUI content's measured natural height so the controller can
+    /// size the window to fit.
+    var onContentHeight: ((CGFloat) -> Void)?
+
+    init(store: ItemStore, themeStore: ThemeStore) {
         self.store = store
-        hostingView = NSHostingView(rootView: ShelfContentView(store: store))
+        self.themeStore = themeStore
+        hostingView = NSHostingView(
+            rootView: ShelfContentView(store: store, themeStore: themeStore, interaction: interaction)
+        )
         super.init(frame: .zero)
-        hostingView.frame = bounds
-        hostingView.autoresizingMask = [.width, .height]
+
+        // Pin the SwiftUI host to fill us exactly (no autoresizing-from-zero drift).
+        hostingView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hostingView)
+        NSLayoutConstraint.activate([
+            hostingView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            hostingView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            hostingView.topAnchor.constraint(equalTo: topAnchor),
+            hostingView.bottomAnchor.constraint(equalTo: bottomAnchor)
+        ])
+
+        // Rebuild the root view with a height callback now that `self` exists.
+        hostingView.rootView = ShelfContentView(
+            store: store,
+            themeStore: themeStore,
+            interaction: interaction,
+            onContentHeight: { [weak self] height in self?.onContentHeight?(height) }
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -37,7 +64,60 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         bounds.contains(point) ? self : nil
     }
 
+    // MARK: - Hover tracking (drives the SwiftUI hover highlight + delete button)
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        interaction.hoveredItemID = item(at: convert(event.locationInWindow, from: nil))?.id
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        interaction.hoveredItemID = nil
+    }
+
+    // MARK: - Delete button + row drag
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        if themeStore.theme.showsDeleteButton,
+           let index = rowIndex(at: point),
+           deleteHitRect(forRow: index).contains(point) {
+            pendingDeleteItem = store.items[index]
+            return
+        }
+        pendingDeleteItem = nil
+        super.mouseDown(with: event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard let item = pendingDeleteItem else { return }
+        pendingDeleteItem = nil
+
+        let point = convert(event.locationInWindow, from: nil)
+        if let index = rowIndex(at: point),
+           index < store.items.count,
+           store.items[index].id == item.id,
+           deleteHitRect(forRow: index).contains(point) {
+            store.remove(item)
+        }
+    }
+
     override func mouseDragged(with event: NSEvent) {
+        // A press that started on a delete button must not turn into a drag.
+        guard pendingDeleteItem == nil else { return }
+
         guard let item = item(at: convert(event.locationInWindow, from: nil)) else {
             return
         }
@@ -61,15 +141,32 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private func item(at point: NSPoint) -> StoredItem? {
-        let rowHeight: CGFloat = 48
-        let topInset: CGFloat = 8
-        let rowIndex = Int((point.y - topInset) / rowHeight)
+        rowIndex(at: point).map { store.items[$0] }
+    }
 
-        guard rowIndex >= 0, rowIndex < store.items.count else {
-            return nil
-        }
+    /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
+    /// each row is `RowMetrics.height` tall, laid out with theme-driven spacing + outer
+    /// padding.
+    private func rowIndex(at point: NSPoint) -> Int? {
+        let theme = themeStore.theme
+        let rowHeight = RowMetrics.height + theme.rowSpacing
+        let topInset = theme.contentPadding
+        let index = Int((point.y - topInset) / rowHeight)
+        guard index >= 0, index < store.items.count else { return nil }
+        return index
+    }
 
-        return store.items[rowIndex]
+    /// The clickable rect of a row's delete button, matching where ItemRowView draws it
+    /// (trailing-aligned, vertically centered in the 44pt row), enlarged slightly for an
+    /// easier target.
+    private func deleteHitRect(forRow index: Int) -> NSRect {
+        let theme = themeStore.theme
+        let rowTop = theme.contentPadding + CGFloat(index) * (RowMetrics.height + theme.rowSpacing)
+        let centerY = rowTop + RowMetrics.height / 2
+        let centerX = bounds.width - theme.contentPadding
+            - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
+        let hit = RowMetrics.deleteDiameter + 10
+        return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
     }
 
     // MARK: - Context menu (AppKit; reliable while the panel is non-key)
@@ -112,7 +209,35 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         clearAll.isEnabled = !store.items.isEmpty
         menu.addItem(clearAll)
 
+        menu.addItem(.separator())
+        menu.addItem(appearanceMenuItem())
+
         return menu
+    }
+
+    /// "Appearance ▸ Glass / Minimal" — toggles the active look live.
+    private func appearanceMenuItem() -> NSMenuItem {
+        let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for style in ShelfStyle.allCases {
+            let item = NSMenuItem(
+                title: style.displayName,
+                action: #selector(selectStyleAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = style.rawValue
+            item.state = (style == themeStore.style) ? .on : .off
+            submenu.addItem(item)
+        }
+        appearance.submenu = submenu
+        return appearance
+    }
+
+    @objc private func selectStyleAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let style = ShelfStyle(rawValue: raw) else { return }
+        themeStore.style = style
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {

@@ -27,5 +27,11 @@ final class ShelfPanel: NSPanel {
         hasShadow = true
         isOpaque = false
         backgroundColor = .clear
+        // Needed so the host view's mouse-moved tracking (hover highlight + delete
+        // button) fires while the panel is non-key.
+        acceptsMouseMovedEvents = true
+        // We drive reveal/hide ourselves (content-layer transform + alpha); keep AppKit's
+        // default window animations from fighting it.
+        animationBehavior = .none
     }
 }

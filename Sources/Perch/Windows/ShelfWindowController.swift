@@ -1,10 +1,30 @@
 import AppKit
+import QuartzCore
 
 /// Reveals / hides / animates the shelf panel and persists its frame.
+///
+/// Smoothness note: rather than sliding the whole vibrant-material window across the
+/// screen (which forces the blur to re-sample the desktop every frame over a long
+/// travel — the classic janky-panel symptom), we drop the window straight onto its
+/// final frame and animate only the *content layer* a short distance: a small edge-ward
+/// translate + subtle scale, paired with a window-alpha fade. Short travel = far less
+/// per-frame work = smooth, premium settle.
 @MainActor
 final class ShelfWindowController {
     let panel: ShelfPanel
     private static let persistedFrameKey = "Perch.ShelfWindowController.frame"
+    private static let transformKey = "perch.reveal.transform"
+
+    private static let revealDuration: CFTimeInterval = 0.30
+    private static let hideDuration: CFTimeInterval = 0.18
+    /// Smooth quint-style decel for the entrance; a gentle ease-in for the exit.
+    private static let revealCurve = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+    private static let hideCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
+    /// How far the content travels during the settle, in points.
+    private static let travel: CGFloat = 16
+    /// How small the content starts before settling to full size.
+    private static let startScale: CGFloat = 0.97
+
     private var revealedFrame: NSRect
     private var edge: ShelfEdge = .right
 
@@ -17,48 +37,79 @@ final class ShelfWindowController {
         reveal(animated: animated, targetFrame: revealedFrame, edge: edge)
     }
 
-    /// Reveal at a specific frame, easing + fading in from off that frame's edge
-    /// (the side for left/right, the top for the notch).
+    /// Reveal at a specific frame. The window lands at `targetFrame` immediately; the
+    /// content layer eases + fades in from a small offset toward the originating edge.
     func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge) {
         self.edge = edge
         revealedFrame = targetFrame
+        panel.setFrame(targetFrame, display: false)
 
-        guard animated else {
+        guard animated, let layer = panel.contentView?.layer else {
+            panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
             panel.alphaValue = 1
-            panel.setFrame(targetFrame, display: true)
             panel.orderFrontRegardless()
             return
         }
 
-        panel.setFrame(hiddenFrame(for: targetFrame), display: false)
         panel.alphaValue = 0
         panel.orderFrontRegardless()
 
+        let transform = CABasicAnimation(keyPath: "transform")
+        transform.fromValue = NSValue(caTransform3D: Self.offsetTransform(for: edge, in: layer.bounds))
+        transform.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        transform.duration = Self.revealDuration
+        transform.timingFunction = Self.revealCurve
+        layer.add(transform, forKey: Self.transformKey)
+
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.26
-            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            panel.animator().setFrame(targetFrame, display: true)
+            context.duration = Self.revealDuration
+            context.timingFunction = Self.revealCurve
             panel.animator().alphaValue = 1
         }
     }
 
     func hide(animated: Bool) {
-        let targetFrame = hiddenFrame(for: revealedFrame)
-        guard animated else {
-            panel.setFrame(targetFrame, display: false)
+        guard animated, let layer = panel.contentView?.layer else {
             panel.orderOut(nil)
             panel.alphaValue = 1
             return
         }
 
+        let transformKey = Self.transformKey
+        let transform = CABasicAnimation(keyPath: "transform")
+        transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
+        transform.toValue = NSValue(caTransform3D: Self.offsetTransform(for: edge, in: layer.bounds))
+        transform.duration = Self.hideDuration
+        transform.timingFunction = Self.hideCurve
+        transform.fillMode = .forwards
+        transform.isRemovedOnCompletion = false
+        layer.add(transform, forKey: transformKey)
+
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.2
-            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
-            panel.animator().setFrame(targetFrame, display: true)
+            context.duration = Self.hideDuration
+            context.timingFunction = Self.hideCurve
             panel.animator().alphaValue = 0
         } completionHandler: { [weak panel] in
             panel?.orderOut(nil)
             panel?.alphaValue = 1
+            panel?.contentView?.layer?.removeAnimation(forKey: transformKey)
+        }
+    }
+
+    /// Smoothly grow/shrink the visible panel to a new frame (e.g. when items are added
+    /// or removed and the card should hug its contents). No-op layout if hidden.
+    func resize(to targetFrame: NSRect) {
+        revealedFrame = targetFrame
+        guard panel.isVisible else {
+            panel.setFrame(targetFrame, display: false)
+            return
+        }
+        guard targetFrame != panel.frame else { return }
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.26
+            context.timingFunction = Self.revealCurve
+            panel.animator().setFrame(targetFrame, display: true)
         }
     }
 
@@ -82,35 +133,23 @@ final class ShelfWindowController {
         UserDefaults.standard.set(NSStringFromRect(revealedFrame), forKey: Self.persistedFrameKey)
     }
 
-    private func hiddenFrame(for frame: NSRect) -> NSRect {
-        guard let screenFrame = screen(for: frame)?.frame else {
-            return frame.offsetBy(dx: frame.width, dy: 0)
-        }
-
+    /// The content's starting transform: nudged a few points toward the originating
+    /// edge and scaled down slightly about its center.
+    private static func offsetTransform(for edge: ShelfEdge, in bounds: CGRect) -> CATransform3D {
+        var dx: CGFloat = 0
+        var dy: CGFloat = 0
         switch edge {
-        case .left:
-            return NSRect(x: screenFrame.minX - frame.width, y: frame.minY, width: frame.width, height: frame.height)
-        case .right:
-            return NSRect(x: screenFrame.maxX, y: frame.minY, width: frame.width, height: frame.height)
-        case .notch:
-            // Slide up behind the menu bar / notch.
-            return NSRect(x: frame.minX, y: screenFrame.maxY, width: frame.width, height: frame.height)
-        }
-    }
-
-    private func screen(for frame: NSRect) -> NSScreen? {
-        NSScreen.screens.max { lhs, rhs in
-            lhs.frame.intersection(frame).area < rhs.frame.intersection(frame).area
-        } ?? panel.screen ?? NSScreen.main ?? NSScreen.screens.first
-    }
-}
-
-private extension NSRect {
-    var area: CGFloat {
-        guard !isNull, !isEmpty else {
-            return 0
+        case .left: dx = -travel
+        case .right: dx = travel
+        case .notch: dy = travel   // layer y is up; start above, settle down into place
         }
 
-        return width * height
+        let w = bounds.width
+        let h = bounds.height
+        var t = CATransform3DMakeTranslation(dx, dy, 0)
+        t = CATransform3DTranslate(t, w / 2, h / 2, 0)
+        t = CATransform3DScale(t, startScale, startScale, 1)
+        t = CATransform3DTranslate(t, -w / 2, -h / 2, 0)
+        return t
     }
 }

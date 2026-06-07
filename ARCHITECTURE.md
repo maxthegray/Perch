@@ -59,7 +59,7 @@ The writer offers, **in priority order for file delivery**:
 The master file under `files/` must survive every drag-out. `ItemDragSource` enforces this
 by implementing `draggingSession(_:sourceOperationMaskFor:)` to return **`.copy`** for
 file-backed items in **both** drag contexts, so no destination (Finder included) can move
-or relocate the master out of the shelf (Decisions F, K, L).
+or relocate the master out of the shelf.
 
 ## 3. Module / component map
 
