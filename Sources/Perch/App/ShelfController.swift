@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import Darwin
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
@@ -19,6 +20,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var pointerInRegion = false
     private var preferredScreen: NSScreen?
     private var preferredEdge: ShelfEdge = .right
+    private var itemsCancellable: AnyCancellable?
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -56,6 +58,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.setTabsShown(active)
         }
         mouseMonitor.start()
+
+        // Stay open while the shelf holds items; retract to the tab when empty.
+        // Subscribing fires immediately with the loaded items.
+        itemsCancellable = store.$items
+            .map(\.isEmpty)
+            .removeDuplicates()
+            .sink { [weak self] isEmpty in
+                self?.shelfContentDidChange(isEmpty: isEmpty)
+            }
     }
 
     private func setTabsShown(_ shown: Bool) {
@@ -211,11 +222,27 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    /// The pointer left the region — retract the shelf (after a short grace).
+    /// The pointer left the region. The shelf stays open while it holds items;
+    /// otherwise it retracts to the tab.
     private func exitRegion() {
         cancelOpen()
         pointerInRegion = false
-        scheduleRetract()
+        if store.items.isEmpty {
+            scheduleRetract()
+        }
+    }
+
+    /// Open and stay open while the shelf holds items; retract once empty (unless the
+    /// pointer is hovering it).
+    private func shelfContentDidChange(isEmpty: Bool) {
+        if isEmpty {
+            if !pointerInRegion {
+                scheduleRetract()
+            }
+        } else {
+            cancelRetract()
+            revealIfNeeded()
+        }
     }
 
     private func revealIfNeeded() {
@@ -245,8 +272,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         retractTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 130_000_000)
             guard let self, !Task.isCancelled else { return }
-            // Re-check: the pointer may have re-entered during the grace.
-            guard !self.pointerInRegion else { return }
+            // Re-check: content may have arrived, or the pointer re-entered.
+            guard self.store.items.isEmpty, !self.pointerInRegion else { return }
             self.windowController.hide(animated: true)
             self.retractTask = nil
         }
