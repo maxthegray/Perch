@@ -5,12 +5,15 @@ import Darwin
 @MainActor
 final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let panel: ShelfPanel
+    private let windowController: ShelfWindowController
     private let holding: HoldingDirectory
     private let store: ItemStore
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
+    private var edgeStrips: [EdgeStripWindow] = []
+    private var hideTask: Task<Void, Never>?
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -18,6 +21,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
+        windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
         hostView = ShelfHostView(store: store)
         dropView.autoresizingMask = [.width, .height]
@@ -37,7 +41,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch failed to load stored items: \(error)")
         }
 
-        panel.orderFrontRegardless()
+        windowController.restorePersistedFrame()
+        windowController.hide(animated: false)
+        installEdgeStripIfNeeded()
     }
 
     // MARK: ShelfDropHandling
@@ -59,6 +65,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 materializePendingPromises(for: result.item, receivers: result.pendingPromises, initialCount: beforeCount)
             }
 
+            hideShelf(animated: true)
             return true
         } catch {
             NSLog("Perch drop failed: \(error)")
@@ -69,7 +76,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     // MARK: EdgeStripDelegate
 
     func edgeStripDidReceiveDrag(_ strip: EdgeStripWindow) {
-        fatalError("unimplemented")
+        NSLog("Perch edge strip received drag at frame \(NSStringFromRect(strip.frame))")
+        windowController.reveal(animated: true)
+        scheduleAutoHide()
     }
 
     private static func initialPanelFrame() -> NSRect {
@@ -83,6 +92,45 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             width: width,
             height: visibleFrame.height
         )
+    }
+
+    private func installEdgeStripIfNeeded() {
+        guard edgeStrips.isEmpty else {
+            return
+        }
+
+        guard !NSScreen.screens.isEmpty else {
+            NSLog("Perch edge strip not installed: no screen available")
+            return
+        }
+
+        edgeStrips = NSScreen.screens.map { screen in
+            let strip = EdgeStripWindow(screen: screen)
+            strip.stripDelegate = self
+            strip.orderFrontRegardless()
+            NSLog("Perch edge strip installed at frame \(NSStringFromRect(strip.frame))")
+            return strip
+        }
+    }
+
+    private func scheduleAutoHide() {
+        hideTask?.cancel()
+        hideTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: 5_000_000_000)
+            } catch {
+                return
+            }
+
+            self?.windowController.hide(animated: true)
+            self?.hideTask = nil
+        }
+    }
+
+    private func hideShelf(animated: Bool) {
+        hideTask?.cancel()
+        hideTask = nil
+        windowController.hide(animated: animated)
     }
 
     private func materializePendingPromises(

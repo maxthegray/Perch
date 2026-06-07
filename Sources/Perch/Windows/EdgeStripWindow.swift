@@ -17,12 +17,67 @@ final class EdgeStripWindow: NSPanel {
     weak var stripDelegate: EdgeStripDelegate?
 
     init(screen: NSScreen) {
-        // T10: full-height, `stripWidth`-wide, pinned right edge, transparent,
-        // `ignoresMouseEvents = false`, registered for dragged types.
-        fatalError("unimplemented")
+        let screenFrame = screen.frame
+        let contentRect = NSRect(
+            x: screenFrame.maxX - Self.stripWidth,
+            y: screenFrame.minY,
+            width: Self.stripWidth,
+            height: screenFrame.height
+        )
+
+        super.init(
+            contentRect: contentRect,
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        configureStrip()
     }
 
     required init?(coder: NSCoder) {
-        fatalError("unimplemented")
+        return nil
+    }
+
+    override var canBecomeKey: Bool { false }
+
+    private func configureStrip() {
+        level = .floating
+        collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        isReleasedWhenClosed = false
+        hidesOnDeactivate = false
+        hasShadow = false
+        isOpaque = false
+        backgroundColor = .clear
+        ignoresMouseEvents = false
+
+        let triggerView = EdgeStripTriggerView(frame: NSRect(origin: .zero, size: frame.size))
+        triggerView.autoresizingMask = [.width, .height]
+        triggerView.strip = self
+        contentView = triggerView
+    }
+}
+
+private final class EdgeStripTriggerView: NSView {
+    weak var strip: EdgeStripWindow?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        registerForDraggedTypes(ShelfDropView.acceptedTypes)
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        registerForDraggedTypes(ShelfDropView.acceptedTypes)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        guard sender.draggingPasteboard.availableType(from: ShelfDropView.acceptedTypes) != nil else {
+            return []
+        }
+
+        if let strip {
+            strip.stripDelegate?.edgeStripDidReceiveDrag(strip)
+        }
+        return []
     }
 }
