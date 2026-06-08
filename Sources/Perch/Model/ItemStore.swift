@@ -38,6 +38,14 @@ final class ItemStore: ObservableObject {
         persistIndexOrLogFailure()
     }
 
+    /// Replace the display order with `ordered` (a permutation of the current items) and
+    /// persist it. Used by drag-to-reorder.
+    func setOrder(_ ordered: [StoredItem]) {
+        guard ordered.count == items.count else { return }
+        items = ordered
+        persistIndexOrLogFailure()
+    }
+
     /// Remove an item and delete its `items/<uuid>/` directory.
     func remove(_ item: StoredItem) {
         items.removeAll { $0.id == item.id }

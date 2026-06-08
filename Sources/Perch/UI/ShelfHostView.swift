@@ -11,6 +11,7 @@ import SwiftUI
 final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
     private let store: ItemStore
     private let themeStore: ThemeStore
+    private let edgeSettings: EdgeSettings
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let loginItem = LoginItemController()
@@ -22,6 +23,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
+    /// The row pressed at mouse-down — a pending drag that becomes either an in-shelf
+    /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
+    private var dragItem: StoredItem?
+    private var dragStartPoint: NSPoint = .zero
+    /// True once a reorder is underway (rows live-shuffle a preview order).
+    private var reorderActive = false
+    /// Item order captured at the start of a reorder, used to recompute the preview.
+    private var reorderBaseOrder: [StoredItem] = []
+    /// True once the gesture has handed off to a system drag (vend); local tracking stops.
+    private var vendStarted = false
     /// URLs currently fed to `QLPreviewPanel`.
     private var quickLookURLs: [URL] = []
 
@@ -29,9 +40,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
-    init(store: ItemStore, themeStore: ThemeStore) {
+    init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings) {
         self.store = store
         self.themeStore = themeStore
+        self.edgeSettings = edgeSettings
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
@@ -99,37 +111,99 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
+        resetDragState()
+
         if themeStore.theme.showsDeleteButton,
            let index = rowIndex(at: point),
            deleteHitRect(forRow: index).contains(point) {
             pendingDeleteItem = store.items[index]
             return
         }
-        pendingDeleteItem = nil
-        super.mouseDown(with: event)
-    }
 
-    override func mouseUp(with event: NSEvent) {
-        guard let item = pendingDeleteItem else { return }
-        pendingDeleteItem = nil
-
-        let point = convert(event.locationInWindow, from: nil)
-        if let index = rowIndex(at: point),
-           index < store.items.count,
-           store.items[index].id == item.id,
-           deleteHitRect(forRow: index).contains(point) {
-            store.remove(item)
-        }
+        dragItem = item(at: point)
+        dragStartPoint = point
     }
 
     override func mouseDragged(with event: NSEvent) {
         // A press that started on a delete button must not turn into a drag.
-        guard pendingDeleteItem == nil else { return }
+        guard pendingDeleteItem == nil, !vendStarted, let item = dragItem else { return }
+        let point = convert(event.locationInWindow, from: nil)
 
-        guard let item = item(at: convert(event.locationInWindow, from: nil)) else {
-            return
+        if !reorderActive {
+            let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
+            guard moved >= 4 else { return }
+            // Stay inside the shelf → reorder; leave it → vend out to another app.
+            if bounds.contains(point) {
+                beginReorder(item)
+            } else {
+                startVend(item, event: event)
+                return
+            }
         }
 
+        if !bounds.contains(point) {
+            cancelReorder()
+            startVend(item, event: event)
+            return
+        }
+        updateReorderPreview(of: item, at: point)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if let item = pendingDeleteItem {
+            pendingDeleteItem = nil
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = rowIndex(at: point),
+               index < store.items.count,
+               store.items[index].id == item.id,
+               deleteHitRect(forRow: index).contains(point) {
+                store.remove(item)
+            }
+        } else if reorderActive {
+            commitReorder()
+        }
+        resetDragState()
+    }
+
+    // MARK: Reorder / vend
+
+    private func beginReorder(_ item: StoredItem) {
+        reorderActive = true
+        reorderBaseOrder = store.items
+        interaction.draggingItemID = item.id
+        interaction.previewOrder = store.items
+    }
+
+    /// Recompute the previewed order so `item` sits in the slot under the pointer.
+    private func updateReorderPreview(of item: StoredItem, at point: NSPoint) {
+        let count = reorderBaseOrder.count
+        guard count > 1 else { return }
+        let theme = themeStore.theme
+        let pitch = theme.rowHeight + theme.rowSpacing
+        let raw = Int((point.y + contentScrollOffsetY() - theme.contentPadding) / pitch)
+        let target = max(0, min(count - 1, raw))
+
+        var order = reorderBaseOrder.filter { $0.id != item.id }
+        order.insert(item, at: min(target, order.count))
+        interaction.previewOrder = order
+    }
+
+    private func commitReorder() {
+        if let order = interaction.previewOrder {
+            store.setOrder(order)
+        }
+        cancelReorder()
+    }
+
+    private func cancelReorder() {
+        reorderActive = false
+        reorderBaseOrder = []
+        interaction.draggingItemID = nil
+        interaction.previewOrder = nil
+    }
+
+    private func startVend(_ item: StoredItem, event: NSEvent) {
+        vendStarted = true
         let dragSource = ItemDragSource(item: item)
         dragSource.onEnded = { [weak self] operation in
             guard let self else { return }
@@ -145,7 +219,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
-        NSLog("Perch row drag started from ShelfHostView.mouseDragged for item \(item.id.uuidString)")
+        NSLog("Perch row drag (vend) started for item \(item.id.uuidString)")
+    }
+
+    private func resetDragState() {
+        dragItem = nil
+        reorderActive = false
+        vendStarted = false
+        reorderBaseOrder = []
+        interaction.draggingItemID = nil
+        interaction.previewOrder = nil
     }
 
     private func item(at point: NSPoint) -> StoredItem? {
@@ -193,11 +276,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return 0
     }
 
-    /// Clear any hover highlight / armed delete (called when the shelf hides so stale
-    /// state doesn't carry into the next reveal).
+    /// Clear any hover highlight / armed delete / in-flight reorder (called when the
+    /// shelf hides so stale state doesn't carry into the next reveal).
     func resetInteraction() {
         interaction.hoveredItemID = nil
         pendingDeleteItem = nil
+        resetDragState()
     }
 
     // MARK: - Context menu (AppKit; reliable while the panel is non-key)
@@ -242,6 +326,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
         menu.addItem(.separator())
         menu.addItem(appearanceMenuItem())
+        menu.addItem(edgesMenuItem())
 
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
@@ -293,6 +378,34 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard let raw = sender.representedObject as? String,
               let style = ShelfStyle(rawValue: raw) else { return }
         themeStore.style = style
+    }
+
+    /// "Edges ▸ Left / Right / Top" — toggles which screen-edge docks are enabled.
+    private func edgesMenuItem() -> NSMenuItem {
+        let edges = NSMenuItem(title: "Edges", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let entries: [(String, ShelfEdge)] = [
+            ("Left", .left), ("Right", .right), ("Top (Notch)", .notch)
+        ]
+        for (title, edge) in entries {
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(toggleEdgeAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = edge.rawValue
+            item.state = edgeSettings.isEnabled(edge) ? .on : .off
+            submenu.addItem(item)
+        }
+        edges.submenu = submenu
+        return edges
+    }
+
+    @objc private func toggleEdgeAction(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let edge = ShelfEdge(rawValue: raw) else { return }
+        edgeSettings.toggle(edge)
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {

@@ -9,6 +9,12 @@ import Foundation
 @MainActor
 final class RowInteractionState: ObservableObject {
     @Published var hoveredItemID: UUID?
+
+    /// The item currently being dragged to reorder (lifted styling), or nil.
+    @Published var draggingItemID: UUID?
+    /// While a reorder drag is in progress, the live previewed ordering the rows should
+    /// render in. Nil when not reordering (rows follow the store's order).
+    @Published var previewOrder: [StoredItem]?
 }
 
 /// Delete-button layout constants shared between the SwiftUI rendering (`ItemRowView`)

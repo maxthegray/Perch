@@ -2,7 +2,7 @@ import AppKit
 import Combine
 
 /// Which screen edge a shelf tab / panel is attached to.
-enum ShelfEdge {
+enum ShelfEdge: String, CaseIterable {
     case left
     case right
     case notch

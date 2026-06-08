@@ -11,6 +11,8 @@ struct ItemRowView: View {
     let item: StoredItem
     let theme: ShelfTheme
     let isHovered: Bool
+    /// Whether this row is the one being dragged to reorder (lifted styling).
+    let isDragging: Bool
     /// A real Quick Look content preview, if one has been generated; otherwise nil and
     /// we fall back to the file-type icon.
     let thumbnail: NSImage?
@@ -53,8 +55,13 @@ struct ItemRowView: View {
         .overlay(alignment: .bottom) { separator }
         .overlay(alignment: .trailing) { deleteButton }
         .contentShape(Rectangle())
+        .scaleEffect(isDragging ? 1.03 : 1)
+        .shadow(color: .black.opacity(isDragging ? 0.25 : 0), radius: 6, y: 3)
+        .opacity(isDragging ? 0.95 : 1)
+        .zIndex(isDragging ? 1 : 0)
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
+        .animation(.easeOut(duration: 0.16), value: isDragging)
     }
 
     /// A real preview is shown as a small rounded "photo" tile; a generic file icon is

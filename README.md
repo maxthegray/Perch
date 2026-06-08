@@ -53,6 +53,7 @@ ad-hoc signature changes each build.)
   notch). Drag over it and the shelf slides out — drop onto it to store.
 - **Retrieve:** hover the edge to reveal the shelf, then drag an item out into any app.
   Items move out by default (the shelf hands off its copy).
+- **Reorder:** drag a row up/down *within* the shelf to rearrange; drag it *out* to vend.
 - **Right-click** an item or the shelf for: **Quick Look**, **Delete**, **Clear All**, and
   **Appearance ▸ Glass / Minimal** (toggles the look live; the choice persists).
 - **Hover** a row (Glass) to reveal a **✕** delete button.
@@ -72,3 +73,7 @@ items/<uuid>/
 ```
 
 It's plain JSON + files on disk — inspectable and easy to delete.
+
+## License
+
+[MIT](LICENSE) © Maximilian Reich

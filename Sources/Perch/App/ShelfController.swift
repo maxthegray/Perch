@@ -14,6 +14,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let themeStore = ThemeStore()
+    private let edgeSettings = EdgeSettings()
     private var edgeStrips: [EdgeStripWindow] = []
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
@@ -37,7 +38,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore)
+        hostView = ShelfHostView(store: store, themeStore: themeStore, edgeSettings: edgeSettings)
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -58,6 +59,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
+        }
+
+        // Reinstall the edge tabs whenever the user enables/disables an edge dock.
+        edgeSettings.onChange = { [weak self] in
+            self?.rebuildEdgeStrips()
         }
     }
 
@@ -274,14 +280,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         var strips: [EdgeStripWindow] = []
-        for screen in Self.screensWithOuterEdge(.right) {
-            strips.append(makeStrip(on: screen, edge: .right))
+        if edgeSettings.isEnabled(.right) {
+            for screen in Self.screensWithOuterEdge(.right) {
+                strips.append(makeStrip(on: screen, edge: .right))
+            }
         }
-        for screen in Self.screensWithOuterEdge(.left) {
-            strips.append(makeStrip(on: screen, edge: .left))
+        if edgeSettings.isEnabled(.left) {
+            for screen in Self.screensWithOuterEdge(.left) {
+                strips.append(makeStrip(on: screen, edge: .left))
+            }
         }
-        for screen in NSScreen.screens where EdgeStripWindow.hasNotch(screen) {
-            strips.append(makeStrip(on: screen, edge: .notch))
+        if edgeSettings.isEnabled(.notch) {
+            for screen in NSScreen.screens where EdgeStripWindow.hasNotch(screen) {
+                strips.append(makeStrip(on: screen, edge: .notch))
+            }
         }
         edgeStrips = strips
         NSLog("Perch installed \(strips.count) edge tab(s) across \(NSScreen.screens.count) screen(s)")
@@ -296,13 +308,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         edgeStrips.removeAll()
         installEdgeStripIfNeeded()
 
-        if let screen = preferredScreen, !NSScreen.screens.contains(screen) {
-            preferredScreen = nil
-            if panel.isVisible {
-                hideShelf(animated: false)
-            }
+        // Retract if the shelf is open on a screen that's gone or an edge now disabled.
+        let screenGone = preferredScreen.map { !NSScreen.screens.contains($0) } ?? false
+        if panel.isVisible, screenGone || !edgeSettings.isEnabled(preferredEdge) {
+            if screenGone { preferredScreen = nil }
+            hideShelf(animated: false)
         }
-        NSLog("Perch rebuilt edge tabs after screen change (\(NSScreen.screens.count) screen(s))")
+        NSLog("Perch rebuilt edge tabs (\(NSScreen.screens.count) screen(s), edges \(edgeSettings.enabledEdges.map(\.rawValue).sorted()))")
     }
 
     private func makeStrip(on screen: NSScreen, edge: ShelfEdge) -> EdgeStripWindow {

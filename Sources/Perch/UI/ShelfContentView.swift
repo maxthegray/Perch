@@ -52,22 +52,28 @@ struct ShelfContentView: View {
         }
     }
 
+    /// Rows follow the live preview order while reordering, otherwise the store order.
+    private var displayedItems: [StoredItem] {
+        interaction.previewOrder ?? store.items
+    }
+
     private var rowStack: some View {
         VStack(alignment: .leading, spacing: theme.rowSpacing) {
-            ForEach(store.items) { item in
+            ForEach(displayedItems) { item in
                 ItemRowView(
                     item: item,
                     theme: theme,
                     isHovered: interaction.hoveredItemID == item.id,
+                    isDragging: interaction.draggingItemID == item.id,
                     thumbnail: thumbnails.thumbnail(for: item),
-                    showsSeparator: theme.usesRowSeparators && item.id != store.items.last?.id
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: store.items.map(\.id))
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: displayedItems.map(\.id))
     }
 
     /// Reports the content's natural height up to the controller via a preference.
