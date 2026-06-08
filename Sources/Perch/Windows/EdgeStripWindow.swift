@@ -13,7 +13,7 @@ enum ShelfEdge: String, CaseIterable {
 protocol EdgeStripDelegate: AnyObject {
     /// The pointer entered the tab — `viaDrag` distinguishes a drag from a hover.
     func edgeStrip(_ strip: EdgeStripWindow, pointerDidEnterViaDrag viaDrag: Bool)
-    func edgeStripPointerDidExit(_ strip: EdgeStripWindow)
+    func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool)
 }
 
 /// A small visible "drop here" tab pinned to the right screen edge, vertically
@@ -262,7 +262,7 @@ private final class EdgeStripTriggerView: NSView {
 
     override func mouseExited(with event: NSEvent) {
         if let strip {
-            strip.stripDelegate?.edgeStripPointerDidExit(strip)
+            strip.stripDelegate?.edgeStripPointerDidExit(strip, duringDrag: false)
         }
     }
 
@@ -279,7 +279,7 @@ private final class EdgeStripTriggerView: NSView {
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         if let strip {
-            strip.stripDelegate?.edgeStripPointerDidExit(strip)
+            strip.stripDelegate?.edgeStripPointerDidExit(strip, duringDrag: true)
         }
     }
 }

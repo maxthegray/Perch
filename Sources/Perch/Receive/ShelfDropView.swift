@@ -7,7 +7,9 @@ protocol ShelfDropHandling: AnyObject {
     /// The pointer (hover or drag) entered the shelf panel's bounds (keep it open).
     func pointerDidEnterShelf()
     /// The pointer left the shelf panel's bounds (retract back to the tab).
-    func pointerDidExitShelf()
+    /// `duringDrag` is true when a drag session left (vs a plain hover), which needs a
+    /// brief grace to bridge the tab↔panel hand-off; a hover exit retracts immediately.
+    func pointerDidExitShelf(duringDrag: Bool)
 }
 
 /// The panel's drop target (`NSDraggingDestination`).
@@ -58,7 +60,7 @@ final class ShelfDropView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        dropHandler?.pointerDidExitShelf()
+        dropHandler?.pointerDidExitShelf(duringDrag: false)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
@@ -74,7 +76,7 @@ final class ShelfDropView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        dropHandler?.pointerDidExitShelf()
+        dropHandler?.pointerDidExitShelf(duringDrag: true)
     }
 
     /// Report `.copy` so the source app takes no action on the original — the shelf

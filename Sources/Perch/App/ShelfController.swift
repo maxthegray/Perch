@@ -20,6 +20,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var openTask: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
+    /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
+    /// the pointer leaves — see `startRetractWatcher`.
+    private var retractWatcher: Task<Void, Never>?
     /// Tracks the last empty/non-empty state so open/retract only runs on a real flip.
     private var wasEmpty: Bool?
     /// Latest measured SwiftUI content height, used to size the window to fit.
@@ -207,8 +210,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         enterRegion(immediate: true)
     }
 
-    func pointerDidExitShelf() {
-        exitRegion()
+    func pointerDidExitShelf(duringDrag: Bool) {
+        exitRegion(duringDrag: duringDrag)
     }
 
     // MARK: EdgeStripDelegate
@@ -222,8 +225,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         enterRegion(immediate: viaDrag)
     }
 
-    func edgeStripPointerDidExit(_ strip: EdgeStripWindow) {
-        exitRegion()
+    func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
+        exitRegion(duringDrag: duringDrag)
     }
 
     /// Height of the empty drop target — also the card's minimum size.
@@ -233,7 +236,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return NSRect(x: 0, y: 0, width: 300, height: emptyStateHeight)
         }
-        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight, width: 300)
+        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight, width: 300, centerY: nil)
     }
 
     /// The card height that hugs `itemCount` rows (or the empty-state height when zero).
@@ -252,7 +255,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             for: screen,
             edge: edge,
             contentHeight: measuredContentHeight ?? contentHeight(for: store.items.count),
-            width: cardWidth(for: edge)
+            width: cardWidth(for: edge),
+            centerY: nil
         )
     }
 
@@ -275,7 +279,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// The floating-card frame on a given screen + edge: inset from that edge so the
     /// edge tab's catch zone (wider than the margin) still overlaps the panel — no
     /// dead zone on the hand-off. Height tracks the content, capped to the screen.
-    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge, contentHeight: CGFloat, width: CGFloat) -> NSRect {
+    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge, contentHeight: CGFloat, width: CGFloat, centerY: CGFloat?) -> NSRect {
         let visibleFrame = screen.visibleFrame
 
         if edge == .notch {
@@ -294,7 +298,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let width = min(width, visibleFrame.width - margin)
         // Grow freely to fit the contents; only the physical screen height bounds it.
         let height = min(contentHeight, visibleFrame.height - 24)
-        let y = visibleFrame.minY + (visibleFrame.height - height) / 2
+        // Anchor on the cursor's Y when we have one (so the card opens beside the drag),
+        // clamped to stay fully on-screen; otherwise fall back to vertical center.
+        let y: CGFloat
+        if let centerY {
+            let lowerBound = visibleFrame.minY + 12
+            let upperBound = visibleFrame.maxY - height - 12
+            y = min(max(centerY - height / 2, lowerBound), max(lowerBound, upperBound))
+        } else {
+            y = visibleFrame.minY + (visibleFrame.height - height) / 2
+        }
         let x = edge == .left ? visibleFrame.minX + margin : visibleFrame.maxX - width - margin
 
         return NSRect(x: x, y: y, width: width, height: height)
@@ -399,14 +412,64 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    /// The pointer left the region. The shelf stays open while it holds items;
-    /// otherwise it retracts to the tab.
-    private func exitRegion() {
+    /// The pointer left the region. A plain hover exit retracts immediately. Drag exits
+    /// are *ignored* here: the card emits spurious exit events while it animates and
+    /// resizes in, which would yank an empty shelf out from under an in-flight drop —
+    /// the retract watcher governs the drag case from the real cursor position instead.
+    private func exitRegion(duringDrag: Bool) {
         cancelOpen()
+        if duringDrag { return }
         pointerInRegion = false
-        if store.items.isEmpty {
-            scheduleRetract()
+        guard store.items.isEmpty else { return }
+        // Moving off the (centered) card toward the tab still reads as a card-exit, but
+        // it's really a hand-off across the gap — only retract instantly when the pointer
+        // has actually left the whole tab↔card corridor; otherwise let the watcher decide.
+        if pointerOverShelfOrTab(NSEvent.mouseLocation) { return }
+        scheduleRetract(immediate: true)
+    }
+
+    /// While the shelf is open, poll the real cursor position and retract once it's
+    /// empty and the pointer has left both the card and the tab. Polling (rather than
+    /// the panel's own enter/exit events) stays correct across the reveal animation,
+    /// the resize-to-fit, and drops that swallow the mouse-up — all of which make the
+    /// per-window drag events unreliable.
+    private func startRetractWatcher() {
+        retractWatcher?.cancel()
+        retractWatcher = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard let self, !Task.isCancelled, self.panel.isVisible else { return }
+                // Persistent while full; only an empty shelf retracts on pointer-out.
+                guard self.store.items.isEmpty else { continue }
+                if self.pointerOverShelfOrTab(NSEvent.mouseLocation) { continue }
+                self.hostView.resetInteraction()
+                self.windowController.hide(animated: true)
+                return
+            }
         }
+    }
+
+    private func stopRetractWatcher() {
+        retractWatcher?.cancel()
+        retractWatcher = nil
+    }
+
+    /// Whether the cursor is within the keep-open corridor: the card, any tab, or the
+    /// span bridging the active tab to the (centered) card — so carrying a drag from the
+    /// tab across the gap to the card never reads as "left the shelf" (screen coords).
+    private func pointerOverShelfOrTab(_ point: NSPoint) -> Bool {
+        if keepAliveRegion().contains(point) { return true }
+        return edgeStrips.contains { $0.frame.contains(point) }
+    }
+
+    /// The card's frame unioned with the active edge's tab, so the rectangle spans the
+    /// whole corridor between the tab and the centered card.
+    private func keepAliveRegion() -> NSRect {
+        var region = panel.frame.insetBy(dx: -14, dy: -14)
+        if let tab = edgeStrips.first(where: { $0.edge == preferredEdge }) {
+            region = region.union(tab.frame)
+        }
+        return region
     }
 
     /// Open and stay open while the shelf holds items; retract once empty (unless the
@@ -424,6 +487,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func revealIfNeeded() {
         cancelRetract()
+        startRetractWatcher()
         guard !panel.isVisible else { return }
 
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
@@ -441,13 +505,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         retractTask = nil
     }
 
-    /// Retract the shelf shortly after it should close. The small grace lets the
-    /// pointer hand off between the edge tab and the panel without flicker; a
-    /// re-enter (or new content) cancels it.
-    private func scheduleRetract() {
+    /// Retract the shelf back to the tab. A hover exit passes `immediate` for a
+    /// zero-delay dismissal; a drag exit keeps a brief grace so the tab↔panel
+    /// hand-off (which fires a spurious exit then re-enter) isn't cut off. Either way
+    /// a re-enter or new content cancels it.
+    private func scheduleRetract(immediate: Bool = false) {
         cancelRetract()
         retractTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 130_000_000)
+            if !immediate {
+                try? await Task.sleep(nanoseconds: 130_000_000)
+            }
             guard let self, !Task.isCancelled else { return }
             // Re-check: content may have arrived, or the pointer re-entered.
             guard self.store.items.isEmpty, !self.pointerInRegion else { return }
@@ -459,6 +526,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func hideShelf(animated: Bool) {
         cancelRetract()
+        stopRetractWatcher()
         hostView.resetInteraction()
         windowController.hide(animated: animated)
     }
