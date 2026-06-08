@@ -33,6 +33,7 @@ struct ShelfContentView: View {
             .clipShape(cardShape)
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
+            .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
     }
 
@@ -66,7 +67,8 @@ struct ShelfContentView: View {
                     isHovered: interaction.hoveredItemID == item.id,
                     isDragging: interaction.draggingItemID == item.id,
                     thumbnail: thumbnails.thumbnail(for: item),
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
+                    showsLabels: themeStore.showsLabels
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -84,15 +86,10 @@ struct ShelfContentView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "tray.and.arrow.down")
-                .font(.system(size: 26, weight: .light))
-                .foregroundStyle(.secondary)
-            Text("Drop here")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .frame(height: 96)
+        Image(systemName: "tray.and.arrow.down")
+            .font(.system(size: 22, weight: .light))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .frame(height: 64)
     }
 }

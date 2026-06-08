@@ -120,6 +120,7 @@ struct ShelfTheme {
 @MainActor
 final class ThemeStore: ObservableObject {
     private static let key = "Perch.ShelfStyle"
+    private static let labelsKey = "Perch.ShowsLabels"
 
     @Published var style: ShelfStyle {
         didSet {
@@ -128,11 +129,25 @@ final class ThemeStore: ObservableObject {
         }
     }
 
+    /// Whether rows show the item's name/subtitle alongside the icon. When off, the
+    /// shelf collapses to a compact icons-only strip.
+    @Published var showsLabels: Bool {
+        didSet {
+            guard showsLabels != oldValue else { return }
+            UserDefaults.standard.set(showsLabels, forKey: Self.labelsKey)
+        }
+    }
+
     var theme: ShelfTheme { ShelfTheme.resolve(style) }
 
     init() {
         let raw = UserDefaults.standard.string(forKey: Self.key)
         style = raw.flatMap(ShelfStyle.init(rawValue:)) ?? .glass
+        if UserDefaults.standard.object(forKey: Self.labelsKey) != nil {
+            showsLabels = UserDefaults.standard.bool(forKey: Self.labelsKey)
+        } else {
+            showsLabels = true
+        }
     }
 
     func toggle(to style: ShelfStyle) {

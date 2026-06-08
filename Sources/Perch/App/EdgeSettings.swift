@@ -18,12 +18,15 @@ final class EdgeSettings {
         }
     }
 
+    /// On a fresh install only the left dock is enabled; the user opts into the others.
+    private static let defaultEdges: Set<ShelfEdge> = [.left]
+
     init() {
         if let raw = UserDefaults.standard.array(forKey: Self.key) as? [String] {
             let edges = Set(raw.compactMap(ShelfEdge.init(rawValue:)))
-            enabledEdges = edges.isEmpty ? Set(ShelfEdge.allCases) : edges
+            enabledEdges = edges.isEmpty ? Self.defaultEdges : edges
         } else {
-            enabledEdges = Set(ShelfEdge.allCases)
+            enabledEdges = Self.defaultEdges
         }
     }
 

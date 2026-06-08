@@ -18,35 +18,39 @@ struct ItemRowView: View {
     let thumbnail: NSImage?
     /// Whether to draw a hairline separator beneath this row (Minimal; not the last row).
     let showsSeparator: Bool
+    /// When false, the name/subtitle are hidden and the row shows just a centered icon.
+    let showsLabels: Bool
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: showsLabels ? 10 : 0) {
             icon
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.metadata.title)
-                    .font(.system(size: theme.titleSize, weight: theme.titleWeight))
-                    .foregroundStyle(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-
-                if theme.showsSubtitle {
-                    Text(subtitle)
-                        .font(.system(size: 9.5, weight: .semibold))
-                        .tracking(0.4)
-                        .foregroundStyle(.tertiary)
+            if showsLabels {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.metadata.title)
+                        .font(.system(size: theme.titleSize, weight: theme.titleWeight))
+                        .foregroundStyle(.primary)
                         .lineLimit(1)
-                }
-            }
+                        .truncationMode(.middle)
 
-            Spacer(minLength: 0)
+                    if theme.showsSubtitle {
+                        Text(subtitle)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
         }
-        .padding(.horizontal, 10)
+        .padding(.horizontal, showsLabels ? 10 : 0)
         .frame(
             maxWidth: .infinity,
             minHeight: theme.rowHeight,
             maxHeight: theme.rowHeight,
-            alignment: .leading
+            alignment: showsLabels ? .leading : .center
         )
         .background(
             RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)

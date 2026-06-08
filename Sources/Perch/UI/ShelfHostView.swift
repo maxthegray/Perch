@@ -328,6 +328,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(appearanceMenuItem())
         menu.addItem(edgesMenuItem())
 
+        let showNames = NSMenuItem(
+            title: "Show Names",
+            action: #selector(toggleShowLabelsAction(_:)),
+            keyEquivalent: ""
+        )
+        showNames.target = self
+        showNames.state = themeStore.showsLabels ? .on : .off
+        menu.addItem(showNames)
+
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
                 title: "Launch at Login",
@@ -406,6 +415,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard let raw = sender.representedObject as? String,
               let edge = ShelfEdge(rawValue: raw) else { return }
         edgeSettings.toggle(edge)
+    }
+
+    @objc private func toggleShowLabelsAction(_ sender: NSMenuItem) {
+        themeStore.showsLabels.toggle()
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {

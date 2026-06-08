@@ -29,6 +29,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var preferredScreen: NSScreen?
     private var preferredEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
+    private var labelsCancellable: AnyCancellable?
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -112,6 +113,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] items in
                 self?.shelfItemsDidChange(items)
             }
+
+        // Toggling names on/off changes the card's width — re-fit the open window.
+        labelsCancellable = themeStore.$showsLabels
+            .dropFirst()
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
+            }
     }
 
     /// React to the item list changing: run the open/retract logic only when the
@@ -129,9 +137,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func contentHeightDidChange(_ height: CGFloat) {
         guard height > 0 else { return }
         measuredContentHeight = height
+        resizeToFitVisible()
+    }
+
+    /// Re-fit the open window to the current content height + width (e.g. after the
+    /// label/compact toggle changes the card's width).
+    private func resizeToFitVisible() {
         guard panel.isVisible,
               let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        windowController.resize(to: Self.panelFrame(for: screen, edge: preferredEdge, contentHeight: height))
+        windowController.resize(to: panelFrame(for: screen, edge: preferredEdge))
     }
 
     private func setTabsShown(_ shown: Bool) {
@@ -212,14 +226,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         exitRegion()
     }
 
-    /// Height of the "Drop here" empty state — also the card's minimum size.
-    private static let emptyStateHeight: CGFloat = 100
+    /// Height of the empty drop target — also the card's minimum size.
+    private static let emptyStateHeight: CGFloat = 64
 
     private static func initialPanelFrame() -> NSRect {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return NSRect(x: 0, y: 0, width: 300, height: emptyStateHeight)
         }
-        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight)
+        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight, width: 300)
     }
 
     /// The card height that hugs `itemCount` rows (or the empty-state height when zero).
@@ -237,20 +251,37 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         Self.panelFrame(
             for: screen,
             edge: edge,
-            contentHeight: measuredContentHeight ?? contentHeight(for: store.items.count)
+            contentHeight: measuredContentHeight ?? contentHeight(for: store.items.count),
+            width: cardWidth(for: edge)
         )
+    }
+
+    /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip
+    /// just wide enough for an icon; once it holds items *and* names are shown it grows to
+    /// a comfortable list width.
+    private func cardWidth(for edge: ShelfEdge) -> CGFloat {
+        guard !store.items.isEmpty, themeStore.showsLabels else {
+            return compactCardWidth
+        }
+        return edge == .notch ? 360 : 300
+    }
+
+    /// Width of the compact (icon-sized) card, for the empty drop target and icons-only mode.
+    private var compactCardWidth: CGFloat {
+        let theme = themeStore.theme
+        return theme.contentPadding * 2 + 20 + theme.iconSize + 14
     }
 
     /// The floating-card frame on a given screen + edge: inset from that edge so the
     /// edge tab's catch zone (wider than the margin) still overlaps the panel — no
     /// dead zone on the hand-off. Height tracks the content, capped to the screen.
-    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge, contentHeight: CGFloat) -> NSRect {
+    private static func panelFrame(for screen: NSScreen, edge: ShelfEdge, contentHeight: CGFloat, width: CGFloat) -> NSRect {
         let visibleFrame = screen.visibleFrame
 
         if edge == .notch {
             // A card hanging from the notch: centered on it, dropping down from just
             // below the menu bar.
-            let width: CGFloat = 360
+            let width = min(width, visibleFrame.width - 16)
             let height = min(contentHeight, visibleFrame.height - 40)
             let interval = EdgeStripWindow.notchXInterval(for: screen)
             let centerX = (interval.min + interval.max) / 2
@@ -260,7 +291,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         let margin: CGFloat = 12
-        let width = min(CGFloat(300), visibleFrame.width - margin)
+        let width = min(width, visibleFrame.width - margin)
         // Grow freely to fit the contents; only the physical screen height bounds it.
         let height = min(contentHeight, visibleFrame.height - 24)
         let y = visibleFrame.minY + (visibleFrame.height - height) / 2
