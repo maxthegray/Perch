@@ -49,6 +49,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         set { UserDefaults.standard.set(newValue, forKey: Self.vendCopiesKey) }
     }
 
+    /// When true, the shelf reveals at the nearest enabled edge the moment a drag starts,
+    /// instead of waiting for the pointer to reach the edge tab. Read live by the
+    /// controller's drag handlers. Default false (open on tab touch).
+    static let revealOnDragStartKey = "Perch.RevealOnDragStart"
+    private var revealOnDragStart: Bool {
+        get { UserDefaults.standard.bool(forKey: Self.revealOnDragStartKey) }
+        set { UserDefaults.standard.set(newValue, forKey: Self.revealOnDragStartKey) }
+    }
+
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
@@ -334,18 +343,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             quickLook.isEnabled = !previewableURLs(for: item).isEmpty
             menu.addItem(quickLook)
 
-            if let entry = ledger.latestEntry(for: item.id) {
-                let folder = folderName(entry.destination)
-                let resend = NSMenuItem(
-                    title: "Send to \(folder) Again",
-                    action: #selector(resendMenuAction(_:)),
-                    keyEquivalent: ""
-                )
-                resend.target = self
-                resend.isEnabled = !item.backingFileURLs().isEmpty
-                menu.addItem(resend)
-            }
-
             let delete = NSMenuItem(
                 title: "Delete",
                 action: #selector(deleteMenuAction(_:)),
@@ -380,6 +377,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(appearanceMenuItem())
         menu.addItem(edgesMenuItem())
         menu.addItem(dragOutMenuItem())
+        menu.addItem(revealMenuItem())
 
         let showNames = NSMenuItem(
             title: "Show Names",
@@ -429,31 +427,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func showHistoryAction(_ sender: NSMenuItem) {
         onShowHistory?()
-    }
-
-    /// Re-send the right-clicked item to the folder it was last vended to, by copying
-    /// its backing files there and recording the move.
-    @objc private func resendMenuAction(_ sender: NSMenuItem) {
-        guard let item = menuTargetItem, let entry = ledger.latestEntry(for: item.id) else { return }
-        menuTargetItem = nil
-        let directory = URL(fileURLWithPath: entry.destination).deletingLastPathComponent()
-        let copied = store.copyBackingFiles(of: item, toDirectory: directory)
-        guard let first = copied.first else { return }
-        ledger.record(ProvenanceEntry(
-            id: item.id,
-            title: item.metadata.title,
-            origin: item.metadata.originPaths?.values.first,
-            destination: first.path,
-            vendedAt: Date(),
-            wasCopy: true
-        ))
-    }
-
-    /// The parent folder name of a file path, for compact menu labels.
-    private func folderName(_ path: String) -> String {
-        let parent = (path as NSString).deletingLastPathComponent
-        let name = (parent as NSString).lastPathComponent
-        return name.isEmpty ? "/" : name
     }
 
     /// "Appearance ▸ Glass / Minimal" — toggles the active look live.
@@ -536,6 +509,33 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     @objc private func selectDragOutModeAction(_ sender: NSMenuItem) {
         guard let copies = sender.representedObject as? Bool else { return }
         vendCopies = copies
+    }
+
+    /// "Reveal ▸ On Tab Hover / While Dragging" — whether the shelf opens only when the
+    /// pointer reaches the edge tab, or pops out at the nearest edge as soon as a drag
+    /// begins.
+    private func revealMenuItem() -> NSMenuItem {
+        let reveal = NSMenuItem(title: "Reveal", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        let entries: [(String, Bool)] = [("On Tab Hover", false), ("While Dragging", true)]
+        for (title, onDrag) in entries {
+            let item = NSMenuItem(
+                title: title,
+                action: #selector(selectRevealModeAction(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = onDrag
+            item.state = (onDrag == revealOnDragStart) ? .on : .off
+            submenu.addItem(item)
+        }
+        reveal.submenu = submenu
+        return reveal
+    }
+
+    @objc private func selectRevealModeAction(_ sender: NSMenuItem) {
+        guard let onDrag = sender.representedObject as? Bool else { return }
+        revealOnDragStart = onDrag
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {

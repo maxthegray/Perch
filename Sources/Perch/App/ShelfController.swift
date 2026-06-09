@@ -24,6 +24,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var pointerInRegion = false
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
+    /// True when the current drag (in "reveal while dragging" mode) is what opened the
+    /// shelf, so it follows the nearest edge during the drag and retracts on drag-end if
+    /// nothing was dropped onto it.
+    private var revealedForDrag = false
+
+    /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
+    /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled.
+    private var revealOnDragStart: Bool {
+        UserDefaults.standard.bool(forKey: ShelfHostView.revealOnDragStartKey)
+    }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
     private var retractWatcher: Task<Void, Never>?
@@ -114,12 +124,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self.hostView.setDropTarget(active)
             if active {
                 self.showNearestTab(to: NSEvent.mouseLocation)
+                if self.revealOnDragStart {
+                    self.revealForDrag(to: NSEvent.mouseLocation)
+                }
             } else {
                 self.setTabsShown(false)
+                self.dragDidEnd()
             }
         }
         mouseMonitor.onDragMoved = { [weak self] point in
-            self?.showNearestTab(to: point)
+            guard let self else { return }
+            self.showNearestTab(to: point)
+            if self.revealedForDrag {
+                self.followNearestEdge(to: point)
+            }
         }
         mouseMonitor.start()
 
@@ -173,14 +191,48 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Show only the tab whose catch zone is nearest the cursor.
     private func showNearestTab(to point: NSPoint) {
-        guard let nearest = edgeStrips.min(by: {
-            Self.distance(from: point, to: $0.frame) < Self.distance(from: point, to: $1.frame)
-        }) else {
-            return
-        }
+        guard let nearest = nearestStrip(to: point) else { return }
         for strip in edgeStrips {
             strip.showsTab = (strip === nearest)
         }
+    }
+
+    /// The enabled edge tab whose catch zone is nearest the cursor.
+    private func nearestStrip(to point: NSPoint) -> EdgeStripWindow? {
+        edgeStrips.min(by: {
+            Self.distance(from: point, to: $0.frame) < Self.distance(from: point, to: $1.frame)
+        })
+    }
+
+    /// "Reveal while dragging": open the shelf at the nearest enabled edge as the drag
+    /// begins. Only flagged as drag-revealed if it wasn't already open, so a persistent
+    /// (full) shelf is left where it is.
+    private func revealForDrag(to point: NSPoint) {
+        guard let strip = nearestStrip(to: point) else { return }
+        if !panel.isVisible { revealedForDrag = true }
+        preferredScreen = strip.pinnedScreen
+        preferredEdge = strip.edge
+        revealIfNeeded()
+    }
+
+    /// While a drag-revealed shelf is open, move it to whichever enabled edge the cursor
+    /// is now nearest, so it tracks the pointer across edges/screens.
+    private func followNearestEdge(to point: NSPoint) {
+        guard let strip = nearestStrip(to: point),
+              strip.edge != preferredEdge || strip.pinnedScreen != preferredScreen else { return }
+        preferredScreen = strip.pinnedScreen
+        preferredEdge = strip.edge
+        revealAtPreferredEdge()
+    }
+
+    /// End of a drag: if it was the drag that opened the shelf and nothing landed on it
+    /// (the cursor isn't over the shelf corridor), retract it back to the tab.
+    private func dragDidEnd() {
+        guard revealedForDrag else { return }
+        revealedForDrag = false
+        if pointerOverShelfOrTab(NSEvent.mouseLocation) { return }
+        hostView.resetInteraction()
+        windowController.hide(animated: true)
     }
 
     private static func distance(from point: NSPoint, to rect: NSRect) -> CGFloat {
@@ -463,6 +515,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 // Don't pull the shelf out from under an open context menu — submenus
                 // extend past the card, so the pointer reads as "left the shelf".
                 if self.hostView.isContextMenuOpen { continue }
+                // While a drag is holding the shelf open ("reveal while dragging"), keep
+                // it up regardless of pointer position; drag-end decides whether to close.
+                if self.revealedForDrag { continue }
                 // Persistent while full; only an empty shelf retracts on pointer-out.
                 guard self.store.items.isEmpty else { continue }
                 if self.pointerOverShelfOrTab(NSEvent.mouseLocation) { continue }
@@ -513,7 +568,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         cancelRetract()
         startRetractWatcher()
         guard !panel.isVisible else { return }
+        revealAtPreferredEdge()
+    }
 
+    /// Reveal (or reposition) the panel at the current preferred screen + edge.
+    private func revealAtPreferredEdge() {
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
         let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
         windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge)
