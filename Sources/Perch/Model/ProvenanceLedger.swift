@@ -63,4 +63,10 @@ final class ProvenanceLedger: ObservableObject {
     func latestEntry(for id: UUID) -> ProvenanceEntry? {
         entries.last { $0.id == id }
     }
+
+    /// Empty the ledger and delete `ledger.json`.
+    func clear() {
+        entries = []
+        try? FileManager.default.removeItem(at: holding.ledgerFile)
+    }
 }

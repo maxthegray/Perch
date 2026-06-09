@@ -84,6 +84,28 @@ final class ItemStore: ObservableObject {
         return restored
     }
 
+    /// Copy an item's backing files into `directory` (non-clobbering), leaving the item
+    /// on the shelf. Used to re-send an item to a folder it was previously vended to,
+    /// without a drag. Returns the URLs successfully written.
+    @discardableResult
+    func copyBackingFiles(of item: StoredItem, toDirectory directory: URL) -> [URL] {
+        let fileManager = FileManager.default
+        var copied: [URL] = []
+        for source in item.backingFileURLs() {
+            guard fileManager.fileExists(atPath: source.path) else { continue }
+            do {
+                try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+                let target = directory.appendingPathComponent(source.lastPathComponent, isDirectory: false)
+                let destination = nonClobberingURL(for: target, fileManager: fileManager)
+                try fileManager.copyItem(at: source, to: destination)
+                copied.append(destination)
+            } catch {
+                NSLog("Perch could not re-send \(source.lastPathComponent) to \(directory.path): \(error)")
+            }
+        }
+        return copied
+    }
+
     /// `url` if it's free, otherwise the same name with a `-2`, `-3`, … suffix.
     private func nonClobberingURL(for url: URL, fileManager: FileManager) -> URL {
         guard fileManager.fileExists(atPath: url.path) else { return url }

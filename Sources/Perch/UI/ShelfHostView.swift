@@ -53,6 +53,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
+    /// Called when the user picks "Show History…"; the controller opens the window.
+    var onShowHistory: (() -> Void)?
+
     init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
         self.store = store
         self.themeStore = themeStore
@@ -331,6 +334,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             quickLook.isEnabled = !previewableURLs(for: item).isEmpty
             menu.addItem(quickLook)
 
+            if let entry = ledger.latestEntry(for: item.id) {
+                let folder = folderName(entry.destination)
+                let resend = NSMenuItem(
+                    title: "Send to \(folder) Again",
+                    action: #selector(resendMenuAction(_:)),
+                    keyEquivalent: ""
+                )
+                resend.target = self
+                resend.isEnabled = !item.backingFileURLs().isEmpty
+                menu.addItem(resend)
+            }
+
             let delete = NSMenuItem(
                 title: "Delete",
                 action: #selector(deleteMenuAction(_:)),
@@ -352,6 +367,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         clearAll.target = self
         clearAll.isEnabled = !store.items.isEmpty
         menu.addItem(clearAll)
+
+        let history = NSMenuItem(
+            title: "Show History…",
+            action: #selector(showHistoryAction(_:)),
+            keyEquivalent: ""
+        )
+        history.target = self
+        menu.addItem(history)
 
         menu.addItem(.separator())
         menu.addItem(appearanceMenuItem())
@@ -402,6 +425,35 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func quitAction(_ sender: NSMenuItem) {
         NSApp.terminate(nil)
+    }
+
+    @objc private func showHistoryAction(_ sender: NSMenuItem) {
+        onShowHistory?()
+    }
+
+    /// Re-send the right-clicked item to the folder it was last vended to, by copying
+    /// its backing files there and recording the move.
+    @objc private func resendMenuAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem, let entry = ledger.latestEntry(for: item.id) else { return }
+        menuTargetItem = nil
+        let directory = URL(fileURLWithPath: entry.destination).deletingLastPathComponent()
+        let copied = store.copyBackingFiles(of: item, toDirectory: directory)
+        guard let first = copied.first else { return }
+        ledger.record(ProvenanceEntry(
+            id: item.id,
+            title: item.metadata.title,
+            origin: item.metadata.originPaths?.values.first,
+            destination: first.path,
+            vendedAt: Date(),
+            wasCopy: true
+        ))
+    }
+
+    /// The parent folder name of a file path, for compact menu labels.
+    private func folderName(_ path: String) -> String {
+        let parent = (path as NSString).deletingLastPathComponent
+        let name = (parent as NSString).lastPathComponent
+        return name.isEmpty ? "/" : name
     }
 
     /// "Appearance ▸ Glass / Minimal" — toggles the active look live.

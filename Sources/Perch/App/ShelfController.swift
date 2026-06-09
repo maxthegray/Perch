@@ -10,6 +10,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let holding: HoldingDirectory
     private let store: ItemStore
     private let ledger: ProvenanceLedger
+    private let historyWindow: HistoryWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
@@ -41,6 +42,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         holding = try HoldingDirectory.standard()
         store = ItemStore(holding: holding)
         ledger = ProvenanceLedger(holding: holding)
+        historyWindow = HistoryWindowController(ledger: ledger)
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
@@ -67,6 +69,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
+        }
+
+        hostView.onShowHistory = { [weak self] in
+            self?.historyWindow.show()
         }
 
         // Reinstall the edge tabs whenever the user enables/disables an edge dock.
