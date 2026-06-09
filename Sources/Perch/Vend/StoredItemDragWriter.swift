@@ -14,8 +14,8 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
     private var snapshot: StoredItemDragSnapshot?
     private var retainedDelegate: StoredItemDragWriterDelegate?
 
-    convenience init(item: StoredItem) {
-        let delegate = StoredItemDragWriterDelegate(item: item)
+    convenience init(item: StoredItem, recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil) {
+        let delegate = StoredItemDragWriterDelegate(item: item, recordVend: recordVend)
         self.init(fileType: delegate.promisedFileType, delegate: delegate)
         snapshot = delegate.snapshot
         retainedDelegate = delegate
@@ -99,11 +99,13 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
     fileprivate let snapshot: StoredItemDragSnapshot
     private let operationQueue: OperationQueue
     fileprivate let promisedFileType: String
+    private let recordVend: (@Sendable (ProvenanceEntry) -> Void)?
 
-    init(item: StoredItem) {
+    init(item: StoredItem, recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil) {
         snapshot = MainActor.assumeIsolated {
             StoredItemDragSnapshot(item: item)
         }
+        self.recordVend = recordVend
         operationQueue = OperationQueue()
         operationQueue.name = "Perch.StoredItemDragWriter"
         operationQueue.maxConcurrentOperationCount = 1
@@ -143,6 +145,14 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
 
             try Data(contentsOf: sourceURL).write(to: destinationURL, options: .atomic)
             NSLog("Perch promised file wrote \(sourceURL.lastPathComponent) to \(destinationURL.path)")
+            recordVend?(ProvenanceEntry(
+                id: snapshot.itemID,
+                title: snapshot.title,
+                origin: snapshot.origin,
+                destination: destinationURL.path,
+                vendedAt: Date(),
+                wasCopy: snapshot.wasCopy
+            ))
             completionHandler(nil)
         } catch {
             NSLog("Perch promised file write failed for \(sourceURL.lastPathComponent) to \(destinationURL.path): \(error)")
@@ -222,6 +232,11 @@ private struct StoredItemDragSnapshot {
     let title: String
     let representations: [RepRecord]
     let backingFileURLs: [URL]
+    let itemID: UUID
+    /// Original source path (first recorded origin), captured for the provenance ledger.
+    let origin: String?
+    /// Whether the shelf keeps its copy on a successful vend (copy mode).
+    let wasCopy: Bool
     private let representationFileURLsByType: [String: URL]
 
     @MainActor
@@ -229,6 +244,9 @@ private struct StoredItemDragSnapshot {
         title = item.metadata.title
         representations = item.metadata.representations
         backingFileURLs = item.backingFileURLs()
+        itemID = item.id
+        origin = item.metadata.originPaths?.values.first
+        wasCopy = UserDefaults.standard.bool(forKey: "Perch.VendCopies")
 
         let repsDir = item.directoryURL.appendingPathComponent("reps", isDirectory: true)
         var fileURLsByType: [String: URL] = [:]

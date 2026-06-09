@@ -20,6 +20,9 @@ struct ItemRowView: View {
     let showsSeparator: Bool
     /// When false, the name/subtitle are hidden and the row shows just a centered icon.
     let showsLabels: Bool
+    /// An origin → destination provenance breadcrumb, shown in place of the type
+    /// subtitle when the item's travel is known; nil falls back to the type label.
+    let breadcrumb: String?
 
     var body: some View {
         HStack(spacing: showsLabels ? 10 : 0) {
@@ -34,11 +37,12 @@ struct ItemRowView: View {
                         .truncationMode(.middle)
 
                     if theme.showsSubtitle {
-                        Text(subtitle)
+                        Text(breadcrumb ?? subtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                 }
 

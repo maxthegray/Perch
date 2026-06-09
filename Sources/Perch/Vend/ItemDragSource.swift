@@ -14,6 +14,10 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// once it has actually landed somewhere).
     var onEnded: ((NSDragOperation) -> Void)?
 
+    /// Called off the main actor when a file-promise vend completes, with the recorded
+    /// movement. The host hops it back to the main actor to append to the ledger.
+    var recordVend: (@Sendable (ProvenanceEntry) -> Void)?
+
     init(item: StoredItem) {
         self.item = item
         super.init()
@@ -37,7 +41,7 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// The single dragging item backing this drag (promise-preferred file delivery
     /// + lazy generic data + convenience file URL — see `StoredItemDragWriter`).
     func draggingItem() -> NSDraggingItem {
-        let writer = StoredItemDragWriter(item: item)
+        let writer = StoredItemDragWriter(item: item, recordVend: recordVend)
         activeWriter = writer
 
         let draggingItem = NSDraggingItem(pasteboardWriter: writer)

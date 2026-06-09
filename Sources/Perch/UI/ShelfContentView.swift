@@ -18,6 +18,7 @@ struct ShelfContentView: View {
     @ObservedObject var themeStore: ThemeStore
     @ObservedObject var interaction: RowInteractionState
     @ObservedObject var thumbnails: ThumbnailStore
+    @ObservedObject var ledger: ProvenanceLedger
     var onContentHeight: (CGFloat) -> Void = { _ in }
 
     private var theme: ShelfTheme { themeStore.theme }
@@ -59,6 +60,28 @@ struct ShelfContentView: View {
         interaction.previewOrder ?? store.items
     }
 
+    /// An `origin → destination` provenance breadcrumb, using each path's parent folder
+    /// name. Origin comes from the item's recorded source; destination from the latest
+    /// ledger entry for the item. Returns nil when neither is known (falls back to the
+    /// type subtitle).
+    private func breadcrumb(for item: StoredItem) -> String? {
+        let origin = item.metadata.originPaths?.values.first.map(locationLabel(forPath:))
+        let destination = ledger.latestEntry(for: item.id).map { locationLabel(forPath: $0.destination) }
+        switch (origin, destination) {
+        case let (origin?, destination?): return "\(origin) → \(destination)"
+        case let (origin?, nil): return "from \(origin)"
+        case let (nil, destination?): return "→ \(destination)"
+        case (nil, nil): return nil
+        }
+    }
+
+    /// The parent folder name of a file path, for compact display.
+    private func locationLabel(forPath path: String) -> String {
+        let parent = (path as NSString).deletingLastPathComponent
+        let name = (parent as NSString).lastPathComponent
+        return name.isEmpty ? "/" : name
+    }
+
     private var rowStack: some View {
         VStack(alignment: .leading, spacing: theme.rowSpacing) {
             ForEach(displayedItems) { item in
@@ -69,7 +92,8 @@ struct ShelfContentView: View {
                     isDragging: interaction.draggingItemID == item.id,
                     thumbnail: thumbnails.thumbnail(for: item),
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
-                    showsLabels: themeStore.showsLabels
+                    showsLabels: themeStore.showsLabels,
+                    breadcrumb: breadcrumb(for: item)
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
             }

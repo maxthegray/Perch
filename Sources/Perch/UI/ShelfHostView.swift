@@ -12,6 +12,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let store: ItemStore
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
+    private let ledger: ProvenanceLedger
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let loginItem = LoginItemController()
@@ -48,16 +49,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
-    init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings) {
+    init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
         self.store = store
         self.themeStore = themeStore
         self.edgeSettings = edgeSettings
+        self.ledger = ledger
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
                 themeStore: themeStore,
                 interaction: interaction,
-                thumbnails: thumbnails
+                thumbnails: thumbnails,
+                ledger: ledger
             )
         )
         super.init(frame: .zero)
@@ -78,6 +81,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             themeStore: themeStore,
             interaction: interaction,
             thumbnails: thumbnails,
+            ledger: ledger,
             onContentHeight: { [weak self] height in self?.onContentHeight?(height) }
         )
     }
@@ -215,6 +219,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
         let dragSource = ItemDragSource(item: item)
+        let ledger = ledger
+        dragSource.recordVend = { entry in
+            Task { @MainActor in ledger.record(entry) }
+        }
         dragSource.onEnded = { [weak self] operation in
             guard let self else { return }
             self.activeDragSource = nil

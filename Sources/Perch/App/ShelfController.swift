@@ -9,6 +9,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let windowController: ShelfWindowController
     private let holding: HoldingDirectory
     private let store: ItemStore
+    private let ledger: ProvenanceLedger
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
@@ -39,12 +40,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     init() throws {
         holding = try HoldingDirectory.standard()
         store = ItemStore(holding: holding)
+        ledger = ProvenanceLedger(holding: holding)
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore, edgeSettings: edgeSettings)
+        hostView = ShelfHostView(store: store, themeStore: themeStore, edgeSettings: edgeSettings, ledger: ledger)
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -77,6 +79,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     func start() {
         do {
             try store.load()
+            ledger.load()
             NSLog("Perch loaded \(store.items.count) stored item(s)")
         } catch {
             NSLog("Perch failed to load stored items: \(error)")

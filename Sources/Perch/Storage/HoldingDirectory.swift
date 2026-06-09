@@ -29,6 +29,10 @@ struct HoldingDirectory {
         root.appendingPathComponent("index.json", isDirectory: false)
     }
 
+    var ledgerFile: URL {
+        root.appendingPathComponent("ledger.json", isDirectory: false)
+    }
+
     func itemDir(_ id: UUID) -> URL {
         itemsDir.appendingPathComponent(id.uuidString, isDirectory: true)
     }
