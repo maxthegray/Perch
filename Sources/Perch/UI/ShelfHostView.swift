@@ -287,6 +287,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return 0
     }
 
+    /// Grow/shrink the empty drop target while a drag is in flight.
+    func setDropTarget(_ active: Bool) {
+        interaction.isDropTarget = active
+    }
+
     /// Clear any hover highlight / armed delete / in-flight reorder (called when the
     /// shelf hides so stale state doesn't carry into the next reveal).
     func resetInteraction() {

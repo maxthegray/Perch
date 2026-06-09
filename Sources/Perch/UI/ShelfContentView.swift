@@ -34,6 +34,7 @@ struct ShelfContentView: View {
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
+            .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
     }
 
@@ -87,9 +88,9 @@ struct ShelfContentView: View {
 
     private var emptyState: some View {
         Image(systemName: "tray.and.arrow.down")
-            .font(.system(size: 22, weight: .light))
+            .font(.system(size: interaction.isDropTarget ? 28 : 22, weight: .light))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 64)
+            .frame(height: interaction.isDropTarget ? 100 : 64)
     }
 }

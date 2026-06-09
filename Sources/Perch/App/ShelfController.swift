@@ -20,6 +20,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var openTask: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
+    /// True while a system drag is in flight; grows the empty drop target.
+    private var dragActive = false
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
     private var retractWatcher: Task<Void, Never>?
@@ -96,8 +98,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         // During a drag, show only the tab nearest the cursor; hide all when it ends.
+        // The drag also grows the empty drop target into a bigger, easier box.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
+            self.dragActive = active
+            self.hostView.setDropTarget(active)
             if active {
                 self.showNearestTab(to: NSEvent.mouseLocation)
             } else {
@@ -231,6 +236,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Height of the empty drop target — also the card's minimum size.
     private static let emptyStateHeight: CGFloat = 64
+    /// Larger height while a drag is in flight (matches ShelfContentView's empty state).
+    private static let dropTargetHeight: CGFloat = 100
 
     private static func initialPanelFrame() -> NSRect {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
@@ -239,9 +246,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight, width: 300, centerY: nil)
     }
 
-    /// The card height that hugs `itemCount` rows (or the empty-state height when zero).
+    /// The card height that hugs `itemCount` rows (or the empty-state height when zero;
+    /// larger while dragging so the drop target is an easier box to hit).
     private func contentHeight(for itemCount: Int) -> CGFloat {
-        guard itemCount > 0 else { return Self.emptyStateHeight }
+        guard itemCount > 0 else { return dragActive ? Self.dropTargetHeight : Self.emptyStateHeight }
         let theme = themeStore.theme
         let rows = CGFloat(itemCount) * theme.rowHeight
             + CGFloat(itemCount - 1) * theme.rowSpacing
@@ -264,9 +272,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// just wide enough for an icon; once it holds items *and* names are shown it grows to
     /// a comfortable list width.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
-        guard !store.items.isEmpty, themeStore.showsLabels else {
-            return compactCardWidth
+        if store.items.isEmpty {
+            return dragActive ? compactCardWidth + 44 : compactCardWidth
         }
+        guard themeStore.showsLabels else { return compactCardWidth }
         return edge == .notch ? 360 : 300
     }
 

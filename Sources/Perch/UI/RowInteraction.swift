@@ -15,6 +15,10 @@ final class RowInteractionState: ObservableObject {
     /// While a reorder drag is in progress, the live previewed ordering the rows should
     /// render in. Nil when not reordering (rows follow the store's order).
     @Published var previewOrder: [StoredItem]?
+
+    /// True while a system drag is in flight, so the empty drop target can grow into a
+    /// larger, easier-to-hit box.
+    @Published var isDropTarget = false
 }
 
 /// Delete-button layout constants shared between the SwiftUI rendering (`ItemRowView`)
