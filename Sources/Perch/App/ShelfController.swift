@@ -120,8 +120,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // The drag also grows the empty drop target into a bigger, easier box.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
-            self.dragActive = active
-            self.hostView.setDropTarget(active)
+            self.setDragActive(active)
             if active {
                 self.showNearestTab(to: NSEvent.mouseLocation)
                 if self.revealOnDragStart {
@@ -187,6 +186,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         for strip in edgeStrips {
             strip.showsTab = shown
         }
+    }
+
+    private func setDragActive(_ active: Bool) {
+        dragActive = active
+        if store.items.isEmpty {
+            measuredContentHeight = nil
+        }
+        hostView.setDropTarget(active)
+        resizeToFitVisible()
     }
 
     /// Show only the tab whose catch zone is nearest the cursor.
