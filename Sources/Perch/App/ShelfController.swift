@@ -432,6 +432,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         cancelOpen()
         if duringDrag { return }
         pointerInRegion = false
+        // A context menu open over the shelf keeps it alive even as the pointer wanders
+        // into submenus outside the card.
+        if hostView.isContextMenuOpen { return }
         guard store.items.isEmpty else { return }
         // Moving off the (centered) card toward the tab still reads as a card-exit, but
         // it's really a hand-off across the gap — only retract instantly when the pointer
@@ -451,6 +454,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 guard let self, !Task.isCancelled, self.panel.isVisible else { return }
+                // Don't pull the shelf out from under an open context menu — submenus
+                // extend past the card, so the pointer reads as "left the shelf".
+                if self.hostView.isContextMenuOpen { continue }
                 // Persistent while full; only an empty shelf retracts on pointer-out.
                 guard self.store.items.isEmpty else { continue }
                 if self.pointerOverShelfOrTab(NSEvent.mouseLocation) { continue }
@@ -528,8 +534,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 try? await Task.sleep(nanoseconds: 130_000_000)
             }
             guard let self, !Task.isCancelled else { return }
-            // Re-check: content may have arrived, or the pointer re-entered.
-            guard self.store.items.isEmpty, !self.pointerInRegion else { return }
+            // Re-check: content may have arrived, the pointer re-entered, or a context
+            // menu opened.
+            guard self.store.items.isEmpty, !self.pointerInRegion, !self.hostView.isContextMenuOpen else { return }
             self.hostView.resetInteraction()
             self.windowController.hide(animated: true)
             self.retractTask = nil

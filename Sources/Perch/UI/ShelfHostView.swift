@@ -8,7 +8,7 @@ import SwiftUI
 ///  - interactive controls (delete / clear-all / Quick Look — T12),
 /// because a `.nonactivatingPanel` that never becomes key does not reliably deliver
 /// SwiftUI gestures/controls. SwiftUI gestures are off the critical path.
-final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuDelegate {
     private let store: ItemStore
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
@@ -21,6 +21,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var activeDragSource: ItemDragSource?
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
+    /// True while the right-click context menu (or one of its submenus) is open. The
+    /// controller checks this so an empty shelf doesn't retract out from under the menu
+    /// when the pointer moves into a submenu outside the card.
+    private(set) var isContextMenuOpen = false
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
@@ -313,6 +317,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         let menu = NSMenu()
+        menu.delegate = self
 
         if let item = item(at: point) {
             menuTargetItem = item
@@ -379,6 +384,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(quit)
 
         return menu
+    }
+
+    // MARK: NSMenuDelegate
+
+    func menuWillOpen(_ menu: NSMenu) {
+        isContextMenuOpen = true
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        isContextMenuOpen = false
     }
 
     @objc private func toggleLaunchAtLoginAction(_ sender: NSMenuItem) {
