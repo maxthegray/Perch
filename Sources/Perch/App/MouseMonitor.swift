@@ -17,6 +17,13 @@ final class MouseMonitor {
     private var monitor: Any?
     private var isDragging = false
 
+    /// `changeCount` of the drag pasteboard captured at mouse-down. A real
+    /// drag-and-drop session writes the dragged items to this pasteboard before
+    /// the first drag event, bumping the count; merely holding the button and
+    /// moving the mouse (text selection, window moves, marquee selection) does
+    /// not. Comparing against this baseline lets us ignore non-drag holds.
+    private var dragPasteboardBaseline = 0
+
     init() {}
 
     /// Install the global drag monitor. No-op if already running.
@@ -24,7 +31,7 @@ final class MouseMonitor {
         guard monitor == nil else { return }
 
         monitor = NSEvent.addGlobalMonitorForEvents(
-            matching: [.leftMouseDragged, .leftMouseUp]
+            matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp]
         ) { [weak self] event in
             MainActor.assumeIsolated {
                 self?.handle(event)
@@ -46,8 +53,15 @@ final class MouseMonitor {
 
     private func handle(_ event: NSEvent) {
         switch event.type {
+        case .leftMouseDown:
+            // Snapshot the drag pasteboard so the first drag event can tell
+            // whether a real drag-and-drop session was begun on this click.
+            dragPasteboardBaseline = NSPasteboard(name: .drag).changeCount
         case .leftMouseDragged:
             if !isDragging {
+                // Only treat this as a drag session if the click actually
+                // started a drag-and-drop (populated the drag pasteboard).
+                guard NSPasteboard(name: .drag).changeCount != dragPasteboardBaseline else { break }
                 isDragging = true
                 onDragSessionChange?(true)
             }
