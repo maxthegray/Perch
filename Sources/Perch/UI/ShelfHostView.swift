@@ -40,6 +40,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var vendStarted = false
     /// URLs currently fed to `QLPreviewPanel`.
     private var quickLookURLs: [URL] = []
+    /// True while the shelf is cursor-summoned (draws the grab handle at the top).
+    private var isFreeMode = false
 
     /// When true, dragging an item out leaves the original on the shelf (copy);
     /// otherwise it's removed once it lands somewhere (move — the default).
@@ -64,6 +66,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
+
+    /// Called when an empty cursor-summoned tile is tapped — there are no items to remove,
+    /// so a plain click dismisses the whole tile.
+    var onDismissEmptyFree: (() -> Void)?
 
     init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
         self.store = store
@@ -92,14 +98,27 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         ])
 
         // Rebuild the root view with a height callback now that `self` exists.
-        hostingView.rootView = ShelfContentView(
+        hostingView.rootView = makeRootView()
+    }
+
+    private func makeRootView() -> ShelfContentView {
+        ShelfContentView(
             store: store,
             themeStore: themeStore,
             interaction: interaction,
             thumbnails: thumbnails,
             ledger: ledger,
-            onContentHeight: { [weak self] height in self?.onContentHeight?(height) }
+            onContentHeight: { [weak self] height in self?.onContentHeight?(height) },
+            isFreeMode: isFreeMode
         )
+    }
+
+    /// Toggle the cursor-summoned look (grab handle on top). The controller pairs this
+    /// with showing/hiding the AppKit handle overlay.
+    func setFreeMode(_ free: Bool) {
+        guard isFreeMode != free else { return }
+        isFreeMode = free
+        hostingView.rootView = makeRootView()
     }
 
     required init?(coder: NSCoder) {
@@ -191,6 +210,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
         } else if reorderActive {
             commitReorder()
+        } else if isFreeMode, store.items.isEmpty {
+            // A plain tap (no drag) on the empty tile body dismisses it.
+            let point = convert(event.locationInWindow, from: nil)
+            if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) < 6 {
+                onDismissEmptyFree?()
+            }
         }
         resetDragState()
     }

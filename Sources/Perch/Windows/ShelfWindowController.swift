@@ -24,9 +24,14 @@ final class ShelfWindowController {
     private static let travel: CGFloat = 16
     /// How small the content starts before settling to full size.
     private static let startScale: CGFloat = 0.97
+    /// A slightly punchier scale for the cursor-summon pop (no directional travel).
+    private static let freeStartScale: CGFloat = 0.9
 
     private var revealedFrame: NSRect
     private var edge: ShelfEdge = .right
+    /// When true, reveal/hide scale about the card's center (a cursor-summoned shelf has
+    /// no originating edge to slide from).
+    var usesFreeAnimation = false
 
     init(panel: ShelfPanel) {
         self.panel = panel
@@ -40,6 +45,7 @@ final class ShelfWindowController {
     /// Reveal at a specific frame. The window lands at `targetFrame` immediately; the
     /// content layer eases + fades in from a small offset toward the originating edge.
     func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge) {
+        usesFreeAnimation = false
         self.edge = edge
         revealedFrame = targetFrame
         panel.setFrame(targetFrame, display: false)
@@ -68,6 +74,38 @@ final class ShelfWindowController {
         }
     }
 
+    /// Reveal a cursor-summoned shelf: the window lands at `targetFrame` immediately and
+    /// the content layer scales up + fades in from the card's center (no edge to slide
+    /// from).
+    func revealFromCursor(animated: Bool, targetFrame: NSRect) {
+        usesFreeAnimation = true
+        revealedFrame = targetFrame
+        panel.setFrame(targetFrame, display: false)
+
+        guard animated, let layer = panel.contentView?.layer else {
+            panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
+            panel.alphaValue = 1
+            panel.orderFrontRegardless()
+            return
+        }
+
+        panel.alphaValue = 0
+        panel.orderFrontRegardless()
+
+        let transform = CABasicAnimation(keyPath: "transform")
+        transform.fromValue = NSValue(caTransform3D: Self.centerScaleTransform(in: layer.bounds))
+        transform.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+        transform.duration = Self.revealDuration
+        transform.timingFunction = Self.revealCurve
+        layer.add(transform, forKey: Self.transformKey)
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.revealDuration
+            context.timingFunction = Self.revealCurve
+            panel.animator().alphaValue = 1
+        }
+    }
+
     func hide(animated: Bool) {
         guard animated, let layer = panel.contentView?.layer else {
             panel.orderOut(nil)
@@ -76,9 +114,12 @@ final class ShelfWindowController {
         }
 
         let transformKey = Self.transformKey
+        let exitTransform = usesFreeAnimation
+            ? Self.centerScaleTransform(in: layer.bounds)
+            : Self.offsetTransform(for: edge, in: layer.bounds)
         let transform = CABasicAnimation(keyPath: "transform")
         transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
-        transform.toValue = NSValue(caTransform3D: Self.offsetTransform(for: edge, in: layer.bounds))
+        transform.toValue = NSValue(caTransform3D: exitTransform)
         transform.duration = Self.hideDuration
         transform.timingFunction = Self.hideCurve
         transform.fillMode = .forwards
@@ -149,6 +190,16 @@ final class ShelfWindowController {
         var t = CATransform3DMakeTranslation(dx, dy, 0)
         t = CATransform3DTranslate(t, w / 2, h / 2, 0)
         t = CATransform3DScale(t, startScale, startScale, 1)
+        t = CATransform3DTranslate(t, -w / 2, -h / 2, 0)
+        return t
+    }
+
+    /// A pure scale about the card's center, for the cursor-summon reveal/hide.
+    private static func centerScaleTransform(in bounds: CGRect) -> CATransform3D {
+        let w = bounds.width
+        let h = bounds.height
+        var t = CATransform3DTranslate(CATransform3DIdentity, w / 2, h / 2, 0)
+        t = CATransform3DScale(t, freeStartScale, freeStartScale, 1)
         t = CATransform3DTranslate(t, -w / 2, -h / 2, 0)
         return t
     }

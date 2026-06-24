@@ -20,6 +20,13 @@ struct ShelfContentView: View {
     @ObservedObject var thumbnails: ThumbnailStore
     @ObservedObject var ledger: ProvenanceLedger
     var onContentHeight: (CGFloat) -> Void = { _ in }
+    /// When true (cursor-summoned shelf), draw a grab handle across the top. The actual
+    /// drag/dismiss interaction is driven by an AppKit overlay (see FreeShelfHandleOverlay)
+    /// since SwiftUI gestures are unreliable on the non-key panel — this is visual only.
+    var isFreeMode: Bool = false
+
+    /// Height of the grab handle bar shown in free mode; the AppKit overlay matches it.
+    static let handleHeight: CGFloat = 22
 
     private var theme: ShelfTheme { themeStore.theme }
 
@@ -28,7 +35,10 @@ struct ShelfContentView: View {
     }
 
     var body: some View {
-        measuredContent
+        VStack(spacing: 0) {
+            if isFreeMode { handleBar }
+            measuredContent
+        }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .background(theme.cardMaterial)
             .clipShape(cardShape)
@@ -103,6 +113,20 @@ struct ShelfContentView: View {
         .animation(.spring(response: 0.34, dampingFraction: 0.86), value: displayedItems.map(\.id))
     }
 
+    /// The grab handle drawn at the top of a cursor-summoned shelf: a centered grip pill
+    /// for dragging plus a trailing ✕ to dismiss. Interaction is handled by the AppKit
+    /// overlay; this only paints the affordance.
+    private var handleBar: some View {
+        // Just a subtle grip pill — the close button is drawn by the AppKit overlay so its
+        // hit target and glyph are the same view.
+        Capsule()
+            .fill(Color.primary.opacity(0.18))
+            .frame(width: 30, height: 4)
+            .frame(maxWidth: .infinity)
+            .frame(height: ShelfContentView.handleHeight)
+            .contentShape(Rectangle())
+    }
+
     /// Reports the content's natural height up to the controller via a preference.
     private var heightReader: some View {
         GeometryReader { proxy in
@@ -110,11 +134,18 @@ struct ShelfContentView: View {
         }
     }
 
+    @ViewBuilder
     private var emptyState: some View {
-        Image(systemName: "tray.and.arrow.down")
+        let icon = Image(systemName: "tray.and.arrow.down")
             .font(.system(size: interaction.isDropTarget ? 28 : 22, weight: .light))
             .foregroundStyle(.secondary)
-            .frame(maxWidth: .infinity)
-            .frame(height: interaction.isDropTarget ? 100 : 64)
+        if isFreeMode {
+            // Fill the square and center the icon (the window is sized to a square, not
+            // to this content), so there's no dead space below it.
+            icon.frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            icon.frame(maxWidth: .infinity)
+                .frame(height: interaction.isDropTarget ? 100 : 64)
+        }
     }
 }
