@@ -30,11 +30,11 @@ final class MouseMonitor {
     private var shakeReversalTimes: [TimeInterval] = []
     private var lastSummonTime: TimeInterval = 0
     /// Minimum distance a swipe must cover before a reversal counts (filters jitter).
-    private static let shakeMinSwing: CGFloat = 35
+    private static let shakeMinSwing: CGFloat = 45
     /// Reversals must fall within this window to count as one shake.
     private static let shakeWindow: TimeInterval = 0.45
     /// How many reversals make a shake (back→forth→back).
-    private static let shakeReversalsToFire = 3
+    private static let shakeReversalsToFire = 4
     /// Quiet period after firing so one shake doesn't summon repeatedly.
     private static let shakeCooldown: TimeInterval = 1.0
 
