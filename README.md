@@ -24,10 +24,15 @@ Drag anything onto a screen-edge tab, Perch holds it, and you drag it back out l
 brew tap maxthegray/tap
 brew trust --cask maxthegray/tap/perch
 brew install --cask perch
+```
+
+Perch is ad-hoc signed, not notarized, so macOS may block the first launch. If that happens, right-click `/Applications/Perch.app` and choose **Open** once, or run:
+
+```sh
 xattr -dr com.apple.quarantine /Applications/Perch.app
 ```
 
-Perch is ad-hoc signed, not notarized — the `xattr` line clears Gatekeeper's quarantine. Or grab `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases) and right-click ▸ **Open**.
+You can also grab `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases).
 
 Runs as an accessory app: no Dock icon, no menu-bar item. Requires macOS 14+.
 
