@@ -443,6 +443,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         menu.addItem(.separator())
+        let versionItem = NSMenuItem(
+            title: "Perch \(appVersion)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        versionItem.isEnabled = false
+        menu.addItem(versionItem)
+
         let checkForUpdates = NSMenuItem(
             title: "Check for Updates…",
             action: #selector(checkForUpdatesAction(_:)),
@@ -478,6 +486,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {
         Updater.shared.checkForUpdates()
+    }
+
+    /// The bundle's marketing version, shown as a disabled menu header.
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
     }
 
     @objc private func showHistoryAction(_ sender: NSMenuItem) {
