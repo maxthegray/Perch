@@ -34,6 +34,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var revealOnDragStart: Bool {
         UserDefaults.standard.bool(forKey: ShelfHostView.revealOnDragStartKey)
     }
+    /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
+    /// value reads as true), matching the original always-on behavior.
+    private var shakeToSummonEnabled: Bool {
+        UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
+    }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
     private var retractWatcher: Task<Void, Never>?
@@ -171,9 +176,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self.followNearestEdge(to: point)
             }
         }
-        // Shake the cursor to summon the shelf right where the pointer is.
+        // Shake the cursor to summon the shelf right where the pointer is (when enabled).
         mouseMonitor.onSummonAtCursor = { [weak self] point in
-            self?.summonAtCursor(point)
+            guard let self, self.shakeToSummonEnabled else { return }
+            self.summonAtCursor(point)
         }
         mouseMonitor.start()
 

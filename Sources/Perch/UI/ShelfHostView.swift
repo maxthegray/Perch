@@ -60,6 +60,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         set { UserDefaults.standard.set(newValue, forKey: Self.revealOnDragStartKey) }
     }
 
+    /// When true, shaking the cursor summons a free-floating shelf at the pointer. Read
+    /// live by the controller's summon handler. Default true (the original behavior), so
+    /// an unset value keeps shake-to-summon on.
+    static let shakeToSummonKey = "Perch.ShakeToSummon"
+    private var shakeToSummon: Bool {
+        get { UserDefaults.standard.object(forKey: Self.shakeToSummonKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.shakeToSummonKey) }
+    }
+
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
@@ -413,6 +422,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         showNames.state = themeStore.showsLabels ? .on : .off
         menu.addItem(showNames)
 
+        let shakeToSummonItem = NSMenuItem(
+            title: "Shake to Summon",
+            action: #selector(toggleShakeToSummonAction(_:)),
+            keyEquivalent: ""
+        )
+        shakeToSummonItem.target = self
+        shakeToSummonItem.state = shakeToSummon ? .on : .off
+        menu.addItem(shakeToSummonItem)
+
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
                 title: "Launch at Login",
@@ -509,6 +527,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func toggleShowLabelsAction(_ sender: NSMenuItem) {
         themeStore.showsLabels.toggle()
+    }
+
+    @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
+        shakeToSummon.toggle()
     }
 
     /// "Drag Out ▸ Move / Copy" — whether vending an item removes it or leaves a copy.
