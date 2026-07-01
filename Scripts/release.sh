@@ -41,7 +41,7 @@ gh release create "${TAG}" "${ZIP}" \
   --repo maxthegray/Perch \
   --target main \
   --title "Perch ${VERSION}" \
-  --notes "Install: \`brew tap maxthegray/tap && brew install --cask perch --no-quarantine\`"
+  --notes "Install: \`brew tap maxthegray/tap && brew trust --cask maxthegray/tap/perch && brew install --cask perch\`, then \`xattr -dr com.apple.quarantine /Applications/Perch.app\` (or right-click ▸ Open once)."
 
 # 5. Point the cask at the new version + hash and push the tap.
 sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/" "${CASK}"

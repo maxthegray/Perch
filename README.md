@@ -37,6 +37,10 @@ xattr -dr com.apple.quarantine /Applications/Perch.app
 > The `xattr` line clears the quarantine flag; alternatively, right-click `Perch.app`
 > in `/Applications` and choose **Open** once. (`brew trust` is required because
 > Homebrew 6+ won't load casks from third-party taps until you trust them.)
+>
+> **Already installed Perch manually?** Homebrew won't overwrite an app it didn't
+> install itself and errors with *"there is already an App at '/Applications/Perch.app'"*.
+> Add `--force` to replace the manual copy: `brew install --cask perch --force`.
 
 ### Manual download
 
@@ -83,6 +87,10 @@ Perch runs as an **accessory** app — no Dock icon, no menu-bar item. Requires 
 brew upgrade --cask perch          # if installed via Homebrew
 ./Scripts/install.sh               # if built from source — rebuilds + reinstalls in place
 ```
+
+Switching from an older **manual** install to Homebrew? Use
+`brew install --cask perch --force` once to let Homebrew take over the app; after that,
+`brew upgrade --cask perch` works normally.
 
 ## Data
 
