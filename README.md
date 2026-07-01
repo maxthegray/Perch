@@ -28,12 +28,15 @@ to still be running when you drop.
 
 ```sh
 brew tap maxthegray/tap
-brew install --cask perch --no-quarantine
+brew trust --cask maxthegray/tap/perch
+brew install --cask perch
+xattr -dr com.apple.quarantine /Applications/Perch.app
 ```
 
-> Perch is ad-hoc signed, not notarized — hence `--no-quarantine`. Without it, macOS
-> Gatekeeper blocks the first launch; you can instead right-click `Perch.app` in
-> `/Applications` and choose **Open** once.
+> Perch is ad-hoc signed, not notarized, so macOS Gatekeeper blocks the first launch.
+> The `xattr` line clears the quarantine flag; alternatively, right-click `Perch.app`
+> in `/Applications` and choose **Open** once. (`brew trust` is required because
+> Homebrew 6+ won't load casks from third-party taps until you trust them.)
 
 ### Manual download
 
