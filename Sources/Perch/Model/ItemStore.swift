@@ -7,7 +7,12 @@ import Foundation
 final class ItemStore: ObservableObject {
     @Published private(set) var items: [StoredItem] = []
 
+    /// The most recently stashed item, briefly published so its row can flash an accent
+    /// ring to confirm the drop landed. Cleared automatically after a short delay.
+    @Published private(set) var justAddedItemID: UUID?
+
     private let holding: HoldingDirectory
+    private var justAddedClearTask: Task<Void, Never>?
 
     init(holding: HoldingDirectory) {
         self.holding = holding
@@ -36,6 +41,19 @@ final class ItemStore: ObservableObject {
         let insertionIndex = min(max(index ?? 0, 0), items.count)
         items.insert(item, at: insertionIndex)
         persistIndexOrLogFailure()
+        flashJustAdded(item.id)
+    }
+
+    /// Mark `id` as freshly stashed so its row pulses an accent ring, then clear it after
+    /// a beat. A newer insert supersedes an in-flight flash.
+    private func flashJustAdded(_ id: UUID) {
+        justAddedItemID = id
+        justAddedClearTask?.cancel()
+        justAddedClearTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(70))
+            guard !Task.isCancelled else { return }
+            self?.justAddedItemID = nil
+        }
     }
 
     /// Replace the display order with `ordered` (a permutation of the current items) and

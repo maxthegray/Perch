@@ -23,6 +23,9 @@ struct ItemRowView: View {
     /// An origin → destination provenance breadcrumb, shown in place of the type
     /// subtitle when the item's travel is known; nil falls back to the type label.
     let breadcrumb: String?
+    /// True for the moment just after this item was stashed; pulses an accent ring to
+    /// confirm the drop landed, then fades.
+    var isJustAdded: Bool = false
 
     var body: some View {
         HStack(spacing: showsLabels ? 10 : 0) {
@@ -61,6 +64,7 @@ struct ItemRowView: View {
                 .fill(isHovered ? theme.rowHoverFill : theme.rowFill)
         )
         .overlay(alignment: .bottom) { separator }
+        .overlay(justAddedRing)
         .overlay(alignment: .trailing) { deleteButton }
         .contentShape(Rectangle())
         .scaleEffect(isDragging ? 1.03 : 1)
@@ -70,6 +74,16 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
         .animation(.easeOut(duration: 0.16), value: isDragging)
+        .animation(.easeOut(duration: 0.07), value: isJustAdded)
+    }
+
+    /// A brief accent ring on a freshly stashed row. Held on while `isJustAdded`, then
+    /// fades out when the store clears the flag (see `ItemStore.flashJustAdded`).
+    @ViewBuilder
+    private var justAddedRing: some View {
+        RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
+            .stroke(Color.accentColor, lineWidth: 1.5)
+            .opacity(isJustAdded ? 0.9 : 0)
     }
 
     /// A real preview is shown as a small rounded "photo" tile; a generic file icon is

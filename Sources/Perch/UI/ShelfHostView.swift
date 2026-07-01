@@ -350,6 +350,19 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.isDropTarget = active
     }
 
+    /// Show/hide the accent drop-target ring — true only while a drag is actually over
+    /// the shelf's drop area. Animated at the mutation site so the pop-in and the fade-out
+    /// each get their own crisp curve (a blanket `.animation(value:)` leaks the springy
+    /// tail onto the fade).
+    func setDragOverShelf(_ over: Bool) {
+        let animation: Animation = over
+            ? .spring(response: 0.12, dampingFraction: 0.55)  // near-instant, slight snap
+            : .easeOut(duration: 0.06)                        // immediate clean fade
+        withAnimation(animation) {
+            interaction.isDragOverShelf = over
+        }
+    }
+
     /// Clear any hover highlight / armed delete / in-flight reorder (called when the
     /// shelf hides so stale state doesn't carry into the next reveal).
     func resetInteraction() {

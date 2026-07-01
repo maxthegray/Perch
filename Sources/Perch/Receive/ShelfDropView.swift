@@ -10,6 +10,9 @@ protocol ShelfDropHandling: AnyObject {
     /// `duringDrag` is true when a drag session left (vs a plain hover), which needs a
     /// brief grace to bridge the tab↔panel hand-off; a hover exit retracts immediately.
     func pointerDidExitShelf(duringDrag: Bool)
+    /// A drag is now hovering over (true) or has left/dropped onto (false) the shelf's
+    /// drop area — drives the accent drop-target ring.
+    func dragOverShelfDidChange(_ over: Bool)
 }
 
 /// The panel's drop target (`NSDraggingDestination`).
@@ -67,6 +70,7 @@ final class ShelfDropView: NSView {
         let operation = dragOperation(for: sender)
         if !operation.isEmpty {
             dropHandler?.pointerDidEnterShelf()
+            dropHandler?.dragOverShelfDidChange(true)
         }
         return operation
     }
@@ -76,6 +80,7 @@ final class ShelfDropView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        dropHandler?.dragOverShelfDidChange(false)
         dropHandler?.pointerDidExitShelf(duringDrag: true)
     }
 
@@ -87,6 +92,9 @@ final class ShelfDropView: NSView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        dropHandler?.handleDrop(sender.draggingPasteboard) ?? false
+        // A drop doesn't fire draggingExited, so snap the ring off here — the dropped
+        // row's flash then confirms it landed.
+        dropHandler?.dragOverShelfDidChange(false)
+        return dropHandler?.handleDrop(sender.draggingPasteboard) ?? false
     }
 }

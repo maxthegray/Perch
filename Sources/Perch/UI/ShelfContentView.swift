@@ -34,6 +34,17 @@ struct ShelfContentView: View {
         RoundedRectangle(cornerRadius: theme.cardCornerRadius, style: .continuous)
     }
 
+    /// An accent ring drawn just inside the card while a drag is hovering over the shelf,
+    /// so any shelf (empty or populated) clearly reads as a live drop target. It pops in
+    /// as the item arrives and snaps back out on release.
+    private var dropTargetRing: some View {
+        cardShape
+            .inset(by: 1.5)
+            .stroke(Color.accentColor, lineWidth: 2)
+            .opacity(interaction.isDragOverShelf ? 1 : 0)
+            .scaleEffect(interaction.isDragOverShelf ? 1 : 0.93)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             if isFreeMode { handleBar }
@@ -43,6 +54,7 @@ struct ShelfContentView: View {
             .background(theme.cardMaterial)
             .clipShape(cardShape)
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
+            .overlay(dropTargetRing)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
@@ -103,7 +115,8 @@ struct ShelfContentView: View {
                     thumbnail: thumbnails.thumbnail(for: item),
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
                     showsLabels: themeStore.showsLabels,
-                    breadcrumb: breadcrumb(for: item)
+                    breadcrumb: breadcrumb(for: item),
+                    isJustAdded: store.justAddedItemID == item.id
                 )
                 .transition(.move(edge: .top).combined(with: .opacity))
             }

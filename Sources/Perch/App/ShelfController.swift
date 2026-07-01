@@ -251,6 +251,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             measuredContentHeight = nil
         }
         hostView.setDropTarget(active)
+        // The drag ended somewhere off the shelf; make sure the ring is cleared even if
+        // no draggingExited arrived.
+        if !active {
+            hostView.setDragOverShelf(false)
+        }
         resizeToFitVisible()
     }
 
@@ -434,6 +439,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     func pointerDidExitShelf(duringDrag: Bool) {
         exitRegion(duringDrag: duringDrag)
+    }
+
+    func dragOverShelfDidChange(_ over: Bool) {
+        hostView.setDragOverShelf(over)
     }
 
     // MARK: EdgeStripDelegate
