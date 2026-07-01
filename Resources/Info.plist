@@ -26,5 +26,11 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal use.</string>
+	<key>SUFeedURL</key>
+	<string>https://raw.githubusercontent.com/maxthegray/Perch/main/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>A1Plel1yzsvq+JzhNs0xM35jcVKe/UzcV3JPJPZJWIw=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
 </dict>
 </plist>

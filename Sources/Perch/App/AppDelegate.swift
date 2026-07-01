@@ -8,6 +8,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let controller = try ShelfController()
             self.controller = controller
             controller.start()
+            // Start Sparkle's background update checks.
+            Updater.shared.start()
         } catch {
             NSLog("Perch failed to start: \(error)")
             NSApp.terminate(nil)

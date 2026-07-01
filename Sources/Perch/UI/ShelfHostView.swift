@@ -443,6 +443,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         menu.addItem(.separator())
+        let checkForUpdates = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdatesAction(_:)),
+            keyEquivalent: ""
+        )
+        checkForUpdates.target = self
+        menu.addItem(checkForUpdates)
+
         let quit = NSMenuItem(title: "Quit Perch", action: #selector(quitAction(_:)), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
@@ -466,6 +474,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func quitAction(_ sender: NSMenuItem) {
         NSApp.terminate(nil)
+    }
+
+    @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {
+        Updater.shared.checkForUpdates()
     }
 
     @objc private func showHistoryAction(_ sender: NSMenuItem) {

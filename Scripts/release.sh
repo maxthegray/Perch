@@ -15,8 +15,14 @@ TAG="v${VERSION}"
 ZIP="/tmp/Perch.zip"
 TAP_DIR="${PERCH_TAP_DIR:-../homebrew-tap}"
 CASK="${TAP_DIR}/Casks/perch.rb"
+APPCAST="appcast.xml"
+DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/Perch.zip"
 
 [ -f "${CASK}" ] || { echo "Cask not found at ${CASK} (set PERCH_TAP_DIR)"; exit 1; }
+
+# Sparkle's sign_update tool (fetched by SwiftPM alongside the Sparkle framework).
+SIGN_UPDATE="$(find .build/artifacts -name sign_update -type f 2>/dev/null | head -1)"
+[ -n "${SIGN_UPDATE}" ] || { echo "sign_update not found -- run 'swift build -c release' first"; exit 1; }
 
 # 1. Stamp the version into the bundle.
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" Resources/Info.plist
@@ -42,6 +48,33 @@ gh release create "${TAG}" "${ZIP}" \
   --target main \
   --title "Perch ${VERSION}" \
   --notes "Install: \`brew tap maxthegray/tap && brew trust --cask maxthegray/tap/perch && brew install --cask perch\`, then \`xattr -dr com.apple.quarantine /Applications/Perch.app\` (or right-click ▸ Open once)."
+
+# 4b. Sign the zip with Sparkle's EdDSA key and regenerate the appcast so existing
+#     installs auto-update. The feed lives on main (SUFeedURL points at raw.github).
+SIG_ATTRS="$(${SIGN_UPDATE} "${ZIP}")"   # sparkle:edSignature="..." length="..."
+PUBDATE="$(LC_ALL=C date -u +"%a, %d %b %Y %H:%M:%S +0000")"
+cat > "${APPCAST}" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>Perch</title>
+    <link>${DOWNLOAD_URL}</link>
+    <description>Auto-update feed for Perch.</description>
+    <language>en</language>
+    <item>
+      <title>Version ${VERSION}</title>
+      <pubDate>${PUBDATE}</pubDate>
+      <sparkle:version>${VERSION}</sparkle:version>
+      <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+      <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
+      <enclosure url="${DOWNLOAD_URL}" ${SIG_ATTRS} type="application/octet-stream" />
+    </item>
+  </channel>
+</rss>
+EOF
+git add "${APPCAST}"
+git commit -m "Appcast ${TAG}"
+git push origin HEAD
 
 # 5. Point the cask at the new version + hash and push the tap.
 sed -i '' -E "s/^  version \".*\"/  version \"${VERSION}\"/" "${CASK}"

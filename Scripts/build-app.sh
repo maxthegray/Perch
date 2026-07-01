@@ -24,9 +24,32 @@ else
   echo "  (no Resources/AppIcon.icns -- run 'swift Scripts/make-icon.swift' for a custom icon)"
 fi
 
-# Ad-hoc code signature -- required for SMAppService login-item registration.
+# Embed Sparkle.framework for auto-updates. The binary already carries an rpath to
+# @executable_path/../Frameworks (set in Package.swift).
+FRAMEWORK=".build/${CONFIG}/Sparkle.framework"
+if [ -d "${FRAMEWORK}" ]; then
+  echo "Embedding Sparkle.framework..."
+  mkdir -p "${APP}/Contents/Frameworks"
+  cp -R "${FRAMEWORK}" "${APP}/Contents/Frameworks/"
+else
+  echo "  WARNING: ${FRAMEWORK} not found -- auto-update will be disabled"
+fi
+
+# Ad-hoc code signature. Sign inside-out: Sparkle's nested helpers/XPC services first,
+# then the framework, then the main binary, then the app. (--deep is unreliable for
+# Sparkle, so each nested component is signed explicitly.) Signing is also required for
+# SMAppService login-item registration.
 echo "Signing (ad-hoc)..."
-codesign --force --deep --sign - "${APP}"
+SPARKLE="${APP}/Contents/Frameworks/Sparkle.framework/Versions/B"
+if [ -d "${SPARKLE}" ]; then
+  codesign --force --sign - "${SPARKLE}/XPCServices/Downloader.xpc"
+  codesign --force --sign - "${SPARKLE}/XPCServices/Installer.xpc"
+  codesign --force --sign - "${SPARKLE}/Updater.app"
+  codesign --force --sign - "${SPARKLE}/Autoupdate"
+  codesign --force --sign - "${APP}/Contents/Frameworks/Sparkle.framework"
+fi
+codesign --force --sign - "${APP}/Contents/MacOS/Perch"
+codesign --force --sign - "${APP}"
 
 echo "Built ${APP}"
 echo "Move it to /Applications (so the login-item path stays stable), then launch it"
