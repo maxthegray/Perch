@@ -133,16 +133,20 @@ struct ShelfContentView: View {
                     showsLabels: themeStore.showsLabels,
                     breadcrumb: breadcrumb(for: item)
                 )
-                .transition(.opacity.animation(.easeOut(duration: 0.18)))
+                .transition(.opacity)
             }
         }
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // Only animate row positions while a drag-to-reorder is in flight. Inserts and
-        // removals snap into place so the added/removed row just fades — animating the
-        // layout there reads as the row sliding in.
+        // One transaction drives both the row fade and the layout: a spring while a
+        // drag-to-reorder is in flight, a quick ease for inserts/removals. (A transition
+        // carrying its own animation under a nil transaction — the previous setup —
+        // flakily left surviving rows stuck invisible and fed bogus heights to the
+        // window sizing.)
         .animation(
-            interaction.previewOrder != nil ? .spring(response: 0.34, dampingFraction: 0.86) : nil,
+            interaction.previewOrder != nil
+                ? .spring(response: 0.34, dampingFraction: 0.86)
+                : .easeOut(duration: 0.18),
             value: displayedItems.map(\.id)
         )
     }

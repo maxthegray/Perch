@@ -140,6 +140,19 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         bounds.contains(point) ? self : nil
     }
 
+    /// Guards against the scroll view bouncing an unconsumed event back up the responder
+    /// chain into this override (which would recurse forever).
+    private var forwardingScroll = false
+
+    /// `hitTest` intercepts all events, so hand scrolls to the hosted SwiftUI content —
+    /// otherwise the overflow ScrollView (list taller than the screen) can never scroll.
+    override func scrollWheel(with event: NSEvent) {
+        guard !forwardingScroll, let scrollView = enclosedScrollView() else { return }
+        forwardingScroll = true
+        scrollView.scrollWheel(with: event)
+        forwardingScroll = false
+    }
+
     // MARK: - Hover tracking (drives the SwiftUI hover highlight + delete button)
 
     override func updateTrackingAreas() {
@@ -216,6 +229,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
                 store.returnToOrigin(item)
+                // The next row slides up under the stationary cursor; re-derive hover so
+                // it doesn't keep pointing at the removed item until the mouse moves.
+                interaction.hoveredItemID = self.item(at: point)?.id
             }
         } else if reorderActive {
             commitReorder()
@@ -244,7 +260,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard count > 1 else { return }
         let theme = themeStore.theme
         let pitch = theme.rowHeight + theme.rowSpacing
-        let raw = Int((point.y + contentScrollOffsetY() - theme.contentPadding) / pitch)
+        let raw = Int((point.y + contentScrollOffsetY() - rowsTopInset) / pitch)
         let target = max(0, min(count - 1, raw))
 
         var order = reorderBaseOrder.filter { $0.id != item.id }
@@ -304,13 +320,20 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { store.items[$0] }
     }
 
+    /// Distance from the view's top to the first row: the content padding, plus the grab
+    /// handle a cursor-summoned shelf draws above the rows. Hit-testing that ignored the
+    /// handle mapped free-mode hover/delete/reorder half a row off.
+    private var rowsTopInset: CGFloat {
+        themeStore.theme.contentPadding + (isFreeMode ? ShelfContentView.handleHeight : 0)
+    }
+
     /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
     /// each row is `RowMetrics.height` tall, laid out with theme-driven spacing + outer
     /// padding. Accounts for scroll offset in the rare overflow (scrolling) case.
     private func rowIndex(at point: NSPoint) -> Int? {
         let theme = themeStore.theme
         let rowHeight = theme.rowHeight + theme.rowSpacing
-        let topInset = theme.contentPadding
+        let topInset = rowsTopInset
         let contentY = point.y + contentScrollOffsetY()
         let index = Int((contentY - topInset) / rowHeight)
         guard index >= 0, index < store.items.count else { return nil }
@@ -322,7 +345,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// easier target. Shifted by the scroll offset so it tracks the visible row.
     private func deleteHitRect(forRow index: Int) -> NSRect {
         let theme = themeStore.theme
-        let rowTop = theme.contentPadding + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
+        let rowTop = rowsTopInset + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
         let centerX = bounds.width - theme.contentPadding
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
@@ -334,15 +357,21 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// screen and scrolls, read its content offset so the row math above stays correct.
     /// Returns 0 in the normal (non-overflowing) case.
     private func contentScrollOffsetY() -> CGFloat {
+        enclosedScrollView()?.contentView.bounds.origin.y ?? 0
+    }
+
+    /// The `NSScrollView` backing the SwiftUI `ScrollView`, found by walking the hosted
+    /// view tree (nil while the shelf is empty — the empty state has no scroll view).
+    private func enclosedScrollView() -> NSScrollView? {
         var queue = hostingView.subviews
         while !queue.isEmpty {
             let view = queue.removeFirst()
             if let scrollView = view as? NSScrollView {
-                return scrollView.contentView.bounds.origin.y
+                return scrollView
             }
             queue.append(contentsOf: view.subviews)
         }
-        return 0
+        return nil
     }
 
     /// Grow/shrink the empty drop target while a drag is in flight.

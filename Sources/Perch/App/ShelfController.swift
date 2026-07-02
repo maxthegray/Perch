@@ -50,6 +50,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var screenObserver: NSObjectProtocol?
     private var preferredScreen: NSScreen?
     private var preferredEdge: ShelfEdge = .right
+    /// Where the visible panel actually sits. `preferredScreen`/`preferredEdge` are the
+    /// *next reveal* target and get retargeted by any brush over an edge tab's catch
+    /// zone, so in-place resizes must use these instead — otherwise a resize can
+    /// teleport an open shelf to whichever edge the pointer last passed.
+    private var shownScreen: NSScreen?
+    private var shownEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
 
@@ -237,8 +243,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             windowController.resize(to: freePanelFrame(), animated: animated)
             return
         }
-        guard let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        windowController.resize(to: panelFrame(for: screen, edge: preferredEdge), animated: animated)
+        guard let screen = shownScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        windowController.resize(to: panelFrame(for: screen, edge: shownEdge), animated: animated)
     }
 
     private func setTabsShown(_ shown: Bool) {
@@ -348,8 +354,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if store.items.isEmpty {
             height = min(width, visible.height - 24)
         } else {
-            let content = measuredContentHeight ?? contentHeight(for: store.items.count)
-            height = min(content + ShelfContentView.handleHeight, visible.height - 24)
+            height = min(fittedContentHeight() + ShelfContentView.handleHeight, visible.height - 24)
         }
 
         let anchor = freeTopLeft ?? NSPoint(x: visible.midX - width / 2, y: visible.midY + height / 2)
@@ -453,6 +458,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Open the shelf on whichever screen + edge's tab was used.
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
+        // A drag reaching a tab while the shelf is open at a different edge means the
+        // user is aiming for *this* perch — bring the shelf over to it.
+        if viaDrag, panel.isVisible, revealMode == .edge,
+           strip.edge != shownEdge || strip.pinnedScreen != shownScreen {
+            revealAtPreferredEdge()
+        }
         // Drags open immediately; a plain hover waits briefly so brushing past the
         // edge does not pop the shelf open.
         enterRegion(immediate: viaDrag)
@@ -491,10 +502,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         Self.panelFrame(
             for: screen,
             edge: edge,
-            contentHeight: measuredContentHeight ?? contentHeight(for: store.items.count),
+            contentHeight: fittedContentHeight(),
             width: cardWidth(for: edge),
             centerY: nil
         )
+    }
+
+    /// The content height the card should hug: the measured SwiftUI height, floored at
+    /// the per-item estimate. Rows are fixed-height so the estimate is exact — the floor
+    /// keeps a stale or mid-transition measurement from ever shrinking the card below
+    /// what the current item count needs.
+    private func fittedContentHeight() -> CGFloat {
+        let estimate = contentHeight(for: store.items.count)
+        return max(measuredContentHeight ?? estimate, estimate)
     }
 
     /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip
@@ -591,9 +611,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         installEdgeStripIfNeeded()
 
         // Retract if the shelf is open on a screen that's gone or an edge now disabled.
-        let screenGone = preferredScreen.map { !NSScreen.screens.contains($0) } ?? false
-        if panel.isVisible, screenGone || !edgeSettings.isEnabled(preferredEdge) {
-            if screenGone { preferredScreen = nil }
+        let screenGone = shownScreen.map { !NSScreen.screens.contains($0) } ?? false
+        if panel.isVisible, revealMode == .edge, screenGone || !edgeSettings.isEnabled(shownEdge) {
+            if screenGone {
+                preferredScreen = nil
+                shownScreen = nil
+            }
             hideShelf(animated: false)
         }
         NSLog("Perch rebuilt edge tabs (\(NSScreen.screens.count) screen(s), edges \(edgeSettings.enabledEdges.map(\.rawValue).sorted()))")
@@ -718,7 +741,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// whole corridor between the tab and the centered card.
     private func keepAliveRegion() -> NSRect {
         var region = panel.frame.insetBy(dx: -14, dy: -14)
-        if let tab = edgeStrips.first(where: { $0.edge == preferredEdge }) {
+        if let tab = edgeStrips.first(where: { $0.edge == shownEdge }) {
             region = region.union(tab.frame)
         }
         return region
@@ -754,6 +777,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         handleOverlay.isHidden = true
         hostView.setFreeMode(false)
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
+        shownScreen = screen
+        shownEdge = preferredEdge
         let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
         // Drag reveals slide in from the edge (the shelf chases the drag); hover reveals
         // just fade in place.
