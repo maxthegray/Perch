@@ -224,19 +224,21 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func contentHeightDidChange(_ height: CGFloat) {
         guard height > 0 else { return }
         measuredContentHeight = height
-        resizeToFitVisible()
+        // Snap, don't animate: this fires when rows are added/removed, and animating the
+        // frame there makes the fading row appear to slide as the card re-centers.
+        resizeToFitVisible(animated: false)
     }
 
     /// Re-fit the open window to the current content height + width (e.g. after the
     /// label/compact toggle changes the card's width).
-    private func resizeToFitVisible() {
+    private func resizeToFitVisible(animated: Bool = true) {
         guard panel.isVisible else { return }
         if revealMode == .free {
-            windowController.resize(to: freePanelFrame())
+            windowController.resize(to: freePanelFrame(), animated: animated)
             return
         }
         guard let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
-        windowController.resize(to: panelFrame(for: screen, edge: preferredEdge))
+        windowController.resize(to: panelFrame(for: screen, edge: preferredEdge), animated: animated)
     }
 
     private func setTabsShown(_ shown: Bool) {
@@ -251,8 +253,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             measuredContentHeight = nil
         }
         hostView.setDropTarget(active)
-        // The drag ended somewhere off the shelf; make sure the ring is cleared even if
-        // no draggingExited arrived.
+        // The drag ended somewhere off the shelf; make sure the outline is cleared even
+        // if no draggingExited arrived.
         if !active {
             hostView.setDragOverShelf(false)
         }
@@ -462,8 +464,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Height of the empty drop target — also the card's minimum size.
     private static let emptyStateHeight: CGFloat = 64
-    /// Larger height while a drag is in flight (matches ShelfContentView's empty state).
-    private static let dropTargetHeight: CGFloat = 100
+    /// The empty shelf no longer grows while a drag is in flight (it drowned out the
+    /// row's landing thunk), so this matches the resting empty-state height.
+    private static let dropTargetHeight: CGFloat = 64
 
     private static func initialPanelFrame() -> NSRect {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
@@ -499,7 +502,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// a comfortable list width.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
         if store.items.isEmpty {
-            return dragActive ? compactCardWidth + 44 : compactCardWidth
+            return compactCardWidth
         }
         guard themeStore.showsLabels else { return compactCardWidth }
         return edge == .notch ? 360 : 300
@@ -752,7 +755,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.setFreeMode(false)
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
         let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
-        windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge)
+        // Drag reveals slide in from the edge (the shelf chases the drag); hover reveals
+        // just fade in place.
+        windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge, slides: dragActive)
     }
 
     private func cancelOpen() {

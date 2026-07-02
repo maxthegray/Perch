@@ -11,7 +11,7 @@ protocol ShelfDropHandling: AnyObject {
     /// brief grace to bridge the tab↔panel hand-off; a hover exit retracts immediately.
     func pointerDidExitShelf(duringDrag: Bool)
     /// A drag is now hovering over (true) or has left/dropped onto (false) the shelf's
-    /// drop area — drives the accent drop-target ring.
+    /// drop area — drives the accent drop-target outline.
     func dragOverShelfDidChange(_ over: Bool)
 }
 
@@ -68,6 +68,7 @@ final class ShelfDropView: NSView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let operation = dragOperation(for: sender)
+        NSLog("Perch DROPDBG draggingEntered op=\(operation.rawValue) bounds=\(NSStringFromRect(bounds))")
         if !operation.isEmpty {
             dropHandler?.pointerDidEnterShelf()
             dropHandler?.dragOverShelfDidChange(true)
@@ -80,6 +81,7 @@ final class ShelfDropView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
+        NSLog("Perch DROPDBG draggingExited")
         dropHandler?.dragOverShelfDidChange(false)
         dropHandler?.pointerDidExitShelf(duringDrag: true)
     }
@@ -92,9 +94,17 @@ final class ShelfDropView: NSView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        // A drop doesn't fire draggingExited, so snap the ring off here — the dropped
-        // row's flash then confirms it landed.
+        // A drop doesn't fire draggingExited, so snap the outline off here.
         dropHandler?.dragOverShelfDidChange(false)
-        return dropHandler?.handleDrop(sender.draggingPasteboard) ?? false
+        let ok = dropHandler?.handleDrop(sender.draggingPasteboard) ?? false
+        NSLog("Perch DROPDBG performDragOperation ok=\(ok)")
+        return ok
+    }
+
+    override func wantsPeriodicDraggingUpdates() -> Bool { false }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        NSLog("Perch DROPDBG prepareForDragOperation")
+        return true
     }
 }

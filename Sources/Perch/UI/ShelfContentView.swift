@@ -30,19 +30,23 @@ struct ShelfContentView: View {
 
     private var theme: ShelfTheme { themeStore.theme }
 
-    private var cardShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: theme.cardCornerRadius, style: .continuous)
-    }
+    /// Landing "thunk" for the whole card: briefly squashed on stash, then springs back
+    /// to rest. 1 at rest.
+    @State private var thunkScale: CGFloat = 1
 
-    /// An accent ring drawn just inside the card while a drag is hovering over the shelf,
-    /// so any shelf (empty or populated) clearly reads as a live drop target. It pops in
-    /// as the item arrives and snaps back out on release.
+    /// An accent outline drawn just inside the card while a drag is hovering over the
+    /// shelf, so any shelf (empty or populated) clearly reads as a live drop target. It
+    /// pops in as the item arrives and snaps back out on release.
     private var dropTargetRing: some View {
         cardShape
             .inset(by: 1.5)
             .stroke(Color.accentColor, lineWidth: 2)
             .opacity(interaction.isDragOverShelf ? 1 : 0)
             .scaleEffect(interaction.isDragOverShelf ? 1 : 0.93)
+    }
+
+    private var cardShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: theme.cardCornerRadius, style: .continuous)
     }
 
     var body: some View {
@@ -58,7 +62,19 @@ struct ShelfContentView: View {
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
+            .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
+            .onChange(of: store.justAddedItemID) { _, id in
+                guard id != nil else { return }
+                // The whole card thunks on a stash: snap to a compressed state, then
+                // spring back next tick (from/to in one tick would collapse to no motion).
+                thunkScale = 0.78
+                DispatchQueue.main.async {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.5)) {
+                        thunkScale = 1
+                    }
+                }
+            }
     }
 
     /// The window sizes itself to the measured content height, so normally everything
@@ -115,15 +131,20 @@ struct ShelfContentView: View {
                     thumbnail: thumbnails.thumbnail(for: item),
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
                     showsLabels: themeStore.showsLabels,
-                    breadcrumb: breadcrumb(for: item),
-                    isJustAdded: store.justAddedItemID == item.id
+                    breadcrumb: breadcrumb(for: item)
                 )
-                .transition(.move(edge: .top).combined(with: .opacity))
+                .transition(.opacity.animation(.easeOut(duration: 0.18)))
             }
         }
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: displayedItems.map(\.id))
+        // Only animate row positions while a drag-to-reorder is in flight. Inserts and
+        // removals snap into place so the added/removed row just fades — animating the
+        // layout there reads as the row sliding in.
+        .animation(
+            interaction.previewOrder != nil ? .spring(response: 0.34, dampingFraction: 0.86) : nil,
+            value: displayedItems.map(\.id)
+        )
     }
 
     /// The grab handle drawn at the top of a cursor-summoned shelf: a centered grip pill
@@ -150,7 +171,7 @@ struct ShelfContentView: View {
     @ViewBuilder
     private var emptyState: some View {
         let icon = Image(systemName: "tray.and.arrow.down")
-            .font(.system(size: interaction.isDropTarget ? 28 : 22, weight: .light))
+            .font(.system(size: 22, weight: .light))
             .foregroundStyle(.secondary)
         if isFreeMode {
             // Fill the square and center the icon (the window is sized to a square, not
@@ -158,7 +179,7 @@ struct ShelfContentView: View {
             icon.frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             icon.frame(maxWidth: .infinity)
-                .frame(height: interaction.isDropTarget ? 100 : 64)
+                .frame(height: 64)
         }
     }
 }

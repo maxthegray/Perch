@@ -350,7 +350,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.isDropTarget = active
     }
 
-    /// Show/hide the accent drop-target ring — true only while a drag is actually over
+    /// Show/hide the accent drop-target outline — true only while a drag is actually over
     /// the shelf's drop area. Animated at the mutation site so the pop-in and the fade-out
     /// each get their own crisp curve (a blanket `.animation(value:)` leaks the springy
     /// tail onto the fade).

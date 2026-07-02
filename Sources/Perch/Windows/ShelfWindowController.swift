@@ -3,12 +3,9 @@ import QuartzCore
 
 /// Reveals / hides / animates the shelf panel and persists its frame.
 ///
-/// Smoothness note: rather than sliding the whole vibrant-material window across the
-/// screen (which forces the blur to re-sample the desktop every frame over a long
-/// travel — the classic janky-panel symptom), we drop the window straight onto its
-/// final frame and animate only the *content layer* a short distance: a small edge-ward
-/// translate + subtle scale, paired with a window-alpha fade. Short travel = far less
-/// per-frame work = smooth, premium settle.
+/// Hover-revealed edge shelves fade in/out in place (the window lands on its final
+/// frame and only alpha animates); drag reveals slide in from the originating edge;
+/// the cursor-summoned shelf adds a small center-scale pop.
 @MainActor
 final class ShelfWindowController {
     let panel: ShelfPanel
@@ -20,17 +17,16 @@ final class ShelfWindowController {
     /// Smooth quint-style decel for the entrance; a gentle ease-in for the exit.
     private static let revealCurve = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
     private static let hideCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
-    /// How far the content travels during the settle, in points.
+    /// How far the content travels during a sliding (drag) reveal, in points.
     private static let travel: CGFloat = 16
-    /// How small the content starts before settling to full size.
+    /// How small the content starts before settling to full size on a sliding reveal.
     private static let startScale: CGFloat = 0.97
     /// A slightly punchier scale for the cursor-summon pop (no directional travel).
     private static let freeStartScale: CGFloat = 0.9
 
     private var revealedFrame: NSRect
     private var edge: ShelfEdge = .right
-    /// When true, reveal/hide scale about the card's center (a cursor-summoned shelf has
-    /// no originating edge to slide from).
+    /// When true, hide scales about the card's center (the cursor-summoned shelf's pop).
     var usesFreeAnimation = false
 
     init(panel: ShelfPanel) {
@@ -43,15 +39,16 @@ final class ShelfWindowController {
     }
 
     /// Reveal at a specific frame. The window lands at `targetFrame` immediately; the
-    /// content layer eases + fades in from a small offset toward the originating edge.
-    func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge) {
+    /// content fades in in place, or — when `slides` (drag reveals) — eases in from a
+    /// small offset toward the originating edge.
+    func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge, slides: Bool = false) {
         usesFreeAnimation = false
         self.edge = edge
         revealedFrame = targetFrame
         panel.setFrame(targetFrame, display: false)
+        panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
 
         guard animated, let layer = panel.contentView?.layer else {
-            panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
             panel.alphaValue = 1
             panel.orderFrontRegardless()
             return
@@ -60,12 +57,14 @@ final class ShelfWindowController {
         panel.alphaValue = 0
         panel.orderFrontRegardless()
 
-        let transform = CABasicAnimation(keyPath: "transform")
-        transform.fromValue = NSValue(caTransform3D: Self.offsetTransform(for: edge, in: layer.bounds))
-        transform.toValue = NSValue(caTransform3D: CATransform3DIdentity)
-        transform.duration = Self.revealDuration
-        transform.timingFunction = Self.revealCurve
-        layer.add(transform, forKey: Self.transformKey)
+        if slides {
+            let transform = CABasicAnimation(keyPath: "transform")
+            transform.fromValue = NSValue(caTransform3D: Self.offsetTransform(for: edge, in: layer.bounds))
+            transform.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+            transform.duration = Self.revealDuration
+            transform.timingFunction = Self.revealCurve
+            layer.add(transform, forKey: Self.transformKey)
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.revealDuration
@@ -114,17 +113,18 @@ final class ShelfWindowController {
         }
 
         let transformKey = Self.transformKey
-        let exitTransform = usesFreeAnimation
-            ? Self.centerScaleTransform(in: layer.bounds)
-            : Self.offsetTransform(for: edge, in: layer.bounds)
-        let transform = CABasicAnimation(keyPath: "transform")
-        transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
-        transform.toValue = NSValue(caTransform3D: exitTransform)
-        transform.duration = Self.hideDuration
-        transform.timingFunction = Self.hideCurve
-        transform.fillMode = .forwards
-        transform.isRemovedOnCompletion = false
-        layer.add(transform, forKey: transformKey)
+        // Edge shelves fade out in place; only the cursor-summoned shelf keeps its
+        // center-scale pop (a scale, not a slide).
+        if usesFreeAnimation {
+            let transform = CABasicAnimation(keyPath: "transform")
+            transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
+            transform.toValue = NSValue(caTransform3D: Self.centerScaleTransform(in: layer.bounds))
+            transform.duration = Self.hideDuration
+            transform.timingFunction = Self.hideCurve
+            transform.fillMode = .forwards
+            transform.isRemovedOnCompletion = false
+            layer.add(transform, forKey: transformKey)
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.hideDuration
@@ -139,7 +139,7 @@ final class ShelfWindowController {
 
     /// Smoothly grow/shrink the visible panel to a new frame (e.g. when items are added
     /// or removed and the card should hug its contents). No-op layout if hidden.
-    func resize(to targetFrame: NSRect) {
+    func resize(to targetFrame: NSRect, animated: Bool = true) {
         revealedFrame = targetFrame
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: false)
@@ -147,6 +147,10 @@ final class ShelfWindowController {
         }
         guard targetFrame != panel.frame else { return }
 
+        guard animated else {
+            panel.setFrame(targetFrame, display: true)
+            return
+        }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.26
             context.timingFunction = Self.revealCurve
@@ -174,8 +178,8 @@ final class ShelfWindowController {
         UserDefaults.standard.set(NSStringFromRect(revealedFrame), forKey: Self.persistedFrameKey)
     }
 
-    /// The content's starting transform: nudged a few points toward the originating
-    /// edge and scaled down slightly about its center.
+    /// The content's starting transform for a sliding reveal: nudged a few points toward
+    /// the originating edge and scaled down slightly about its center.
     private static func offsetTransform(for edge: ShelfEdge, in bounds: CGRect) -> CATransform3D {
         var dx: CGFloat = 0
         var dy: CGFloat = 0

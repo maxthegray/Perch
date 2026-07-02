@@ -21,8 +21,8 @@ final class RowInteractionState: ObservableObject {
     @Published var isDropTarget = false
 
     /// True only while a drag is actually hovering over the shelf's drop area (not merely
-    /// somewhere on screen). Drives the accent drop-target ring, so it appears the moment
-    /// the item is over the shelf and disappears crisply on release.
+    /// somewhere on screen). Drives the accent drop-target outline, so it appears the
+    /// moment the item is over the shelf and disappears crisply on release.
     @Published var isDragOverShelf = false
 }
 
