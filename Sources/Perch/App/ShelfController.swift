@@ -748,7 +748,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// tab across the gap to the card never reads as "left the shelf" (screen coords).
     private func pointerOverShelfOrTab(_ point: NSPoint) -> Bool {
         if keepAliveRegion().contains(point) { return true }
-        return edgeStrips.contains { $0.frame.contains(point) }
+        return edgeStrips.contains { $0.catchZoneContains(point) }
     }
 
     /// The card's frame unioned with the active edge's tab, so the rectangle spans the

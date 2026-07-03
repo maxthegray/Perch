@@ -114,6 +114,24 @@ final class EdgeStripWindow: NSPanel {
         }
     }
 
+    /// Whether the pointer is inside the catch zone, counting the screen boundary
+    /// itself. The cursor pins at exactly the edge coordinate (e.g. `y == maxY` when
+    /// pushed under the notch), which `NSRect.contains` and tracking areas treat as
+    /// *outside* — so the zone is extended past the edge it hugs.
+    func catchZoneContains(_ point: NSPoint) -> Bool {
+        var zone = frame
+        switch edge {
+        case .notch:
+            zone.size.height += 2
+        case .left:
+            zone.origin.x -= 2
+            zone.size.width += 2
+        case .right:
+            zone.size.width += 2
+        }
+        return zone.contains(point)
+    }
+
     private func configureStrip() {
         // The notch tab must sit above the menu bar to draw on the real notch; the
         // side tabs stay at the normal floating level.
@@ -261,9 +279,12 @@ private final class EdgeStripTriggerView: NSView {
     }
 
     override func mouseExited(with event: NSEvent) {
-        if let strip {
-            strip.stripDelegate?.edgeStripPointerDidExit(strip, duringDrag: false)
-        }
+        guard let strip else { return }
+        // A cursor pinned at the screen edge (fully under the notch) reads as an exit
+        // because the tracking area excludes the boundary pixel — ignore the event
+        // while the pointer is really still inside the catch zone.
+        if strip.catchZoneContains(NSEvent.mouseLocation) { return }
+        strip.stripDelegate?.edgeStripPointerDidExit(strip, duringDrag: false)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
