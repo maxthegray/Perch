@@ -73,6 +73,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// at the cursor (shake-to-summon). The two coexist on the same panel.
     private enum RevealMode { case edge, free }
     private var revealMode: RevealMode = .edge
+    /// Edge tabs only make sense while Perch is docked to an edge. Once the user tears
+    /// it off or summons it at the cursor, the free-floating card is the drop target.
+    private var usesEdgeDock: Bool { revealMode == .edge }
     /// In free mode, the card's top-left corner in screen coords. Persisted across content
     /// resizes (the card grows downward from here) and updated when the user drags it.
     private var freeTopLeft: NSPoint?
@@ -203,8 +206,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             guard let self else { return }
             self.setDragActive(active)
             if active {
-                self.showNearestTab(to: NSEvent.mouseLocation)
-                if self.revealOnDragStart {
+                if self.usesEdgeDock {
+                    self.showNearestTab(to: NSEvent.mouseLocation)
+                } else {
+                    self.setTabsShown(false)
+                }
+                if self.usesEdgeDock, self.revealOnDragStart {
                     self.revealForDrag(to: NSEvent.mouseLocation)
                 }
             } else {
@@ -214,8 +221,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         mouseMonitor.onDragMoved = { [weak self] point in
             guard let self else { return }
-            self.showNearestTab(to: point)
-            if self.revealedForDrag {
+            if self.usesEdgeDock {
+                self.showNearestTab(to: point)
+            } else {
+                self.setTabsShown(false)
+            }
+            if self.usesEdgeDock, self.revealedForDrag {
                 self.followNearestEdge(to: point)
             }
         }
@@ -457,6 +468,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Show only the tab whose catch zone is nearest the cursor.
     private func showNearestTab(to point: NSPoint) {
+        guard usesEdgeDock else {
+            setTabsShown(false)
+            return
+        }
         guard let nearest = nearestStrip(to: point) else { return }
         for strip in edgeStrips {
             strip.showsTab = (strip === nearest)
@@ -474,6 +489,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// begins. Only flagged as drag-revealed if it wasn't already open, so a persistent
     /// (full) shelf is left where it is.
     private func revealForDrag(to point: NSPoint) {
+        guard usesEdgeDock else { return }
         guard let strip = nearestStrip(to: point) else { return }
         if !panel.isVisible { revealedForDrag = true }
         preferredScreen = strip.pinnedScreen
@@ -484,6 +500,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// While a drag-revealed shelf is open, move it to whichever enabled edge the cursor
     /// is now nearest, so it tracks the pointer across edges/screens.
     private func followNearestEdge(to point: NSPoint) {
+        guard usesEdgeDock else { return }
         guard let strip = nearestStrip(to: point),
               strip.edge != preferredEdge || strip.pinnedScreen != preferredScreen else { return }
         preferredScreen = strip.pinnedScreen
@@ -511,6 +528,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         summonScreen = screen
         revealMode = .free
         freeSourceEdge = .right
+        revealedForDrag = false
+        setTabsShown(false)
         hostView.setFreeMode(true)
         // Don't let an in-flight edge retract pull the freshly summoned shelf away.
         cancelOpen()
@@ -580,6 +599,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             ?? NSScreen.main ?? NSScreen.screens.first
         revealMode = .free
         freeSourceEdge = shownEdge
+        revealedForDrag = false
+        setTabsShown(false)
         hostView.setFreeMode(true)
         cancelOpen()
         cancelRetract()
@@ -659,6 +680,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     // MARK: EdgeStripDelegate
 
     func edgeStrip(_ strip: EdgeStripWindow, pointerDidEnterViaDrag viaDrag: Bool) {
+        guard usesEdgeDock else {
+            setTabsShown(false)
+            return
+        }
         // Open the shelf on whichever screen + edge's tab was used.
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
@@ -674,6 +699,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
+        guard usesEdgeDock else { return }
         exitRegion(duringDrag: duringDrag)
     }
 
