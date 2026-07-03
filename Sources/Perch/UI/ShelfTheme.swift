@@ -161,7 +161,7 @@ final class ThemeStore: ObservableObject {
         } else {
             showsLabels = true
         }
-        showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? true
+        showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
     }
 
     func toggle(to style: ShelfStyle) {
