@@ -120,6 +120,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // An empty tile can also be dismissed by clicking its body.
         hostView.onDismissEmptyFree = { [weak self] in self?.dismissFreeShelf() }
 
+        // Deleting the last item hides the card before the store empties, so the
+        // empty-state swap happens off-screen instead of flashing mid-dismissal.
+        hostView.onWillRemoveLastItem = { [weak self] in
+            guard let self else { return }
+            if self.revealMode == .free {
+                self.dismissFreeShelf()
+            } else {
+                self.hideShelf(animated: true)
+            }
+        }
+
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
@@ -208,8 +219,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
 
         // Toggling names on/off changes the card's width — re-fit the open window.
+        // `@Published` emits on willSet, so hop to the next main-queue pass; resizing
+        // synchronously would read the OLD `showsLabels` and keep the stale width.
         labelsCancellable = themeStore.$showsLabels
             .dropFirst()
+            .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.resizeToFitVisible()
             }

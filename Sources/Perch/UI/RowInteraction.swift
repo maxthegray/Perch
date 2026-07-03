@@ -12,6 +12,15 @@ final class RowInteractionState: ObservableObject {
 
     /// The item currently being dragged to reorder (lifted styling), or nil.
     @Published var draggingItemID: UUID?
+
+    /// The item mid-delete: its row does a quick affirmative pop (slight scale-up) before
+    /// shrinking away. Set for ~110ms between the click and the actual removal.
+    @Published var deletingItemID: UUID?
+
+    /// The item currently vended out in a move-mode system drag. Its row is hidden while
+    /// the drag is in flight — the item travels with the cursor instead of appearing to
+    /// clone — and comes back if the drag ends nowhere valid.
+    @Published var vendingItemID: UUID?
     /// While a reorder drag is in progress, the live previewed ordering the rows should
     /// render in. Nil when not reordering (rows follow the store's order).
     @Published var previewOrder: [StoredItem]?

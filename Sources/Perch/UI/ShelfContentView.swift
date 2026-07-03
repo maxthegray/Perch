@@ -94,8 +94,11 @@ struct ShelfContentView: View {
     }
 
     /// Rows follow the live preview order while reordering, otherwise the store order.
+    /// An item vended out in a move-mode drag is hidden — it's "in the cursor's hand" —
+    /// and reappears here if the drag ends nowhere valid.
     private var displayedItems: [StoredItem] {
-        interaction.previewOrder ?? store.items
+        (interaction.previewOrder ?? store.items)
+            .filter { $0.id != interaction.vendingItemID }
     }
 
     /// An `origin → destination` provenance breadcrumb, using each path's parent folder
@@ -128,12 +131,16 @@ struct ShelfContentView: View {
                     theme: theme,
                     isHovered: interaction.hoveredItemID == item.id,
                     isDragging: interaction.draggingItemID == item.id,
+                    isDeleting: interaction.deletingItemID == item.id,
                     thumbnail: thumbnails.thumbnail(for: item),
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
                     showsLabels: themeStore.showsLabels,
                     breadcrumb: breadcrumb(for: item)
                 )
-                .transition(.opacity)
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .opacity.combined(with: .scale(scale: 0.8))
+                ))
             }
         }
         .padding(theme.contentPadding)

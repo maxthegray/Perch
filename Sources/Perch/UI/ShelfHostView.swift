@@ -80,6 +80,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// so a plain click dismisses the whole tile.
     var onDismissEmptyFree: (() -> Void)?
 
+    /// Called just before a delete empties the shelf. The controller hides the card
+    /// first — the last row rides the fade-out — so the empty-state layout (and its
+    /// resize) never flashes on screen.
+    var onWillRemoveLastItem: (() -> Void)?
+
     init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
         self.store = store
         self.themeStore = themeStore
@@ -185,7 +190,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         if themeStore.theme.showsDeleteButton, themeStore.showsLabels,
            let index = rowIndex(at: point),
            deleteHitRect(forRow: index).contains(point) {
-            pendingDeleteItem = store.items[index]
+            pendingDeleteItem = visibleItems[index]
             return
         }
 
@@ -223,15 +228,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             pendingDeleteItem = nil
             let point = convert(event.locationInWindow, from: nil)
             if let index = rowIndex(at: point),
-               index < store.items.count,
-               store.items[index].id == item.id,
+               index < visibleItems.count,
+               visibleItems[index].id == item.id,
                deleteHitRect(forRow: index).contains(point) {
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
-                store.returnToOrigin(item)
-                // The next row slides up under the stationary cursor; re-derive hover so
-                // it doesn't keep pointing at the removed item until the mouse moves.
-                interaction.hoveredItemID = self.item(at: point)?.id
+                removeWithBounce(item, returnToOrigin: true)
             }
         } else if reorderActive {
             commitReorder()
@@ -284,6 +286,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
+        // Move semantics: the row leaves the shelf with the drag — the item is "in the
+        // cursor's hand", not cloned. If the drag ends nowhere valid, the system ghost
+        // slides back and the row reappears. Copy mode keeps the original visible.
+        let isMove = !vendCopies
+        if isMove {
+            interaction.vendingItemID = item.id
+        }
         let dragSource = ItemDragSource(item: item)
         let ledger = ledger
         dragSource.recordVend = { entry in
@@ -292,14 +301,26 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         dragSource.onEnded = { [weak self] operation in
             guard let self else { return }
             self.activeDragSource = nil
-            // Move semantics: once the item has landed somewhere, remove it from the
-            // shelf. Deferred briefly so any in-flight file-promise write (which
-            // copies from the holding dir) can finish before the dir is deleted.
-            // In copy mode the original stays put.
-            guard !operation.isEmpty, !self.vendCopies else { return }
+            guard isMove else { return }
+            if operation.isEmpty {
+                // No drop landed: put the row back on its perch, exactly as it was.
+                // (endedAt fires after the ghost's slide-back animation completes, so
+                // the row fades in right as the ghost arrives.)
+                if self.interaction.vendingItemID == item.id {
+                    self.interaction.vendingItemID = nil
+                }
+                return
+            }
+            // The item landed somewhere: remove it for real. Deferred briefly so any
+            // in-flight file-promise write (which copies from the holding dir) can
+            // finish before the dir is deleted; the row is already hidden meanwhile.
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(600))
-                self?.store.remove(item)
+                guard let self else { return }
+                self.store.remove(item)
+                if self.interaction.vendingItemID == item.id {
+                    self.interaction.vendingItemID = nil
+                }
             }
         }
         activeDragSource = dragSource
@@ -316,8 +337,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.previewOrder = nil
     }
 
+    /// The items as currently rendered: a row vended out in a move-mode drag is hidden
+    /// until the drag resolves, so hit-testing must skip it too.
+    private var visibleItems: [StoredItem] {
+        guard let vendingID = interaction.vendingItemID else { return store.items }
+        return store.items.filter { $0.id != vendingID }
+    }
+
     private func item(at point: NSPoint) -> StoredItem? {
-        rowIndex(at: point).map { store.items[$0] }
+        rowIndex(at: point).map { visibleItems[$0] }
     }
 
     /// Distance from the view's top to the first row: the content padding, plus the grab
@@ -336,7 +364,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let topInset = rowsTopInset
         let contentY = point.y + contentScrollOffsetY()
         let index = Int((contentY - topInset) / rowHeight)
-        guard index >= 0, index < store.items.count else { return nil }
+        guard index >= 0, index < visibleItems.count else { return nil }
         return index
     }
 
@@ -351,6 +379,39 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
         let hit = RowMetrics.deleteDiameter + 10
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
+    }
+
+    /// Delete with a small affirmative bounce: a haptic tick and a quick pop of the row
+    /// (spring scale-up), then the actual removal shrinks it away a beat later.
+    private func removeWithBounce(_ item: StoredItem, returnToOrigin: Bool) {
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+        interaction.deletingItemID = item.id
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(110))
+            guard let self else { return }
+            let emptiesShelf = self.store.items.count == 1 && self.store.items.first?.id == item.id
+            if emptiesShelf {
+                // Hide the card with the row still aboard, then swap to the empty state
+                // off-screen — no flash of the empty tray between bounce and dismissal.
+                self.onWillRemoveLastItem?()
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            if returnToOrigin {
+                self.store.returnToOrigin(item)
+            } else {
+                self.store.remove(item)
+            }
+            if self.interaction.deletingItemID == item.id {
+                self.interaction.deletingItemID = nil
+            }
+            guard !emptiesShelf else { return }
+            // The next row slides up under the stationary cursor; re-derive hover so it
+            // doesn't keep pointing at the removed item until the mouse moves.
+            if let window = self.window {
+                let point = self.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+                self.interaction.hoveredItemID = self.item(at: point)?.id
+            }
+        }
     }
 
     /// SwiftUI's `ScrollView` is backed by an `NSScrollView`; when the list overflows the
@@ -654,7 +715,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }
-        store.remove(item)
+        removeWithBounce(item, returnToOrigin: false)
         menuTargetItem = nil
     }
 
