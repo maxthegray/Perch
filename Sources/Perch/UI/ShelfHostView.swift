@@ -551,39 +551,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return nil
     }
 
-    // TEMPORARY DEBUG (remove): expose the scroll offset for the test harness logs.
-    func debugScrollOffsetY() -> CGFloat {
-        contentScrollOffsetY()
-    }
-
-    // TEMPORARY DEBUG (remove): force a stuck scroll offset like the one a mid-drag
-    // drop leaves behind, so the self-heal can be verified.
-    func debugForceScroll(_ offset: CGFloat) {
-        guard let scrollView = enclosedScrollView() else { return }
-        let clip = scrollView.contentView
-        clip.bounds.origin.y = offset
-        scrollView.reflectScrolledClipView(clip)
-    }
-
-    // TEMPORARY DEBUG (remove): dump the whole geometry chain so a content offset can
-    // be located precisely.
-    func debugGeometry() -> String {
-        var out = "host=\(NSStringFromRect(frame)) hosting=\(NSStringFromRect(hostingView.frame))"
-        out += " frameView=\(NSStringFromRect(superview?.superview?.frame ?? .zero))"
-        out += " fitting=\(NSStringFromSize(hostingView.fittingSize)) intrinsic=\(NSStringFromSize(hostingView.intrinsicContentSize))"
-        if let scrollView = enclosedScrollView() {
-            let clip = scrollView.contentView
-            out += " scroll=\(NSStringFromRect(scrollView.frame))"
-            out += " clipB=\(NSStringFromRect(clip.bounds))"
-            if let doc = scrollView.documentView {
-                out += " doc=\(NSStringFromRect(doc.frame)) docFlipped=\(doc.isFlipped)"
-            }
-        } else {
-            out += " scroll=nil"
-        }
-        return out
-    }
-
     /// Grow/shrink the empty drop target while a drag is in flight.
     func setDropTarget(_ active: Bool) {
         interaction.isDropTarget = active
@@ -653,7 +620,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(clearAll)
 
         let history = NSMenuItem(
-            title: "Show History…",
+            title: "History",
             action: #selector(showHistoryAction(_:)),
             keyEquivalent: ""
         )
@@ -673,36 +640,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
         menu.addItem(.separator())
         menu.addItem(appearanceMenuItem())
-        menu.addItem(edgesMenuItem())
-        menu.addItem(dragOutMenuItem())
-        menu.addItem(revealMenuItem())
-
-        let showNames = NSMenuItem(
-            title: "Show Names",
-            action: #selector(toggleShowLabelsAction(_:)),
-            keyEquivalent: ""
-        )
-        showNames.target = self
-        showNames.state = themeStore.showsLabels ? .on : .off
-        menu.addItem(showNames)
-
-        let showHandle = NSMenuItem(
-            title: "Show Drag Handle",
-            action: #selector(toggleShowGrabHandleAction(_:)),
-            keyEquivalent: ""
-        )
-        showHandle.target = self
-        showHandle.state = themeStore.showsGrabHandle ? .on : .off
-        menu.addItem(showHandle)
-
-        let shakeToSummonItem = NSMenuItem(
-            title: "Shake to Summon",
-            action: #selector(toggleShakeToSummonAction(_:)),
-            keyEquivalent: ""
-        )
-        shakeToSummonItem.target = self
-        shakeToSummonItem.state = shakeToSummon ? .on : .off
-        menu.addItem(shakeToSummonItem)
+        menu.addItem(dockEdgesMenuItem())
+        menu.addItem(behaviorMenuItem())
 
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
@@ -774,7 +713,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         onCloseFreeShelf?()
     }
 
-    /// "Appearance ▸ Glass / Minimal" — toggles the active look live.
+    /// "Appearance ▸ Glass / Minimal / Show Names" — visual-only controls.
     private func appearanceMenuItem() -> NSMenuItem {
         let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -789,6 +728,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             item.state = (style == themeStore.style) ? .on : .off
             submenu.addItem(item)
         }
+        submenu.addItem(.separator())
+        submenu.addItem(showNamesMenuItem())
         appearance.submenu = submenu
         return appearance
     }
@@ -799,9 +740,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         themeStore.style = style
     }
 
-    /// "Edges ▸ Left / Right / Top" — toggles which screen-edge docks are enabled.
-    private func edgesMenuItem() -> NSMenuItem {
-        let edges = NSMenuItem(title: "Edges", action: nil, keyEquivalent: "")
+    /// "Dock Edges ▸ Left / Right / Top" — toggles which screen-edge docks are enabled.
+    private func dockEdgesMenuItem() -> NSMenuItem {
+        let edges = NSMenuItem(title: "Dock Edges", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         let entries: [(String, ShelfEdge)] = [
             ("Left", .left), ("Right", .right), ("Top (Notch)", .notch)
@@ -827,16 +768,60 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         edgeSettings.toggle(edge)
     }
 
+    private func showNamesMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Show Names",
+            action: #selector(toggleShowLabelsAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = themeStore.showsLabels ? .on : .off
+        return item
+    }
+
     @objc private func toggleShowLabelsAction(_ sender: NSMenuItem) {
         themeStore.showsLabels.toggle()
+    }
+
+    private func draggingEnabledMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Dragging Enabled",
+            action: #selector(toggleShowGrabHandleAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = themeStore.showsGrabHandle ? .on : .off
+        return item
     }
 
     @objc private func toggleShowGrabHandleAction(_ sender: NSMenuItem) {
         themeStore.showsGrabHandle.toggle()
     }
 
+    private func shakeToSummonMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Shake to Summon",
+            action: #selector(toggleShakeToSummonAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = shakeToSummon ? .on : .off
+        return item
+    }
+
     @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
         shakeToSummon.toggle()
+    }
+
+    private func behaviorMenuItem() -> NSMenuItem {
+        let behavior = NSMenuItem(title: "Behavior", action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        submenu.addItem(dragOutMenuItem())
+        submenu.addItem(autoShowWhileDraggingMenuItem())
+        submenu.addItem(draggingEnabledMenuItem())
+        submenu.addItem(shakeToSummonMenuItem())
+        behavior.submenu = submenu
+        return behavior
     }
 
     /// "Drag Out ▸ Move / Copy" — whether vending an item removes it or leaves a copy.
@@ -864,31 +849,19 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         vendCopies = copies
     }
 
-    /// "Reveal ▸ On Tab Hover / While Dragging" — whether the shelf opens only when the
-    /// pointer reaches the edge tab, or pops out at the nearest edge as soon as a drag
-    /// begins.
-    private func revealMenuItem() -> NSMenuItem {
-        let reveal = NSMenuItem(title: "Reveal", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        let entries: [(String, Bool)] = [("On Tab Hover", false), ("While Dragging", true)]
-        for (title, onDrag) in entries {
-            let item = NSMenuItem(
-                title: title,
-                action: #selector(selectRevealModeAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = onDrag
-            item.state = (onDrag == revealOnDragStart) ? .on : .off
-            submenu.addItem(item)
-        }
-        reveal.submenu = submenu
-        return reveal
+    private func autoShowWhileDraggingMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Auto Show While Dragging",
+            action: #selector(toggleRevealOnDragStartAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = revealOnDragStart ? .on : .off
+        return item
     }
 
-    @objc private func selectRevealModeAction(_ sender: NSMenuItem) {
-        guard let onDrag = sender.representedObject as? Bool else { return }
-        revealOnDragStart = onDrag
+    @objc private func toggleRevealOnDragStartAction(_ sender: NSMenuItem) {
+        revealOnDragStart.toggle()
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
