@@ -119,6 +119,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         )
         super.init(frame: .zero)
 
+        // The window is sized by the controller (from the measured content height), so
+        // the hosting view must never impose its own size. Left at the default, its
+        // min/intrinsic size constraints fight the manual setFrame — a drop landing
+        // mid-drag resolves that fight by growing the *content view* past the window
+        // (one row too tall, bottom-anchored), which shears the whole card upward.
+        hostingView.sizingOptions = []
+
         // Pin the SwiftUI host to fill us exactly (no autoresizing-from-zero drift).
         hostingView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(hostingView)
@@ -166,11 +173,35 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// `hitTest` intercepts all events, so hand scrolls to the hosted SwiftUI content —
     /// otherwise the overflow ScrollView (list taller than the screen) can never scroll.
+    /// Only when the content actually overflows: scrolling a fitting list would just
+    /// rubber-band and can leave a stuck offset.
     override func scrollWheel(with event: NSEvent) {
-        guard !forwardingScroll, let scrollView = enclosedScrollView() else { return }
+        guard !forwardingScroll,
+              let scrollView = enclosedScrollView(),
+              let document = scrollView.documentView,
+              document.frame.height > scrollView.contentView.bounds.height + 0.5
+        else { return }
         forwardingScroll = true
         scrollView.scrollWheel(with: event)
         forwardingScroll = false
+    }
+
+    /// Reset a stuck scroll offset. The ScrollView is purely an overflow safety net; in
+    /// the normal case the window hugs the content and there is nothing to scroll. But a
+    /// drop landing mid-drag runs in the drag's event-tracking runloop mode, where the
+    /// window resize is deferred — for a beat the grown content overflows the old
+    /// viewport, the clip view anchors to the bottom, and the leftover offset never
+    /// re-clamps once the window catches up. The result: rows shifted up out the top of
+    /// the card and a blank band at the bottom. Whenever the content fits, force the
+    /// offset back to the top.
+    func clampScrollToTopIfContentFits() {
+        guard let scrollView = enclosedScrollView(),
+              let document = scrollView.documentView else { return }
+        let clip = scrollView.contentView
+        guard document.frame.height <= clip.bounds.height + 0.5,
+              abs(clip.bounds.origin.y) > 0.5 else { return }
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: 0))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     // MARK: - Hover tracking (drives the SwiftUI hover highlight + delete button)
@@ -518,6 +549,39 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             queue.append(contentsOf: view.subviews)
         }
         return nil
+    }
+
+    // TEMPORARY DEBUG (remove): expose the scroll offset for the test harness logs.
+    func debugScrollOffsetY() -> CGFloat {
+        contentScrollOffsetY()
+    }
+
+    // TEMPORARY DEBUG (remove): force a stuck scroll offset like the one a mid-drag
+    // drop leaves behind, so the self-heal can be verified.
+    func debugForceScroll(_ offset: CGFloat) {
+        guard let scrollView = enclosedScrollView() else { return }
+        let clip = scrollView.contentView
+        clip.bounds.origin.y = offset
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    // TEMPORARY DEBUG (remove): dump the whole geometry chain so a content offset can
+    // be located precisely.
+    func debugGeometry() -> String {
+        var out = "host=\(NSStringFromRect(frame)) hosting=\(NSStringFromRect(hostingView.frame))"
+        out += " frameView=\(NSStringFromRect(superview?.superview?.frame ?? .zero))"
+        out += " fitting=\(NSStringFromSize(hostingView.fittingSize)) intrinsic=\(NSStringFromSize(hostingView.intrinsicContentSize))"
+        if let scrollView = enclosedScrollView() {
+            let clip = scrollView.contentView
+            out += " scroll=\(NSStringFromRect(scrollView.frame))"
+            out += " clipB=\(NSStringFromRect(clip.bounds))"
+            if let doc = scrollView.documentView {
+                out += " doc=\(NSStringFromRect(doc.frame)) docFlipped=\(doc.isFlipped)"
+            }
+        } else {
+            out += " scroll=nil"
+        }
+        return out
     }
 
     /// Grow/shrink the empty drop target while a drag is in flight.

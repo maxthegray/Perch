@@ -148,6 +148,7 @@ final class ShelfWindowController {
         timing: CAMediaTimingFunction? = nil
     ) {
         revealedFrame = targetFrame
+        NSLog("PerchRESIZE target=\(NSStringFromRect(targetFrame)) animated=\(animated) current=\(NSStringFromRect(panel.frame)) visible=\(panel.isVisible)")
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: false)
             return
@@ -156,12 +157,29 @@ final class ShelfWindowController {
 
         guard animated else {
             panel.setFrame(targetFrame, display: true)
+            healContentViewShear()
             return
         }
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = timing ?? Self.revealCurve
             panel.animator().setFrame(targetFrame, display: true)
+        } completionHandler: { [weak self] in
+            self?.healContentViewShear()
+        }
+    }
+
+    /// Re-pin the contentView to the window. A setFrame delivered during a drag
+    /// session's teardown (event-tracking mode) can double-apply the height delta to
+    /// the contentView through autoresizing, leaving it taller than the window —
+    /// bottom-anchored, so the whole card shears upward and stays that way. The panel
+    /// is borderless, so the contentView must always match the frame size exactly.
+    func healContentViewShear() {
+        guard let contentView = panel.contentView else { return }
+        let expected = NSRect(origin: .zero, size: panel.frame.size)
+        if contentView.frame != expected {
+            NSLog("Perch healed contentView shear: \(NSStringFromRect(contentView.frame)) -> \(NSStringFromRect(expected))")
+            contentView.frame = expected
         }
     }
 

@@ -265,6 +265,58 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.measuredContentHeight = nil
                 self?.resizeToFitVisible()
             }
+
+        // TEMPORARY DEBUG HARNESS (remove): simulate Finder-style drops so the
+        // post-drop layout bug can be reproduced and observed without a live drag.
+        // PERCH_TEST_DROP is a colon-separated list of file paths; each becomes one
+        // simulated drop 2s apart, with geometry logged around it.
+        if let spec = ProcessInfo.processInfo.environment["PERCH_TEST_DROP"] {
+            runTestDrops(paths: spec.split(separator: ":").map(String.init))
+        }
+        if ProcessInfo.processInfo.environment["PERCH_TEST_GEOM"] != nil {
+            Task { @MainActor [weak self] in
+                while true {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard let self else { return }
+                    guard self.panel.isVisible else { continue }
+                    NSLog("PerchGEOM panel=\(NSStringFromRect(self.panel.frame)) content=\(NSStringFromRect(self.panel.contentView?.frame ?? .zero)) \(self.hostView.debugGeometry()) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count)")
+                }
+            }
+        }
+    }
+
+    // TEMPORARY DEBUG HARNESS (remove with the env hook above).
+    private func runTestDrops(paths: [String]) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(2))
+            // Mirror the real flow: a drag session starts, the shelf reveals empty,
+            // then the drop lands while the card is visible with drag state active.
+            self.setDragActive(true)
+            self.revealAtPreferredEdge()
+            try? await Task.sleep(for: .seconds(1))
+            for path in paths {
+                let pasteboard = NSPasteboard(name: NSPasteboard.Name("perch-test-\(UUID().uuidString)"))
+                pasteboard.clearContents()
+                pasteboard.writeObjects([URL(fileURLWithPath: path) as NSURL])
+                let ok = self.handleDrop(pasteboard)
+                NSLog("PerchTEST drop ok=\(ok) path=\(path) frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1)")
+                try? await Task.sleep(for: .seconds(2))
+                NSLog("PerchTEST settle frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count) scrollY=\(self.hostView.debugScrollOffsetY())")
+            }
+            self.setDragActive(false)
+            // Simulate what a drag autoscroll / elastic scroll leaves behind: a stuck
+            // offset on the (normally invisible) overflow ScrollView.
+            if let forced = ProcessInfo.processInfo.environment["PERCH_TEST_SCROLL"].flatMap(Double.init) {
+                try? await Task.sleep(for: .seconds(1))
+                self.hostView.debugForceScroll(CGFloat(forced))
+                NSLog("PerchTEST forced scrollY=\(self.hostView.debugScrollOffsetY())")
+            }
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .seconds(1))
+                NSLog("PerchTEST idle frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count) scrollY=\(self.hostView.debugScrollOffsetY())")
+            }
+        }
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -292,12 +344,23 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func contentHeightDidChange(_ height: CGFloat) {
         guard height > 0 else { return }
         measuredContentHeight = height
+        // A drop mid-drag can leave the overflow ScrollView scrolled (see
+        // clampScrollToTopIfContentFits) — heal it as soon as the content resizes.
+        hostView.clampScrollToTopIfContentFits()
         // A removal already animated the window to its exact final frame; the heights
         // streaming out of the rows' shrink animation must not fight it.
         guard !removalResizeInFlight else { return }
         // Snap, don't animate: this fires when rows are added/removed, and animating the
         // frame there makes the fading row appear to slide as the card re-centers.
-        resizeToFitVisible(animated: false)
+        //
+        // Deferred to the default runloop mode: a drop landing mid-drag delivers this
+        // while the drag session is tearing down (event-tracking mode), and a setFrame
+        // issued there double-applies the height delta to the contentView via
+        // autoresizing — shearing the card one row upward, permanently. Waiting for the
+        // default mode means the window grows a few ms after the drag ends instead.
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            self?.resizeToFitVisible(animated: false)
+        }
     }
 
     /// Row-removal resize: one smooth window animation to the exact final frame, in step
@@ -858,6 +921,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 120_000_000)
                 guard let self, !Task.isCancelled, self.panel.isVisible else { return }
+                // Self-heal a stuck overflow-scroll offset while the shelf is open (a
+                // drop mid-drag can defer the resize past the clamp in
+                // contentHeightDidChange), and a sheared contentView (see
+                // healContentViewShear) no matter what produced it.
+                self.hostView.clampScrollToTopIfContentFits()
+                self.windowController.healContentViewShear()
                 // Don't pull the shelf out from under an open context menu — submenus
                 // extend past the card, so the pointer reads as "left the shelf".
                 if self.hostView.isContextMenuOpen { continue }
