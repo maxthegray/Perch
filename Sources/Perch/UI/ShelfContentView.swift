@@ -27,15 +27,41 @@ struct ShelfContentView: View {
     /// to rest. 1 at rest.
     @State private var thunkScale: CGFloat = 1
 
-    /// An accent outline drawn just inside the card while a drag is hovering over the
-    /// shelf, so any shelf (empty or populated) clearly reads as a live drop target. It
-    /// pops in as the item arrives and snaps back out on release.
-    private var dropTargetRing: some View {
-        cardShape
-            .inset(by: 1.5)
-            .stroke(Color.accentColor, lineWidth: 2)
-            .opacity(interaction.isDragOverShelf ? 1 : 0)
-            .scaleEffect(interaction.isDragOverShelf ? 1 : 0.93)
+    /// The drag beacon's purple, matching the system accent family without following
+    /// the user's accent (it must read as "Perch" from across the screen).
+    private static let beaconPurple = Color(nsColor: .systemPurple)
+
+    /// Drives the repeating inward pulse: flipped under a repeat-forever animation
+    /// while a drag hovers the shelf, reset (without animation) when it leaves.
+    @State private var beaconPulse = false
+
+    /// The drag beacon, drawn just inside the card. While a system drag is anywhere on
+    /// screen, a subtle purple outline + faint glow makes the shelf easy to spot. Once
+    /// the drag is actually over the shelf it brightens, and a second ring repeatedly
+    /// drifts inward toward the center — "it gets pulled in right here". (Inward, not
+    /// outward: the window hugs the card exactly, so motion outside the card's bounds
+    /// would clip at the window edge.)
+    private var dragBeacon: some View {
+        ZStack {
+            cardShape
+                .inset(by: 1.5)
+                .stroke(
+                    Self.beaconPurple.opacity(interaction.isDragOverShelf ? 0.85 : 0.4),
+                    lineWidth: interaction.isDragOverShelf ? 2 : 1.5
+                )
+                .shadow(
+                    color: Self.beaconPurple.opacity(interaction.isDragOverShelf ? 0.5 : 0.3),
+                    radius: interaction.isDragOverShelf ? 5 : 3
+                )
+            if interaction.isDragOverShelf {
+                cardShape
+                    .inset(by: 2)
+                    .stroke(Self.beaconPurple, lineWidth: 1.5)
+                    .scaleEffect(beaconPulse ? 0.93 : 1)
+                    .opacity(beaconPulse ? 0 : 0.55)
+            }
+        }
+        .opacity(interaction.isDropTarget || interaction.isDragOverShelf ? 1 : 0)
     }
 
     private var cardShape: RoundedRectangle {
@@ -48,13 +74,31 @@ struct ShelfContentView: View {
             .background(theme.cardMaterial)
             .clipShape(cardShape)
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
-            .overlay(dropTargetRing)
+            .overlay(dragBeacon)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
+            .onChange(of: interaction.isDragOverShelf) { _, over in
+                if over {
+                    // Start the inward pulse. Reset + animate in one tick would collapse
+                    // to no motion (same trick as the landing thunk below).
+                    beaconPulse = false
+                    DispatchQueue.main.async {
+                        withAnimation(.easeOut(duration: 0.9).repeatForever(autoreverses: false)) {
+                            beaconPulse = true
+                        }
+                    }
+                } else {
+                    // Kill the repeat-forever without animating, so the next hover
+                    // starts from a clean edge state.
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) { beaconPulse = false }
+                }
+            }
             .onChange(of: store.justAddedItemID) { _, id in
                 guard id != nil else { return }
                 // The whole card thunks on a stash: snap to a compressed state, then
