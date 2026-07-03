@@ -277,57 +277,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.resizeToFitVisible()
             }
 
-        // TEMPORARY DEBUG HARNESS (remove): simulate Finder-style drops so the
-        // post-drop layout bug can be reproduced and observed without a live drag.
-        // PERCH_TEST_DROP is a colon-separated list of file paths; each becomes one
-        // simulated drop 2s apart, with geometry logged around it.
-        if let spec = ProcessInfo.processInfo.environment["PERCH_TEST_DROP"] {
-            runTestDrops(paths: spec.split(separator: ":").map(String.init))
-        }
-        if ProcessInfo.processInfo.environment["PERCH_TEST_GEOM"] != nil {
-            Task { @MainActor [weak self] in
-                while true {
-                    try? await Task.sleep(for: .seconds(1))
-                    guard let self else { return }
-                    guard self.panel.isVisible else { continue }
-                    NSLog("PerchGEOM panel=\(NSStringFromRect(self.panel.frame)) content=\(NSStringFromRect(self.panel.contentView?.frame ?? .zero)) \(self.hostView.debugGeometry()) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count)")
-                }
-            }
-        }
-    }
-
-    // TEMPORARY DEBUG HARNESS (remove with the env hook above).
-    private func runTestDrops(paths: [String]) {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            try? await Task.sleep(for: .seconds(2))
-            // Mirror the real flow: a drag session starts, the shelf reveals empty,
-            // then the drop lands while the card is visible with drag state active.
-            self.setDragActive(true)
-            self.revealAtPreferredEdge()
-            try? await Task.sleep(for: .seconds(1))
-            for path in paths {
-                let pasteboard = NSPasteboard(name: NSPasteboard.Name("perch-test-\(UUID().uuidString)"))
-                pasteboard.clearContents()
-                pasteboard.writeObjects([URL(fileURLWithPath: path) as NSURL])
-                let ok = self.handleDrop(pasteboard)
-                NSLog("PerchTEST drop ok=\(ok) path=\(path) frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1)")
-                try? await Task.sleep(for: .seconds(2))
-                NSLog("PerchTEST settle frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count) scrollY=\(self.hostView.debugScrollOffsetY())")
-            }
-            self.setDragActive(false)
-            // Simulate what a drag autoscroll / elastic scroll leaves behind: a stuck
-            // offset on the (normally invisible) overflow ScrollView.
-            if let forced = ProcessInfo.processInfo.environment["PERCH_TEST_SCROLL"].flatMap(Double.init) {
-                try? await Task.sleep(for: .seconds(1))
-                self.hostView.debugForceScroll(CGFloat(forced))
-                NSLog("PerchTEST forced scrollY=\(self.hostView.debugScrollOffsetY())")
-            }
-            for _ in 0..<6 {
-                try? await Task.sleep(for: .seconds(1))
-                NSLog("PerchTEST idle frame=\(NSStringFromRect(self.panel.frame)) measured=\(self.measuredContentHeight ?? -1) count=\(self.store.items.count) scrollY=\(self.hostView.debugScrollOffsetY())")
-            }
-        }
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the

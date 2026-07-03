@@ -148,7 +148,6 @@ final class ShelfWindowController {
         timing: CAMediaTimingFunction? = nil
     ) {
         revealedFrame = targetFrame
-        NSLog("PerchRESIZE target=\(NSStringFromRect(targetFrame)) animated=\(animated) current=\(NSStringFromRect(panel.frame)) visible=\(panel.isVisible)")
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: false)
             return
