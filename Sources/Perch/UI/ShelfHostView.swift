@@ -38,9 +38,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var reorderBaseOrder: [StoredItem] = []
     /// True once the gesture has handed off to a system drag (vend); local tracking stops.
     private var vendStarted = false
+    /// True while a background press is dragging the whole card (drag-to-pin).
+    private var shelfDragActive = false
+    /// Screen-coord anchor of the background press and the window's origin at drag
+    /// start, so the card follows the cursor 1:1 in screen space.
+    private var shelfDragScreenStart: NSPoint = .zero
+    private var shelfDragWindowOrigin: NSPoint = .zero
     /// URLs currently fed to `QLPreviewPanel`.
     private var quickLookURLs: [URL] = []
-    /// True while the shelf is cursor-summoned (draws the grab handle at the top).
+    /// True while the shelf is free-floating (cursor-summoned or dragged off its edge).
     private var isFreeMode = false
 
     /// When true, dragging an item out leaves the original on the shelf (copy);
@@ -69,6 +75,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         set { UserDefaults.standard.set(newValue, forKey: Self.shakeToSummonKey) }
     }
 
+    /// When true, dragging the docked card's background (not a row) tears it off its
+    /// edge and pins it as a free-floating shelf. Read live by the controller. Default
+    /// true, so an unset value keeps the feature on.
+    static let dragToPinKey = "Perch.DragShelfToPin"
+    private var dragToPin: Bool {
+        get { UserDefaults.standard.object(forKey: Self.dragToPinKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.dragToPinKey) }
+    }
+
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
@@ -80,10 +95,22 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// so a plain click dismisses the whole tile.
     var onDismissEmptyFree: (() -> Void)?
 
+    /// Called when the user picks "Close Shelf" on a free-floating shelf; the controller
+    /// dismisses it without removing any stored items.
+    var onCloseFreeShelf: (() -> Void)?
+
     /// Called just before a delete empties the shelf. The controller hides the card
     /// first — the last row rides the fade-out — so the empty-state layout (and its
     /// resize) never flashes on screen.
     var onWillRemoveLastItem: (() -> Void)?
+
+    /// Gate + hooks for drag-to-pin (dragging the whole docked card off its edge by a
+    /// background press). The controller answers whether a card drag may start (edge
+    /// mode, feature enabled), captures the docked frame when one begins, and decides
+    /// pin vs. snap-back when it ends.
+    var canBeginShelfDrag: (() -> Bool)?
+    var onShelfDragBegan: (() -> Void)?
+    var onShelfDragEnded: (() -> Void)?
 
     init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
         self.store = store
@@ -122,17 +149,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction: interaction,
             thumbnails: thumbnails,
             ledger: ledger,
-            onContentHeight: { [weak self] height in self?.onContentHeight?(height) },
-            isFreeMode: isFreeMode
+            onContentHeight: { [weak self] height in self?.onContentHeight?(height) }
         )
     }
 
-    /// Toggle the cursor-summoned look (grab handle on top). The controller pairs this
-    /// with showing/hiding the AppKit handle overlay.
+    /// Toggle free-floating behavior (click-to-dismiss when empty, "Close Shelf" in the
+    /// context menu). The card looks identical in both modes.
     func setFreeMode(_ free: Bool) {
-        guard isFreeMode != free else { return }
         isFreeMode = free
-        hostingView.rootView = makeRootView()
     }
 
     required init?(coder: NSCoder) {
@@ -196,11 +220,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
         dragItem = item(at: point)
         dragStartPoint = point
+        shelfDragScreenStart = NSEvent.mouseLocation
     }
 
     override func mouseDragged(with event: NSEvent) {
         // A press that started on a delete button must not turn into a drag.
-        guard pendingDeleteItem == nil, !vendStarted, let item = dragItem else { return }
+        guard pendingDeleteItem == nil, !vendStarted else { return }
+        guard let item = dragItem else {
+            // The press landed on the card's background (padding, row gaps, or the
+            // empty tile) — a drag there moves the whole card (drag-to-pin).
+            trackShelfDrag()
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
 
         if !reorderActive {
@@ -237,6 +268,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
         } else if reorderActive {
             commitReorder()
+        } else if shelfDragActive {
+            onShelfDragEnded?()
         } else if isFreeMode, store.items.isEmpty {
             // A plain tap (no drag) on the empty tile body dismisses it.
             let point = convert(event.locationInWindow, from: nil)
@@ -328,10 +361,29 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         NSLog("Perch row drag (vend) started for item \(item.id.uuidString)")
     }
 
+    /// Track a background drag of the whole card: past a small slop the window follows
+    /// the cursor 1:1; the controller decides at mouse-up whether it detaches (pins as
+    /// a free shelf) or snaps back to its edge.
+    private func trackShelfDrag() {
+        let location = NSEvent.mouseLocation
+        if !shelfDragActive {
+            let moved = hypot(location.x - shelfDragScreenStart.x, location.y - shelfDragScreenStart.y)
+            guard moved >= 4, canBeginShelfDrag?() == true else { return }
+            shelfDragActive = true
+            shelfDragWindowOrigin = window?.frame.origin ?? .zero
+            onShelfDragBegan?()
+        }
+        window?.setFrameOrigin(NSPoint(
+            x: shelfDragWindowOrigin.x + (location.x - shelfDragScreenStart.x),
+            y: shelfDragWindowOrigin.y + (location.y - shelfDragScreenStart.y)
+        ))
+    }
+
     private func resetDragState() {
         dragItem = nil
         reorderActive = false
         vendStarted = false
+        shelfDragActive = false
         reorderBaseOrder = []
         interaction.draggingItemID = nil
         interaction.previewOrder = nil
@@ -348,11 +400,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { visibleItems[$0] }
     }
 
-    /// Distance from the view's top to the first row: the content padding, plus the grab
-    /// handle a cursor-summoned shelf draws above the rows. Hit-testing that ignored the
-    /// handle mapped free-mode hover/delete/reorder half a row off.
+    /// Distance from the view's top to the first row: the content padding.
     private var rowsTopInset: CGFloat {
-        themeStore.theme.contentPadding + (isFreeMode ? ShelfContentView.handleHeight : 0)
+        themeStore.theme.contentPadding
     }
 
     /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
@@ -510,6 +560,17 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         history.target = self
         menu.addItem(history)
 
+        // A free-floating shelf has no ✕ — this is how it's dismissed (items stay stored).
+        if isFreeMode {
+            let closeShelf = NSMenuItem(
+                title: "Close Shelf",
+                action: #selector(closeFreeShelfAction(_:)),
+                keyEquivalent: ""
+            )
+            closeShelf.target = self
+            menu.addItem(closeShelf)
+        }
+
         menu.addItem(.separator())
         menu.addItem(appearanceMenuItem())
         menu.addItem(edgesMenuItem())
@@ -533,6 +594,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         shakeToSummonItem.target = self
         shakeToSummonItem.state = shakeToSummon ? .on : .off
         menu.addItem(shakeToSummonItem)
+
+        let dragToPinItem = NSMenuItem(
+            title: "Drag Shelf to Pin",
+            action: #selector(toggleDragToPinAction(_:)),
+            keyEquivalent: ""
+        )
+        dragToPinItem.target = self
+        dragToPinItem.state = dragToPin ? .on : .off
+        menu.addItem(dragToPinItem)
 
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
@@ -600,6 +670,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         onShowHistory?()
     }
 
+    @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {
+        onCloseFreeShelf?()
+    }
+
     /// "Appearance ▸ Glass / Minimal" — toggles the active look live.
     private func appearanceMenuItem() -> NSMenuItem {
         let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
@@ -659,6 +733,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
         shakeToSummon.toggle()
+    }
+
+    @objc private func toggleDragToPinAction(_ sender: NSMenuItem) {
+        dragToPin.toggle()
     }
 
     /// "Drag Out ▸ Move / Copy" — whether vending an item removes it or leaves a copy.

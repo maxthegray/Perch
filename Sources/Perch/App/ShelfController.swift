@@ -39,6 +39,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shakeToSummonEnabled: Bool {
         UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
     }
+    /// Whether the docked shelf can be dragged off its edge and pinned as a free-floating
+    /// card. User-toggled; defaults on (an unset value reads as true).
+    private var dragShelfToPinEnabled: Bool {
+        UserDefaults.standard.object(forKey: ShelfHostView.dragToPinKey) as? Bool ?? true
+    }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
     private var retractWatcher: Task<Void, Never>?
@@ -68,8 +73,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var freeTopLeft: NSPoint?
     /// The screen a free-floating shelf is pinned to (the one the summon happened on).
     private var summonScreen: NSScreen?
-    /// Transparent grab-handle interaction layer, shown only in free mode.
-    private let handleOverlay = FreeShelfHandleOverlay()
+    /// The edge whose width rules the free card inherits: the edge it was torn off
+    /// (drag-to-pin) or `.right` for cursor summons — so a pinned card keeps exactly
+    /// the look it had docked (the notch card is wider than the side ones).
+    private var freeSourceEdge: ShelfEdge = .right
+    /// The docked frame captured when a drag-to-pin gesture starts. Non-nil while the
+    /// user is dragging the card off its edge; it decides pin vs. snap-back at mouse-up
+    /// and holds the auto-retract machinery off while the card is mid-flight.
+    private var dragOutDockedFrame: NSRect?
     /// Observes user-initiated window moves so a dragged free shelf keeps its new origin.
     private var windowMoveObserver: NSObjectProtocol?
 
@@ -101,21 +112,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         ])
         panel.contentView = dropView
 
-        // The free-mode grab handle sits above the host view (frontmost in the content
-        // view), covering the top strip where the SwiftUI handle is painted. Hidden in
-        // edge mode so it never intercepts row clicks.
-        handleOverlay.translatesAutoresizingMaskIntoConstraints = false
-        handleOverlay.isHidden = true
-        dropView.addSubview(handleOverlay)
-        NSLayoutConstraint.activate([
-            handleOverlay.leadingAnchor.constraint(equalTo: dropView.leadingAnchor),
-            handleOverlay.trailingAnchor.constraint(equalTo: dropView.trailingAnchor),
-            handleOverlay.topAnchor.constraint(equalTo: dropView.topAnchor),
-            handleOverlay.heightAnchor.constraint(equalToConstant: ShelfContentView.handleHeight)
-        ])
-
-        // The close button dismisses the free shelf without removing any stored items.
-        handleOverlay.onDismiss = { [weak self] in self?.dismissFreeShelf() }
+        // "Close Shelf" in the context menu dismisses the free shelf without removing
+        // any stored items.
+        hostView.onCloseFreeShelf = { [weak self] in self?.dismissFreeShelf() }
 
         // An empty tile can also be dismissed by clicking its body.
         hostView.onDismissEmptyFree = { [weak self] in self?.dismissFreeShelf() }
@@ -129,6 +128,26 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             } else {
                 self.hideShelf(animated: true)
             }
+        }
+
+        // Dragging the card's background (not a row) moves the whole card. From an edge
+        // it tears the docked shelf off: past a small distance it pins where it's
+        // dropped as a free-floating shelf, otherwise it snaps back. A free shelf just
+        // moves (its new origin is kept by the didMove observer).
+        hostView.canBeginShelfDrag = { [weak self] in
+            guard let self, self.panel.isVisible else { return false }
+            return self.revealMode == .free || self.dragShelfToPinEnabled
+        }
+        hostView.onShelfDragBegan = { [weak self] in
+            guard let self else { return }
+            if self.revealMode == .edge {
+                self.dragOutDockedFrame = self.panel.frame
+            }
+            self.cancelOpen()
+            self.cancelRetract()
+        }
+        hostView.onShelfDragEnded = { [weak self] in
+            self?.shelfDragDidEnd()
         }
 
         // Grow/shrink the window to the SwiftUI content's actual measured height.
@@ -253,6 +272,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// label/compact toggle changes the card's width).
     private func resizeToFitVisible(animated: Bool = true) {
         guard panel.isVisible else { return }
+        // Mid drag-to-pin the card is following the cursor — don't refit it to an edge
+        // frame out from under the gesture.
+        if dragOutDockedFrame != nil { return }
         if revealMode == .free {
             windowController.resize(to: freePanelFrame(), animated: animated)
             return
@@ -336,8 +358,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             ?? NSScreen.main ?? NSScreen.screens.first
         summonScreen = screen
         revealMode = .free
+        freeSourceEdge = .right
         hostView.setFreeMode(true)
-        handleOverlay.isHidden = false
         // Don't let an in-flight edge retract pull the freshly summoned shelf away.
         cancelOpen()
         cancelRetract()
@@ -357,19 +379,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    /// The free-floating card frame: width by content, height by measured content (plus
-    /// the grab handle), positioned at `freeTopLeft` clamped fully onto its screen.
+    /// The free-floating card frame: sized exactly like the docked card (same width
+    /// rules, same content-hugging height, same empty strip), positioned at
+    /// `freeTopLeft` clamped fully onto its screen.
     private func freePanelFrame() -> NSRect {
         let screen = summonScreen ?? NSScreen.main ?? NSScreen.screens.first
         let visible = (screen ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
-        let width = freeCardWidth()
-        // Empty, it opens as a square drop zone; with items it grows to hug the list.
-        let height: CGFloat
-        if store.items.isEmpty {
-            height = min(width, visible.height - 24)
-        } else {
-            height = min(fittedContentHeight() + ShelfContentView.handleHeight, visible.height - 24)
-        }
+        let width = min(cardWidth(for: freeSourceEdge), visible.width - 16)
+        let height = min(fittedContentHeight(), visible.height - 24)
 
         let anchor = freeTopLeft ?? NSPoint(x: visible.midX - width / 2, y: visible.midY + height / 2)
         let x = min(max(anchor.x, visible.minX + 8), visible.maxX - width - 8)
@@ -378,26 +395,49 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return NSRect(x: x, y: y, width: width, height: height)
     }
 
-    /// The free card's width: a comfortable drop target when empty, the list width with
-    /// names, otherwise a compact icon strip (with a floor so the handle/✕ still fit).
-    private func freeCardWidth() -> CGFloat {
-        if store.items.isEmpty { return freeEmptySide() }
-        guard themeStore.showsLabels else { return max(compactCardWidth, 180) }
-        return 300
-    }
-
-    /// Side of the empty free-shelf square: matches the height of a single populated row
-    /// (handle + one row), so dropping a file keeps the height fixed and just grows the
-    /// card sideways into the file.
-    private func freeEmptySide() -> CGFloat {
-        let theme = themeStore.theme
-        return ShelfContentView.handleHeight + theme.contentPadding * 2 + theme.rowHeight
-    }
-
     /// Remember the user's chosen position after they drag the free shelf by its handle.
     private func captureFreeOrigin() {
         guard revealMode == .free, panel.isVisible else { return }
         freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+    }
+
+    // MARK: Drag-to-pin (tear the docked card off its edge)
+
+    /// How far the card must travel from its docked frame to detach; released closer
+    /// than this it snaps back to the edge and stays docked.
+    private static let pinDetachDistance: CGFloat = 40
+
+    /// Mouse-up on a drag-to-pin gesture: far enough from the docked frame, the card
+    /// pins where it was dropped as a free-floating shelf (the same persistence as
+    /// shake-to-summon); otherwise it snaps back to its edge.
+    private func shelfDragDidEnd() {
+        guard let docked = dragOutDockedFrame else { return }
+        dragOutDockedFrame = nil
+        let moved = hypot(panel.frame.minX - docked.minX, panel.frame.minY - docked.minY)
+        if moved >= Self.pinDetachDistance {
+            pinShelfAtCurrentPosition()
+        } else {
+            windowController.resize(to: docked)
+        }
+    }
+
+    /// Convert the dragged-out card into a free-floating shelf pinned at its current
+    /// position — the drag-out twin of `summonAtCursor`.
+    private func pinShelfAtCurrentPosition() {
+        summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
+            ?? NSScreen.main ?? NSScreen.screens.first
+        revealMode = .free
+        freeSourceEdge = shownEdge
+        hostView.setFreeMode(true)
+        cancelOpen()
+        cancelRetract()
+        stopRetractWatcher()
+        pointerInRegion = false
+        // Keep the card's top-left where the user dropped it; the free frame grows
+        // downward from there and clamps on-screen.
+        freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        windowController.usesFreeAnimation = true
+        windowController.resize(to: freePanelFrame())
     }
 
     /// Tear down the free-floating shelf (✕ pressed, or it emptied out) and return to
@@ -407,13 +447,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         freeTopLeft = nil
         summonScreen = nil
         pointerInRegion = false
-        handleOverlay.isHidden = true
         stopRetractWatcher()
         cancelRetract()
         hostView.resetInteraction()
         windowController.hide(animated: true)
-        // Leave the SwiftUI handle in place through the fade-out (clearing it now would
-        // reflow the card mid-animation); it's reset when the shelf next docks at an edge.
+        // The host's free-mode behaviors are reset when the shelf next docks at an edge.
         windowController.usesFreeAnimation = false
     }
 
@@ -696,6 +734,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // A free-floating shelf is persistent — it ignores pointer-out and manages its
         // own dismissal (✕ or emptying out).
         if revealMode == .free { return }
+        // A fast drag-to-pin can outrun the card between drag events; don't let the
+        // momentary exit retract an empty card mid-gesture.
+        if dragOutDockedFrame != nil { return }
         if duringDrag { return }
         pointerInRegion = false
         // A context menu open over the shelf keeps it alive even as the pointer wanders
@@ -725,6 +766,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 if self.hostView.isContextMenuOpen { continue }
                 // A free-floating shelf never auto-retracts on pointer-out.
                 if self.revealMode == .free { continue }
+                // The card follows the cursor during drag-to-pin; a momentary lag
+                // behind a fast drag must not read as pointer-out.
+                if self.dragOutDockedFrame != nil { continue }
                 // While a drag is holding the shelf open ("reveal while dragging"), keep
                 // it up regardless of pointer position; drag-end decides whether to close.
                 if self.revealedForDrag { continue }
@@ -786,9 +830,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Reveal (or reposition) the panel at the current preferred screen + edge.
     private func revealAtPreferredEdge() {
-        // Docking at an edge clears any leftover free-mode chrome (grab handle/overlay).
+        // Docking at an edge clears any leftover free-mode layout.
         revealMode = .edge
-        handleOverlay.isHidden = true
         hostView.setFreeMode(false)
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
         shownScreen = screen
