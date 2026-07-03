@@ -43,25 +43,34 @@ struct ShelfContentView: View {
     /// would clip at the window edge.)
     private var dragBeacon: some View {
         ZStack {
-            cardShape
-                .inset(by: 1.5)
-                .stroke(
-                    Self.beaconPurple.opacity(interaction.isDragOverShelf ? 0.85 : 0.4),
-                    lineWidth: interaction.isDragOverShelf ? 2 : 1.5
-                )
+            beaconRing(
+                inset: 0,
+                lineWidth: interaction.isDragOverShelf ? 2 : 1.5,
+                color: Self.beaconPurple.opacity(interaction.isDragOverShelf ? 0.85 : 0.4)
+            )
                 .shadow(
                     color: Self.beaconPurple.opacity(interaction.isDragOverShelf ? 0.5 : 0.3),
                     radius: interaction.isDragOverShelf ? 5 : 3
                 )
             if interaction.isDragOverShelf {
-                cardShape
-                    .inset(by: 2)
-                    .stroke(Self.beaconPurple, lineWidth: 1.5)
-                    .scaleEffect(beaconPulse ? 0.93 : 1)
+                beaconRing(
+                    inset: beaconPulse ? 8 : 0,
+                    lineWidth: 1.5,
+                    color: Self.beaconPurple
+                )
                     .opacity(beaconPulse ? 0 : 0.55)
             }
         }
         .opacity(interaction.isDropTarget || interaction.isDragOverShelf ? 1 : 0)
+        .clipShape(cardShape)
+    }
+
+    /// A ring drawn from the exact same insettable shape as the clipped card. This keeps
+    /// the hover-intense outline and inward pulse on the card's real corner geometry.
+    private func beaconRing(inset: CGFloat, lineWidth: CGFloat, color: Color) -> some View {
+        cardShape
+            .inset(by: inset)
+            .strokeBorder(color, lineWidth: lineWidth)
     }
 
     private var cardShape: RoundedRectangle {
