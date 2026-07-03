@@ -33,6 +33,10 @@ final class RowInteractionState: ObservableObject {
     /// somewhere on screen). Drives the accent drop-target outline, so it appears the
     /// moment the item is over the shelf and disappears crisply on release.
     @Published var isDragOverShelf = false
+
+    /// True while the pointer is over the card's grab handle (or a handle drag is in
+    /// flight), so the grabber brightens to advertise that it moves the whole card.
+    @Published var isGrabberHovered = false
 }
 
 /// Delete-button layout constants shared between the SwiftUI rendering (`ItemRowView`)
@@ -43,4 +47,11 @@ enum RowMetrics {
     static let deleteDiameter: CGFloat = 20
     /// Trailing inset of the delete button from the row's right edge.
     static let deleteTrailingInset: CGFloat = 7
+    /// Total height of the grab-handle strip drawn above the rows when the shelf holds
+    /// items. Part of the row-geometry contract: the SwiftUI layout, the AppKit hit
+    /// math, and the controller's height estimate all include it.
+    static let grabberZoneHeight: CGFloat = 16
+    /// Size of the grabber capsule itself, centered in the zone.
+    static let grabberWidth: CGFloat = 36
+    static let grabberHeight: CGFloat = 5
 }

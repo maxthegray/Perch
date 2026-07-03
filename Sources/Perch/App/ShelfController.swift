@@ -39,11 +39,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shakeToSummonEnabled: Bool {
         UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
     }
-    /// Whether the docked shelf can be dragged off its edge and pinned as a free-floating
-    /// card. User-toggled; defaults on (an unset value reads as true).
-    private var dragShelfToPinEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.dragToPinKey) as? Bool ?? true
-    }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
     private var retractWatcher: Task<Void, Never>?
@@ -51,6 +46,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var wasEmpty: Bool?
     /// Latest measured SwiftUI content height, used to size the window to fit.
     private var measuredContentHeight: CGFloat?
+    /// Item count at the last store change, to tell removals from insertions.
+    private var lastItemCount = 0
+    /// True while a row-removal animation is in flight. The rows animate their shrink,
+    /// so the measured height streams a new value every frame; acting on each one would
+    /// snap-resize (and re-center) the window per frame — the visible "clunk". Instead
+    /// the window animates once to the exact final frame and measured heights are
+    /// ignored until the dust settles.
+    private var removalResizeInFlight = false
+    private var removalResizeTask: Task<Void, Never>?
     /// Observes display add/remove/resolution changes so the edge tabs stay correct.
     private var screenObserver: NSObjectProtocol?
     private var preferredScreen: NSScreen?
@@ -63,6 +67,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shownEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
+    private var grabHandleCancellable: AnyCancellable?
 
     /// Where the shelf is currently anchored: docked to a screen edge, or free-floating
     /// at the cursor (shake-to-summon). The two coexist on the same panel.
@@ -130,13 +135,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
         }
 
-        // Dragging the card's background (not a row) moves the whole card. From an edge
-        // it tears the docked shelf off: past a small distance it pins where it's
-        // dropped as a free-floating shelf, otherwise it snaps back. A free shelf just
-        // moves (its new origin is kept by the didMove observer).
+        // Dragging the card's grab handle or its background (not a row) moves the whole
+        // card. From an edge it tears the docked shelf off: past a small distance it
+        // pins where it's dropped as a free-floating shelf, otherwise it snaps back. A
+        // free shelf just moves (its new origin is kept by the didMove observer). The
+        // "Show Drag Handle" toggle is the single switch for the docked drag-out; a free
+        // shelf stays movable regardless so it can never get stuck.
         hostView.canBeginShelfDrag = { [weak self] in
             guard let self, self.panel.isVisible else { return false }
-            return self.revealMode == .free || self.dragShelfToPinEnabled
+            return self.revealMode == .free || self.themeStore.showsGrabHandle
         }
         hostView.onShelfDragBegan = { [weak self] in
             guard let self else { return }
@@ -246,13 +253,35 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] _ in
                 self?.resizeToFitVisible()
             }
+
+        // Showing/hiding the grab handle changes the card's height by the handle strip —
+        // same willSet/next-pass dance as the labels toggle. The stale measured height
+        // (still including/excluding the old strip) is dropped so the estimate drives
+        // one animated re-fit instead of waiting for the snap.
+        grabHandleCancellable = themeStore.$showsGrabHandle
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.measuredContentHeight = nil
+                self?.resizeToFitVisible()
+            }
     }
 
-    /// React to the item list changing: run the open/retract logic only when the
-    /// empty↔non-empty state actually flips. (Window resizing is driven separately by
-    /// the SwiftUI content's measured height — see `contentHeightDidChange`.)
+    /// React to the item list changing: shrink smoothly on removals, and run the
+    /// open/retract logic when the empty↔non-empty state actually flips. (Growth on
+    /// insertions is driven separately by the SwiftUI content's measured height — see
+    /// `contentHeightDidChange`.)
     private func shelfItemsDidChange(_ items: [StoredItem]) {
+        let previousCount = lastItemCount
+        lastItemCount = items.count
         let isEmpty = items.isEmpty
+        if items.count < previousCount, !isEmpty {
+            animateRemovalResize()
+        } else if items.count > previousCount {
+            // New content arriving cancels any in-flight removal shrink so the card can
+            // grow for it right away.
+            endRemovalResize()
+        }
         guard isEmpty != wasEmpty else { return }
         wasEmpty = isEmpty
         shelfContentDidChange(isEmpty: isEmpty)
@@ -263,9 +292,69 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func contentHeightDidChange(_ height: CGFloat) {
         guard height > 0 else { return }
         measuredContentHeight = height
+        // A removal already animated the window to its exact final frame; the heights
+        // streaming out of the rows' shrink animation must not fight it.
+        guard !removalResizeInFlight else { return }
         // Snap, don't animate: this fires when rows are added/removed, and animating the
         // frame there makes the fading row appear to slide as the card re-centers.
         resizeToFitVisible(animated: false)
+    }
+
+    /// Row-removal resize: one smooth window animation to the exact final frame, in step
+    /// with the rows' own slide (same duration + ease). The frame keeps the card's *top*
+    /// edge where it is — rows above the deleted one don't move at all, the rows below
+    /// slide up, and the card's bottom follows the last row — instead of re-centering,
+    /// which made every remaining row shift.
+    private func animateRemovalResize() {
+        guard panel.isVisible, dragOutDockedFrame == nil else { return }
+        let target: NSRect
+        if revealMode == .free {
+            removalResizeInFlight = true
+            target = freePanelFrame()
+        } else if let screen = shownScreen ?? NSScreen.main ?? NSScreen.screens.first {
+            removalResizeInFlight = true
+            target = removalFrameKeepingTop(on: screen)
+        } else {
+            return
+        }
+        removalResizeTask?.cancel()
+        removalResizeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.endRemovalResize()
+        }
+        windowController.resize(
+            to: target,
+            animated: true,
+            duration: Self.removalAnimationDuration,
+            timing: CAMediaTimingFunction(name: .easeOut)
+        )
+    }
+
+    /// Matches the rows' removal animation in ShelfContentView (easeOut 0.18s) so the
+    /// card's bottom edge and the last row arrive together.
+    private static let removalAnimationDuration: CFTimeInterval = 0.18
+
+    /// The rows have settled — resume measured-height-driven sizing and true-up once
+    /// (a no-op when the animation landed where expected).
+    private func endRemovalResize() {
+        removalResizeTask?.cancel()
+        removalResizeTask = nil
+        guard removalResizeInFlight else { return }
+        removalResizeInFlight = false
+        resizeToFitVisible(animated: false)
+    }
+
+    /// The docked card's post-removal frame: standard width/x for its edge, but with the
+    /// current top edge preserved so the card shrinks from the bottom only. (The notch
+    /// card already hangs from the top, so its standard frame is used as-is.)
+    private func removalFrameKeepingTop(on screen: NSScreen) -> NSRect {
+        var frame = panelFrame(for: screen, edge: shownEdge)
+        guard shownEdge != .notch else { return frame }
+        let visible = screen.visibleFrame
+        let y = panel.frame.maxY - frame.height
+        frame.origin.y = min(max(y, visible.minY + 12), visible.maxY - frame.height - 12)
+        return frame
     }
 
     /// Re-fit the open window to the current content height + width (e.g. after the
@@ -539,13 +628,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     /// The card height that hugs `itemCount` rows (or the empty-state height when zero;
-    /// larger while dragging so the drop target is an easier box to hit).
+    /// larger while dragging so the drop target is an easier box to hit). A populated
+    /// card also carries the grab-handle strip above its rows, unless hidden.
     private func contentHeight(for itemCount: Int) -> CGFloat {
         guard itemCount > 0 else { return dragActive ? Self.dropTargetHeight : Self.emptyStateHeight }
         let theme = themeStore.theme
+        let grabber = themeStore.showsGrabHandle ? RowMetrics.grabberZoneHeight : 0
         let rows = CGFloat(itemCount) * theme.rowHeight
             + CGFloat(itemCount - 1) * theme.rowSpacing
-        return theme.contentPadding * 2 + rows
+        return theme.contentPadding * 2 + grabber + rows
     }
 
     /// The content-hugging card frame on a screen + edge. Prefers the actual measured
@@ -563,9 +654,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// The content height the card should hug: the measured SwiftUI height, floored at
     /// the per-item estimate. Rows are fixed-height so the estimate is exact — the floor
     /// keeps a stale or mid-transition measurement from ever shrinking the card below
-    /// what the current item count needs.
+    /// what the current item count needs. During a removal animation the measurement is
+    /// mid-shrink (still *above* the estimate), so the estimate alone is the target.
+    ///
+    /// Counts from `lastItemCount`, not `store.items`: `@Published` emits on willSet, so
+    /// while the items sink is running `store.items` still holds the *old* list — sizing
+    /// from it would target the pre-removal height and the shrink would never move.
     private func fittedContentHeight() -> CGFloat {
-        let estimate = contentHeight(for: store.items.count)
+        let estimate = contentHeight(for: lastItemCount)
+        if removalResizeInFlight { return estimate }
         return max(measuredContentHeight ?? estimate, estimate)
     }
 

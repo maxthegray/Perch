@@ -65,7 +65,10 @@ struct ShelfTheme {
                 cardStrokeColor: .white.opacity(0.12),
                 cardStrokeWidth: 0.5,
                 rowHeight: 50,
-                rowCornerRadius: 9,
+                // Concentric with the card: cardCornerRadius − contentPadding, so the
+                // row highlight's corners share the card's curvature instead of looking
+                // squarer than the corner they sit inside.
+                rowCornerRadius: 12,
                 rowFill: Color.primary.opacity(0.05),
                 rowHoverFill: Color.primary.opacity(0.11),
                 contentPadding: 6,
@@ -121,6 +124,7 @@ struct ShelfTheme {
 final class ThemeStore: ObservableObject {
     private static let key = "Perch.ShelfStyle"
     private static let labelsKey = "Perch.ShowsLabels"
+    private static let grabHandleKey = "Perch.ShowsGrabHandle"
 
     @Published var style: ShelfStyle {
         didSet {
@@ -138,6 +142,15 @@ final class ThemeStore: ObservableObject {
         }
     }
 
+    /// Whether a populated card shows the grab handle above its rows (the always-safe
+    /// place to drag the whole card). Off, the card is only draggable by its background.
+    @Published var showsGrabHandle: Bool {
+        didSet {
+            guard showsGrabHandle != oldValue else { return }
+            UserDefaults.standard.set(showsGrabHandle, forKey: Self.grabHandleKey)
+        }
+    }
+
     var theme: ShelfTheme { ShelfTheme.resolve(style) }
 
     init() {
@@ -148,6 +161,7 @@ final class ThemeStore: ObservableObject {
         } else {
             showsLabels = true
         }
+        showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? true
     }
 
     func toggle(to style: ShelfStyle) {

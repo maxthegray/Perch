@@ -75,15 +75,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         set { UserDefaults.standard.set(newValue, forKey: Self.shakeToSummonKey) }
     }
 
-    /// When true, dragging the docked card's background (not a row) tears it off its
-    /// edge and pins it as a free-floating shelf. Read live by the controller. Default
-    /// true, so an unset value keeps the feature on.
-    static let dragToPinKey = "Perch.DragShelfToPin"
-    private var dragToPin: Bool {
-        get { UserDefaults.standard.object(forKey: Self.dragToPinKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.dragToPinKey) }
-    }
-
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
@@ -104,10 +95,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// resize) never flashes on screen.
     var onWillRemoveLastItem: (() -> Void)?
 
-    /// Gate + hooks for drag-to-pin (dragging the whole docked card off its edge by a
-    /// background press). The controller answers whether a card drag may start (edge
-    /// mode, feature enabled), captures the docked frame when one begins, and decides
-    /// pin vs. snap-back when it ends.
+    /// Gate + hooks for whole-card drags (the grab handle or a background press; from an
+    /// edge they tear the docked card off). The controller answers whether a card drag
+    /// may start, captures the docked frame when one begins, and decides pin vs.
+    /// snap-back when it ends.
     var canBeginShelfDrag: (() -> Bool)?
     var onShelfDragBegan: (() -> Void)?
     var onShelfDragEnded: (() -> Void)?
@@ -198,11 +189,34 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseMoved(with event: NSEvent) {
-        interaction.hoveredItemID = item(at: convert(event.locationInWindow, from: nil))?.id
+        let point = convert(event.locationInWindow, from: nil)
+        interaction.hoveredItemID = item(at: point)?.id
+        updateGrabberHover(at: point)
     }
 
     override func mouseExited(with event: NSEvent) {
         interaction.hoveredItemID = nil
+        guard !shelfDragActive else { return }
+        if interaction.isGrabberHovered {
+            interaction.isGrabberHovered = false
+            NSCursor.arrow.set()
+        }
+    }
+
+    /// Highlight the grab handle under the pointer and match the cursor to it: open
+    /// hand over the handle, closed hand while a card drag is in flight.
+    private func updateGrabberHover(at point: NSPoint) {
+        let over = shelfDragActive || grabberZoneContains(point)
+        if interaction.isGrabberHovered != over {
+            interaction.isGrabberHovered = over
+        }
+        if shelfDragActive {
+            NSCursor.closedHand.set()
+        } else if over {
+            NSCursor.openHand.set()
+        } else {
+            NSCursor.arrow.set()
+        }
     }
 
     // MARK: - Delete button + row drag
@@ -278,6 +292,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
         }
         resetDragState()
+        updateGrabberHover(at: convert(event.locationInWindow, from: nil))
     }
 
     // MARK: Reorder / vend
@@ -371,6 +386,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             guard moved >= 4, canBeginShelfDrag?() == true else { return }
             shelfDragActive = true
             shelfDragWindowOrigin = window?.frame.origin ?? .zero
+            interaction.isGrabberHovered = hasGrabber
+            NSCursor.closedHand.set()
             onShelfDragBegan?()
         }
         window?.setFrameOrigin(NSPoint(
@@ -400,9 +417,23 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { visibleItems[$0] }
     }
 
-    /// Distance from the view's top to the first row: the content padding.
+    /// Whether the card currently shows the grab handle above its rows (it holds visible
+    /// items and the user hasn't hidden the handle). Must mirror ShelfContentView's
+    /// layout exactly.
+    private var hasGrabber: Bool {
+        themeStore.showsGrabHandle && !visibleItems.isEmpty
+    }
+
+    /// Distance from the view's top to the first row: the content padding, plus the
+    /// grab-handle strip when the card holds items.
     private var rowsTopInset: CGFloat {
-        themeStore.theme.contentPadding
+        themeStore.theme.contentPadding + (hasGrabber ? RowMetrics.grabberZoneHeight : 0)
+    }
+
+    /// Whether `point` (view coords) falls in the grab-handle strip at the top of a
+    /// populated card — everything above the first row, full width.
+    private func grabberZoneContains(_ point: NSPoint) -> Bool {
+        hasGrabber && bounds.contains(point) && point.y < rowsTopInset
     }
 
     /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
@@ -413,8 +444,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let rowHeight = theme.rowHeight + theme.rowSpacing
         let topInset = rowsTopInset
         let contentY = point.y + contentScrollOffsetY()
+        // Points above the first row (the grab handle / top padding) are not a row.
+        // `Int()` truncates toward zero, so without this guard the small negative
+        // fractions up there would all collapse onto row 0.
+        guard contentY >= topInset else { return nil }
         let index = Int((contentY - topInset) / rowHeight)
-        guard index >= 0, index < visibleItems.count else { return nil }
+        guard index < visibleItems.count else { return nil }
         return index
     }
 
@@ -507,6 +542,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// shelf hides so stale state doesn't carry into the next reveal).
     func resetInteraction() {
         interaction.hoveredItemID = nil
+        interaction.isGrabberHovered = false
         pendingDeleteItem = nil
         resetDragState()
     }
@@ -586,6 +622,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         showNames.state = themeStore.showsLabels ? .on : .off
         menu.addItem(showNames)
 
+        let showHandle = NSMenuItem(
+            title: "Show Drag Handle",
+            action: #selector(toggleShowGrabHandleAction(_:)),
+            keyEquivalent: ""
+        )
+        showHandle.target = self
+        showHandle.state = themeStore.showsGrabHandle ? .on : .off
+        menu.addItem(showHandle)
+
         let shakeToSummonItem = NSMenuItem(
             title: "Shake to Summon",
             action: #selector(toggleShakeToSummonAction(_:)),
@@ -594,15 +639,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         shakeToSummonItem.target = self
         shakeToSummonItem.state = shakeToSummon ? .on : .off
         menu.addItem(shakeToSummonItem)
-
-        let dragToPinItem = NSMenuItem(
-            title: "Drag Shelf to Pin",
-            action: #selector(toggleDragToPinAction(_:)),
-            keyEquivalent: ""
-        )
-        dragToPinItem.target = self
-        dragToPinItem.state = dragToPin ? .on : .off
-        menu.addItem(dragToPinItem)
 
         if loginItem.isAvailable {
             let launchAtLogin = NSMenuItem(
@@ -731,12 +767,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         themeStore.showsLabels.toggle()
     }
 
-    @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
-        shakeToSummon.toggle()
+    @objc private func toggleShowGrabHandleAction(_ sender: NSMenuItem) {
+        themeStore.showsGrabHandle.toggle()
     }
 
-    @objc private func toggleDragToPinAction(_ sender: NSMenuItem) {
-        dragToPin.toggle()
+    @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
+        shakeToSummon.toggle()
     }
 
     /// "Drag Out ▸ Move / Copy" — whether vending an item removes it or leaves a copy.

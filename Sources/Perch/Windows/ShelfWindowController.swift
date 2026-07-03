@@ -139,7 +139,14 @@ final class ShelfWindowController {
 
     /// Smoothly grow/shrink the visible panel to a new frame (e.g. when items are added
     /// or removed and the card should hug its contents). No-op layout if hidden.
-    func resize(to targetFrame: NSRect, animated: Bool = true) {
+    /// `duration`/`timing` let a caller match the window's motion to a content animation
+    /// (row removals); by default it uses the standard reveal curve.
+    func resize(
+        to targetFrame: NSRect,
+        animated: Bool = true,
+        duration: CFTimeInterval = 0.26,
+        timing: CAMediaTimingFunction? = nil
+    ) {
         revealedFrame = targetFrame
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: false)
@@ -152,8 +159,8 @@ final class ShelfWindowController {
             return
         }
         NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.26
-            context.timingFunction = Self.revealCurve
+            context.duration = duration
+            context.timingFunction = timing ?? Self.revealCurve
             panel.animator().setFrame(targetFrame, display: true)
         }
     }

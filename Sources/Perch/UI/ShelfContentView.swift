@@ -51,6 +51,7 @@ struct ShelfContentView: View {
             .overlay(dropTargetRing)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
+            .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
@@ -114,23 +115,28 @@ struct ShelfContentView: View {
     }
 
     private var rowStack: some View {
-        VStack(alignment: .leading, spacing: theme.rowSpacing) {
-            ForEach(displayedItems) { item in
-                ItemRowView(
-                    item: item,
-                    theme: theme,
-                    isHovered: interaction.hoveredItemID == item.id,
-                    isDragging: interaction.draggingItemID == item.id,
-                    isDeleting: interaction.deletingItemID == item.id,
-                    thumbnail: thumbnails.thumbnail(for: item),
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
-                    showsLabels: themeStore.showsLabels,
-                    breadcrumb: breadcrumb(for: item)
-                )
-                .transition(.asymmetric(
-                    insertion: .opacity,
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
+        VStack(spacing: 0) {
+            if themeStore.showsGrabHandle, !displayedItems.isEmpty {
+                grabber.transition(.opacity)
+            }
+            VStack(alignment: .leading, spacing: theme.rowSpacing) {
+                ForEach(displayedItems) { item in
+                    ItemRowView(
+                        item: item,
+                        theme: theme,
+                        isHovered: interaction.hoveredItemID == item.id,
+                        isDragging: interaction.draggingItemID == item.id,
+                        isDeleting: interaction.deletingItemID == item.id,
+                        thumbnail: thumbnails.thumbnail(for: item),
+                        showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
+                        showsLabels: themeStore.showsLabels,
+                        breadcrumb: breadcrumb(for: item)
+                    )
+                    .transition(.asymmetric(
+                        insertion: .opacity,
+                        removal: .opacity.combined(with: .scale(scale: 0.8))
+                    ))
+                }
             }
         }
         .padding(theme.contentPadding)
@@ -146,6 +152,20 @@ struct ShelfContentView: View {
                 : .easeOut(duration: 0.18),
             value: displayedItems.map(\.id)
         )
+    }
+
+    /// A sheet-style grab handle above the rows: the one always-safe place to grab a
+    /// populated card and move the whole thing (the rows themselves drag *items*).
+    /// AppKit hit-testing treats this strip as card background, so a drag here becomes
+    /// a whole-card move; the capsule brightens under the pointer to advertise it.
+    private var grabber: some View {
+        Capsule(style: .continuous)
+            .fill(Color.primary.opacity(interaction.isGrabberHovered ? 0.38 : 0.15))
+            .frame(width: RowMetrics.grabberWidth, height: RowMetrics.grabberHeight)
+            .scaleEffect(interaction.isGrabberHovered ? 1.12 : 1, anchor: .center)
+            .frame(maxWidth: .infinity)
+            .frame(height: RowMetrics.grabberZoneHeight)
+            .animation(.easeOut(duration: 0.14), value: interaction.isGrabberHovered)
     }
 
     /// Reports the content's natural height up to the controller via a preference.
