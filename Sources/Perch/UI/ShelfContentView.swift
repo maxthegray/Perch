@@ -79,14 +79,20 @@ struct ShelfContentView: View {
 
     var body: some View {
         measuredContent
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(theme.cardMaterial)
+            // Center, not top: in a card floored taller than its content (the Height
+            // slider), the rows/empty symbol sit in the middle and grow outward.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            .background(theme.cardBackground)
             .clipShape(cardShape)
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
             .overlay(dragBeacon)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
+            // The bar also comes and goes with pinning (free mode) and Lock Position;
+            // without these bindings its transition would cut in with no animation.
+            .animation(.easeInOut(duration: 0.2), value: interaction.isFreeFloating)
+            .animation(.easeInOut(duration: 0.2), value: interaction.isLockedInPlace)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
@@ -127,13 +133,43 @@ struct ShelfContentView: View {
     /// instead of being clipped.
     @ViewBuilder
     private var measuredContent: some View {
-        if store.items.isEmpty {
-            emptyState.background(heightReader)
-        } else {
-            ScrollView {
-                rowStack.background(heightReader)
+        // The grab handle pins to the window's very top; the content (rows or the
+        // empty tile) centers in the space below it. The row stack is centered within
+        // the viewport (min-height frame), so on a floored-tall card each new row
+        // grows the stack from the middle, nudging the earlier rows up by half a row.
+        // The height reader stays attached to the bare content — the window must keep
+        // sizing to its natural height, not the inflated frame — with the grabber
+        // strip added back so the reported total still matches the controller's
+        // estimate. The trailing animation eases the re-centering shift (the stack's
+        // own animation only covers its subtree, not the position this outer frame
+        // assigns it), matched to the rows' insert/remove ease. When the rows outgrow
+        // the viewport the min-height is moot and the ScrollView scrolls as before.
+        //
+        // A free-floating card always carries the bar — even empty — unless locked in
+        // place; docked cards follow the "Dragging Enabled" toggle and need rows. Must
+        // mirror ShelfHostView.hasGrabber and the controller's height estimate.
+        let showsGrabber = interaction.isFreeFloating
+            ? !interaction.isLockedInPlace
+            : (themeStore.showsGrabHandle && !displayedItems.isEmpty)
+        VStack(spacing: 0) {
+            if showsGrabber {
+                grabber.transition(.opacity)
             }
-            .scrollIndicators(.hidden)
+            if store.items.isEmpty {
+                emptyState
+                    .background(heightReader(addingGrabberStrip: showsGrabber))
+                    .frame(maxHeight: .infinity)
+            } else {
+                GeometryReader { proxy in
+                    ScrollView {
+                        rowStack
+                            .background(heightReader(addingGrabberStrip: showsGrabber))
+                            .frame(minHeight: proxy.size.height)
+                            .animation(.easeOut(duration: 0.18), value: displayedItems.map(\.id))
+                    }
+                    .scrollIndicators(.hidden)
+                }
+            }
         }
     }
 
@@ -168,28 +204,23 @@ struct ShelfContentView: View {
     }
 
     private var rowStack: some View {
-        VStack(spacing: 0) {
-            if themeStore.showsGrabHandle, !displayedItems.isEmpty {
-                grabber.transition(.opacity)
-            }
-            VStack(alignment: .leading, spacing: theme.rowSpacing) {
-                ForEach(displayedItems) { item in
-                    ItemRowView(
-                        item: item,
-                        theme: theme,
-                        isHovered: interaction.hoveredItemID == item.id,
-                        isDragging: interaction.draggingItemID == item.id,
-                        isDeleting: interaction.deletingItemID == item.id,
-                        thumbnail: thumbnails.thumbnail(for: item),
-                        showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
-                        showsLabels: themeStore.showsLabels,
-                        breadcrumb: breadcrumb(for: item)
-                    )
-                    .transition(.asymmetric(
-                        insertion: .opacity,
-                        removal: .opacity.combined(with: .scale(scale: 0.8))
-                    ))
-                }
+        VStack(alignment: .leading, spacing: theme.rowSpacing) {
+            ForEach(displayedItems) { item in
+                ItemRowView(
+                    item: item,
+                    theme: theme,
+                    isHovered: interaction.hoveredItemID == item.id,
+                    isDragging: interaction.draggingItemID == item.id,
+                    isDeleting: interaction.deletingItemID == item.id,
+                    thumbnail: thumbnails.thumbnail(for: item),
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
+                    showsLabels: themeStore.showsLabels,
+                    breadcrumb: breadcrumb(for: item)
+                )
+                .transition(.asymmetric(
+                    insertion: .opacity,
+                    removal: .opacity.combined(with: .scale(scale: 0.8))
+                ))
             }
         }
         .padding(theme.contentPadding)
@@ -207,10 +238,11 @@ struct ShelfContentView: View {
         )
     }
 
-    /// A sheet-style grab handle above the rows: the one always-safe place to grab a
-    /// populated card and move the whole thing (the rows themselves drag *items*).
-    /// AppKit hit-testing treats this strip as card background, so a drag here becomes
-    /// a whole-card move; the capsule brightens under the pointer to advertise it.
+    /// A sheet-style grab handle pinned to the very top of the card, however tall it
+    /// is: the one always-safe place to grab a populated card and move the whole thing
+    /// (the rows themselves drag *items*). AppKit hit-testing treats this strip as card
+    /// background, so a drag here becomes a whole-card move; the capsule brightens
+    /// under the pointer to advertise it.
     private var grabber: some View {
         Capsule(style: .continuous)
             .fill(Color.primary.opacity(interaction.isGrabberHovered ? 0.38 : 0.15))
@@ -221,10 +253,16 @@ struct ShelfContentView: View {
             .animation(.easeOut(duration: 0.14), value: interaction.isGrabberHovered)
     }
 
-    /// Reports the content's natural height up to the controller via a preference.
-    private var heightReader: some View {
+    /// Reports the content's natural height up to the controller via a preference. The
+    /// grab handle lives outside the measured row stack (pinned to the window top), so
+    /// its strip is added back here — the reported total (grabber + padding + rows)
+    /// must keep matching the controller's per-item estimate.
+    private func heightReader(addingGrabberStrip: Bool = false) -> some View {
         GeometryReader { proxy in
-            Color.clear.preference(key: ContentHeightKey.self, value: proxy.size.height)
+            Color.clear.preference(
+                key: ContentHeightKey.self,
+                value: proxy.size.height + (addingGrabberStrip ? RowMetrics.grabberZoneHeight : 0)
+            )
         }
     }
 

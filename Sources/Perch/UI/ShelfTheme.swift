@@ -3,8 +3,7 @@ import SwiftUI
 
 /// The two looks the user can toggle between at runtime (right-click ▸ Appearance).
 enum ShelfStyle: String, CaseIterable {
-    /// Refined native glass: deeper translucency, hairline border, soft shadow, an
-    /// accent edge pill.
+    /// Refined native glass: deeper translucency, hairline border, and accent edge pill.
     case glass
     /// Ultra-minimal: flatter, monochrome, tighter, almost-invisible chrome.
     case minimal
@@ -22,9 +21,11 @@ enum ShelfStyle: String, CaseIterable {
 struct ShelfTheme {
     let style: ShelfStyle
 
-    // Card (the window itself casts the drop shadow — see ShelfPanel.hasShadow)
+    // Card (no window drop shadow — see ShelfPanel.hasShadow — to avoid a dark outline)
     let cardCornerRadius: CGFloat
-    let cardMaterial: Material
+    /// Glass is a translucent material; minimal is a flat solid gray (adaptive to
+    /// light/dark) with no see-through.
+    let cardBackground: AnyShapeStyle
     let cardStrokeColor: Color
     let cardStrokeWidth: CGFloat
 
@@ -61,7 +62,7 @@ struct ShelfTheme {
             return ShelfTheme(
                 style: .glass,
                 cardCornerRadius: 18,
-                cardMaterial: .ultraThinMaterial,
+                cardBackground: AnyShapeStyle(.ultraThinMaterial),
                 cardStrokeColor: .white.opacity(0.12),
                 cardStrokeWidth: 0.5,
                 rowHeight: 50,
@@ -91,7 +92,7 @@ struct ShelfTheme {
             return ShelfTheme(
                 style: .minimal,
                 cardCornerRadius: 10,
-                cardMaterial: .thinMaterial,
+                cardBackground: AnyShapeStyle(Color(nsColor: minimalCardGray)),
                 cardStrokeColor: .white.opacity(0.05),
                 cardStrokeWidth: 0.5,
                 rowHeight: 34,
@@ -116,6 +117,14 @@ struct ShelfTheme {
             )
         }
     }
+
+    /// Minimal's flat card gray — a shade lighter than `windowBackgroundColor` in both
+    /// appearances so the card reads as a surface, not a hole.
+    private static let minimalCardGray = NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(white: 0.30, alpha: 1)
+            : NSColor(white: 0.95, alpha: 1)
+    }
 }
 
 /// Holds the active style, persists it, and publishes changes so SwiftUI views and the
@@ -125,6 +134,15 @@ final class ThemeStore: ObservableObject {
     private static let key = "Perch.ShelfStyle"
     private static let labelsKey = "Perch.ShowsLabels"
     private static let grabHandleKey = "Perch.ShowsGrabHandle"
+    private static let shadowKey = "Perch.ShowsShadow"
+    private static let widthScaleKey = "Perch.WidthScale"
+    private static let heightFractionKey = "Perch.HeightFraction"
+
+    /// Bounds of the width slider (75%–150% of the design width).
+    static let widthScaleRange: ClosedRange<CGFloat> = 0.75...1.5
+    /// Bounds of the height slider: 0 = hug the content (the default), 1 = fill the
+    /// screen's usable height.
+    static let heightFractionRange: ClosedRange<CGFloat> = 0...1
 
     @Published var style: ShelfStyle {
         didSet {
@@ -151,6 +169,37 @@ final class ThemeStore: ObservableObject {
         }
     }
 
+    /// Whether the perch casts a drop shadow. On by default to lift the card off the
+    /// desktop. Drives `ShelfPanel.hasShadow` (see ShelfController).
+    @Published var showsShadow: Bool {
+        didSet {
+            guard showsShadow != oldValue else { return }
+            UserDefaults.standard.set(showsShadow, forKey: Self.shadowKey)
+        }
+    }
+
+    /// The card's width multiplier, applied by the controller's width math. Driven live
+    /// by the Appearance ▸ Width slider; callers keep it within `widthScaleRange` (the
+    /// slider is bounded, and the loaded value is clamped in init). Never reassign it
+    /// in here — on a @Published property that re-enters didSet and recurses to a crash.
+    @Published var widthScale: CGFloat {
+        didSet {
+            guard widthScale != oldValue else { return }
+            UserDefaults.standard.set(Double(widthScale), forKey: Self.widthScaleKey)
+        }
+    }
+
+    /// The card's minimum height, as a fraction of the screen's usable height. Zero
+    /// hugs the content (the original behavior); anything above floors the card taller,
+    /// with the extra space acting as a bigger drop target. Same didSet rules as
+    /// `widthScale`.
+    @Published var heightFraction: CGFloat {
+        didSet {
+            guard heightFraction != oldValue else { return }
+            UserDefaults.standard.set(Double(heightFraction), forKey: Self.heightFractionKey)
+        }
+    }
+
     var theme: ShelfTheme { ShelfTheme.resolve(style) }
 
     init() {
@@ -162,6 +211,14 @@ final class ThemeStore: ObservableObject {
             showsLabels = true
         }
         showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
+        showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? true
+        let clamp: (Double, ClosedRange<CGFloat>) -> CGFloat = {
+            min(max(CGFloat($0), $1.lowerBound), $1.upperBound)
+        }
+        widthScale = (UserDefaults.standard.object(forKey: Self.widthScaleKey) as? Double)
+            .map { clamp($0, Self.widthScaleRange) } ?? 1
+        heightFraction = (UserDefaults.standard.object(forKey: Self.heightFractionKey) as? Double)
+            .map { clamp($0, Self.heightFractionRange) } ?? 0
     }
 
     func toggle(to style: ShelfStyle) {

@@ -30,14 +30,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var revealedForDrag = false
 
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
-    /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled.
+    /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
     private var revealOnDragStart: Bool {
-        UserDefaults.standard.bool(forKey: ShelfHostView.revealOnDragStartKey)
+        UserDefaults.standard.object(forKey: ShelfHostView.revealOnDragStartKey) as? Bool ?? true
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
     /// value reads as true), matching the original always-on behavior.
     private var shakeToSummonEnabled: Bool {
         UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
+    }
+    /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
+    /// item leaves, instead of dismissing itself. User-toggled; defaults on.
+    private var keepsEmptyFreeShelf: Bool {
+        UserDefaults.standard.object(forKey: ShelfHostView.keepEmptyShelfKey) as? Bool ?? true
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -66,8 +71,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shownScreen: NSScreen?
     private var shownEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
+    private var styleCancellable: AnyCancellable?
+    private var heightCancellable: AnyCancellable?
+    private var widthCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
+    private var shadowCancellable: AnyCancellable?
 
     /// Where the shelf is currently anchored: docked to a screen edge, or free-floating
     /// at the cursor (shake-to-summon). The two coexist on the same panel.
@@ -89,6 +98,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// user is dragging the card off its edge; it decides pin vs. snap-back at mouse-up
     /// and holds the auto-retract machinery off while the card is mid-flight.
     private var dragOutDockedFrame: NSRect?
+    /// True while the free-floating shelf is locked in place ("Lock Position"): the
+    /// grab handle hides and whole-card drags (and cursor summons) are refused, making
+    /// the card a fixture — like another edge — until it's unlocked or closed.
+    private var freeShelfLocked = false
     /// Observes user-initiated window moves so a dragged free shelf keeps its new origin.
     private var windowMoveObserver: NSObjectProtocol?
 
@@ -129,9 +142,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         // Deleting the last item hides the card before the store empties, so the
         // empty-state swap happens off-screen instead of flashing mid-dismissal.
+        // (Unless a free shelf is set to stay when empty — then it remains on screen
+        // and shrinks to the empty tile in place.)
         hostView.onWillRemoveLastItem = { [weak self] in
             guard let self else { return }
             if self.revealMode == .free {
+                guard !self.keepsEmptyFreeShelf else { return }
                 self.dismissFreeShelf()
             } else {
                 self.hideShelf(animated: true)
@@ -143,10 +159,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // pins where it's dropped as a free-floating shelf, otherwise it snaps back. A
         // free shelf just moves (its new origin is kept by the didMove observer). The
         // "Show Drag Handle" toggle is the single switch for the docked drag-out; a free
-        // shelf stays movable regardless so it can never get stuck.
+        // shelf stays movable regardless so it can never get stuck — unless the user
+        // explicitly locked it in place.
         hostView.canBeginShelfDrag = { [weak self] in
             guard let self, self.panel.isVisible else { return false }
-            return self.revealMode == .free || self.themeStore.showsGrabHandle
+            if self.revealMode == .free { return !self.freeShelfLocked }
+            return self.themeStore.showsGrabHandle
+        }
+
+        // "Lock Position" on a free shelf: freeze it where it stands (bar hidden, no
+        // card drags) until unlocked or closed.
+        hostView.onToggleLock = { [weak self] in
+            self?.toggleFreeShelfLock()
         }
         hostView.onShelfDragBegan = { [weak self] in
             guard let self else { return }
@@ -255,6 +279,37 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.shelfItemsDidChange(items)
             }
 
+        // Switching styles changes the card's metrics — the compact/empty width is
+        // derived from the theme's padding + icon size, and row heights differ — so
+        // re-fit the open window. Same willSet/next-pass dance as the labels toggle;
+        // the old theme's measured height is dropped so the new theme's estimate
+        // drives the re-fit until SwiftUI reports the fresh measurement.
+        styleCancellable = themeStore.$style
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.measuredContentHeight = nil
+                self?.resizeToFitVisible()
+            }
+
+        // The height/width sliders stream values continuously while dragged — re-fit the
+        // window on each one, un-animated so the card tracks the thumb instead of
+        // lagging behind a queue of animations. Same willSet/next-pass dance as the
+        // others. Neither slider changes the content's natural height (the height floor
+        // is pure window frame), so the measured height stays valid.
+        heightCancellable = themeStore.$heightFraction
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible(animated: false)
+            }
+        widthCancellable = themeStore.$widthScale
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible(animated: false)
+            }
+
         // Toggling names on/off changes the card's width — re-fit the open window.
         // `@Published` emits on willSet, so hop to the next main-queue pass; resizing
         // synchronously would read the OLD `showsLabels` and keep the stale width.
@@ -277,6 +332,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.resizeToFitVisible()
             }
 
+        // The native window shadow is user-toggleable; apply the stored value now and on
+        // every change. Fires immediately (no dropFirst) so the panel matches the setting
+        // at launch.
+        shadowCancellable = themeStore.$showsShadow
+            .sink { [weak self] shows in
+                self?.panel.hasShadow = shows
+            }
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -357,6 +419,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Matches the rows' removal animation in ShelfContentView (easeOut 0.18s) so the
     /// card's bottom edge and the last row arrive together.
     private static let removalAnimationDuration: CFTimeInterval = 0.18
+
+    /// Ignore the measured heights streaming out of an in-flight SwiftUI layout
+    /// animation (the bar fading in on pin, or out on lock): each tick would
+    /// snap-resize the window out from under the one deliberate animated resize
+    /// running alongside. While suppressed, `fittedContentHeight` sizes from the
+    /// estimate — which already reflects the bar's final state — so that resize
+    /// targets the exact final frame; `endRemovalResize` trues up once settled.
+    private func suppressMeasuredHeightResizes() {
+        removalResizeInFlight = true
+        removalResizeTask?.cancel()
+        removalResizeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(400))
+            guard !Task.isCancelled else { return }
+            self?.endRemovalResize()
+        }
+    }
 
     /// The rows have settled — resume measured-height-driven sizing and true-up once
     /// (a no-op when the animation landed where expected).
@@ -470,8 +548,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     // MARK: Cursor summon (free-floating shelf)
 
     /// Shake-to-summon: bring the shelf to the cursor as a free-floating, movable card.
-    /// Works whether the shelf is currently hidden or already docked at an edge.
+    /// Works whether the shelf is currently hidden or already docked at an edge. A
+    /// locked free shelf is a fixture — the summon must not yank it from its spot.
     private func summonAtCursor(_ point: NSPoint) {
+        if revealMode == .free, freeShelfLocked, panel.isVisible { return }
         let screen = NSScreen.screens.first(where: { $0.frame.contains(point) })
             ?? NSScreen.main ?? NSScreen.screens.first
         summonScreen = screen
@@ -492,6 +572,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         freeTopLeft = NSPoint(x: frame.minX, y: frame.maxY)
 
         if panel.isVisible {
+            // Docked → free: the bar may be fading in as the card flies to the cursor;
+            // same snap-suppression as pinning.
+            suppressMeasuredHeightResizes()
             windowController.usesFreeAnimation = true
             windowController.resize(to: frame)
         } else {
@@ -506,7 +589,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let screen = summonScreen ?? NSScreen.main ?? NSScreen.screens.first
         let visible = (screen ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
         let width = min(cardWidth(for: freeSourceEdge), visible.width - 16)
-        let height = min(fittedContentHeight(), visible.height - 24)
+        let usable = visible.height - 24
+        let height = min(max(fittedContentHeight(), themeStore.heightFraction * usable), usable)
 
         let anchor = freeTopLeft ?? NSPoint(x: visible.midX - width / 2, y: visible.midY + height / 2)
         let x = min(max(anchor.x, visible.minX + 8), visible.maxX - width - 8)
@@ -558,14 +642,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Keep the card's top-left where the user dropped it; the free frame grows
         // downward from there and clamps on-screen.
         freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+        // The bar fades into the layout as the card pins (free cards always carry it);
+        // its height ticks must not snap-resize the window mid-pin.
+        suppressMeasuredHeightResizes()
         windowController.usesFreeAnimation = true
         windowController.resize(to: freePanelFrame())
     }
 
+    /// Toggle "Lock Position" on the free shelf. The bar strip leaves/rejoins the
+    /// layout with the lock: one animated re-fit to the estimate's final frame, with
+    /// the bar's animated height ticks suppressed so they can't snap-cut it.
+    private func toggleFreeShelfLock() {
+        guard revealMode == .free else { return }
+        freeShelfLocked.toggle()
+        hostView.setLockedInPlace(freeShelfLocked)
+        suppressMeasuredHeightResizes()
+        resizeToFitVisible()
+    }
+
     /// Tear down the free-floating shelf (✕ pressed, or it emptied out) and return to
-    /// edge-docked behavior. Items, if any, stay in the store.
+    /// edge-docked behavior. Items, if any, stay in the store. Closing also releases
+    /// the position lock — the next free shelf starts movable.
     private func dismissFreeShelf() {
         revealMode = .edge
+        freeShelfLocked = false
+        hostView.setLockedInPlace(false)
         freeTopLeft = nil
         summonScreen = nil
         pointerInRegion = false
@@ -669,9 +770,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// larger while dragging so the drop target is an easier box to hit). A populated
     /// card also carries the grab-handle strip above its rows, unless hidden.
     private func contentHeight(for itemCount: Int) -> CGFloat {
-        guard itemCount > 0 else { return dragActive ? Self.dropTargetHeight : Self.emptyStateHeight }
+        // Mirrors ShelfContentView's bar visibility: a free card always carries the
+        // bar — even empty — unless locked; a docked one needs rows and the "Dragging
+        // Enabled" toggle.
+        let freeGrabber = revealMode == .free && !freeShelfLocked
+        guard itemCount > 0 else {
+            return (dragActive ? Self.dropTargetHeight : Self.emptyStateHeight)
+                + (freeGrabber ? RowMetrics.grabberZoneHeight : 0)
+        }
         let theme = themeStore.theme
-        let grabber = themeStore.showsGrabHandle ? RowMetrics.grabberZoneHeight : 0
+        let showsGrabber = freeGrabber || (revealMode == .edge && themeStore.showsGrabHandle)
+        let grabber = showsGrabber ? RowMetrics.grabberZoneHeight : 0
         let rows = CGFloat(itemCount) * theme.rowHeight
             + CGFloat(itemCount - 1) * theme.rowSpacing
         return theme.contentPadding * 2 + grabber + rows
@@ -683,10 +792,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         Self.panelFrame(
             for: screen,
             edge: edge,
-            contentHeight: fittedContentHeight(),
+            contentHeight: flooredContentHeight(on: screen, edge: edge),
             width: cardWidth(for: edge),
             centerY: nil
         )
+    }
+
+    /// The content height with the user's Height slider applied: a floor at that
+    /// fraction of the screen's usable height, so the card can be made taller than its
+    /// contents — the extra space is all drop target. Zero floors nothing (hug content).
+    /// Uses the same usable-height bounds as `panelFrame`, so the floor and the cap agree.
+    private func flooredContentHeight(on screen: NSScreen, edge: ShelfEdge) -> CGFloat {
+        let usable = screen.visibleFrame.height - (edge == .notch ? 40 : 24)
+        return max(fittedContentHeight(), themeStore.heightFraction * usable)
     }
 
     /// The content height the card should hug: the measured SwiftUI height, floored at
@@ -709,11 +827,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// a comfortable list width.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
         if store.items.isEmpty {
-            return compactCardWidth
+            return Self.emptyCardWidth * themeStore.widthScale
         }
-        guard themeStore.showsLabels else { return compactCardWidth }
-        return edge == .notch ? 360 : 300
+        guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
+        return (edge == .notch ? 360 : 300) * themeStore.widthScale
     }
+
+    /// Width of the empty drop tile at 100% size. Style-independent — the tile's artwork
+    /// (a fixed-size symbol) is identical in both styles, so the card must not change
+    /// size when the style switches — but it does follow the user's size slider, like
+    /// everything else.
+    private static let emptyCardWidth: CGFloat = 80
 
     /// Width of the compact (icon-sized) card, for the empty drop target and icons-only mode.
     private var compactCardWidth: CGFloat {
@@ -950,9 +1074,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// pointer is hovering it).
     private func shelfContentDidChange(isEmpty: Bool) {
         if isEmpty {
-            // A free shelf lives until it empties (the last item left) — then it's done.
+            // A free shelf lives until it empties (the last item left) — then it's done,
+            // unless "Keep Open When Empty" pins it in place as the empty drop tile.
             if revealMode == .free {
-                dismissFreeShelf()
+                if keepsEmptyFreeShelf {
+                    // The last measurement still reflects the departed rows; drop it so
+                    // the card animates down to the empty tile's estimated size.
+                    measuredContentHeight = nil
+                    resizeToFitVisible()
+                } else {
+                    dismissFreeShelf()
+                }
             } else if !pointerInRegion {
                 scheduleRetract()
             }
@@ -971,8 +1103,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Reveal (or reposition) the panel at the current preferred screen + edge.
     private func revealAtPreferredEdge() {
-        // Docking at an edge clears any leftover free-mode layout.
+        // Docking at an edge clears any leftover free-mode layout, including the lock.
         revealMode = .edge
+        freeShelfLocked = false
+        hostView.setLockedInPlace(false)
         hostView.setFreeMode(false)
         let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
         shownScreen = screen

@@ -24,7 +24,10 @@ final class ShelfPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         isReleasedWhenClosed = false
         hidesOnDeactivate = false
-        hasShadow = true
+        // Shadow is user-toggleable and driven by ShelfController from ThemeStore. It
+        // starts off because on a borderless translucent panel the native shadow renders
+        // as a crisp dark line hugging the card, reading as a black outline.
+        hasShadow = false
         isOpaque = false
         backgroundColor = .clear
         // Needed so the host view's mouse-moved tracking (hover highlight + delete

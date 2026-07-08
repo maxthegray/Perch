@@ -37,6 +37,15 @@ final class RowInteractionState: ObservableObject {
     /// True while the pointer is over the card's grab handle (or a handle drag is in
     /// flight), so the grabber brightens to advertise that it moves the whole card.
     @Published var isGrabberHovered = false
+
+    /// True while the shelf is free-floating (torn off an edge or cursor-summoned).
+    /// A free card always shows the grab handle — it was placed by hand and must stay
+    /// movable — regardless of the docked "Dragging Enabled" toggle.
+    @Published var isFreeFloating = false
+
+    /// True while a free-floating shelf is locked in place: the grab handle hides and
+    /// whole-card drags are refused until it's unlocked or closed.
+    @Published var isLockedInPlace = false
 }
 
 /// Delete-button layout constants shared between the SwiftUI rendering (`ItemRowView`)

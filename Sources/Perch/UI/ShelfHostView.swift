@@ -48,6 +48,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var quickLookURLs: [URL] = []
     /// True while the shelf is free-floating (cursor-summoned or dragged off its edge).
     private var isFreeMode = false
+    /// The SwiftUI content's last measured natural height, mirrored here to derive the
+    /// centering offset when the card is floored taller than its content.
+    private var measuredContentHeight: CGFloat = 0
 
     /// When true, dragging an item out leaves the original on the shelf (copy);
     /// otherwise it's removed once it lands somewhere (move — the default).
@@ -59,10 +62,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// When true, the shelf reveals at the nearest enabled edge the moment a drag starts,
     /// instead of waiting for the pointer to reach the edge tab. Read live by the
-    /// controller's drag handlers. Default false (open on tab touch).
+    /// controller's drag handlers. Default true.
     static let revealOnDragStartKey = "Perch.RevealOnDragStart"
     private var revealOnDragStart: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.revealOnDragStartKey) }
+        get { UserDefaults.standard.object(forKey: Self.revealOnDragStartKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.revealOnDragStartKey) }
     }
 
@@ -73,6 +76,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var shakeToSummon: Bool {
         get { UserDefaults.standard.object(forKey: Self.shakeToSummonKey) as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: Self.shakeToSummonKey) }
+    }
+
+    /// When true, a free-floating shelf stays where it is after its last item leaves
+    /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
+    /// itself. Read live by the controller. Default true.
+    static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
+    private var keepEmptyShelf: Bool {
+        get { UserDefaults.standard.object(forKey: Self.keepEmptyShelfKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: Self.keepEmptyShelfKey) }
     }
 
     /// Called with the SwiftUI content's measured natural height so the controller can
@@ -147,15 +159,29 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction: interaction,
             thumbnails: thumbnails,
             ledger: ledger,
-            onContentHeight: { [weak self] height in self?.onContentHeight?(height) }
+            onContentHeight: { [weak self] height in
+                self?.measuredContentHeight = height
+                self?.onContentHeight?(height)
+            }
         )
     }
 
     /// Toggle free-floating behavior (click-to-dismiss when empty, "Close Shelf" in the
-    /// context menu). The card looks identical in both modes.
+    /// context menu, an always-on grab handle). Mirrored into the interaction state so
+    /// the SwiftUI side shows/hides the bar to match.
     func setFreeMode(_ free: Bool) {
         isFreeMode = free
+        interaction.isFreeFloating = free
     }
+
+    /// The controller owns the lock; this mirrors it into the interaction state so the
+    /// bar hides while locked and the hit-testing (`hasGrabber`) agrees.
+    func setLockedInPlace(_ locked: Bool) {
+        interaction.isLockedInPlace = locked
+    }
+
+    /// Called when the user toggles "Lock Position" on a free-floating shelf.
+    var onToggleLock: (() -> Void)?
 
     required init?(coder: NSCoder) {
         return nil
@@ -316,9 +342,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         } else if shelfDragActive {
             onShelfDragEnded?()
         } else if isFreeMode, store.items.isEmpty {
-            // A plain tap (no drag) on the empty tile body dismisses it.
+            // A plain tap (no drag) on the empty tile body dismisses it — but not on
+            // the grab handle, which is a drag affordance, not a close button.
             let point = convert(event.locationInWindow, from: nil)
-            if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) < 6 {
+            if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) < 6,
+               !grabberZoneContains(point) {
                 onDismissEmptyFree?()
             }
         }
@@ -341,7 +369,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard count > 1 else { return }
         let theme = themeStore.theme
         let pitch = theme.rowHeight + theme.rowSpacing
-        let raw = Int((point.y + contentScrollOffsetY() - rowsTopInset) / pitch)
+        let raw = Int((point.y - contentTopOffset + contentScrollOffsetY() - rowsTopInset) / pitch)
         let target = max(0, min(count - 1, raw))
 
         var order = reorderBaseOrder.filter { $0.id != item.id }
@@ -448,23 +476,40 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { visibleItems[$0] }
     }
 
-    /// Whether the card currently shows the grab handle above its rows (it holds visible
-    /// items and the user hasn't hidden the handle). Must mirror ShelfContentView's
-    /// layout exactly.
+    /// Whether the card currently shows the grab handle: a free-floating card always
+    /// carries it — even empty — unless locked in place (the bar is always aboard a
+    /// hand-placed card); a docked card needs visible items and "Dragging Enabled" on.
+    /// Must mirror ShelfContentView's layout exactly.
     private var hasGrabber: Bool {
-        themeStore.showsGrabHandle && !visibleItems.isEmpty
+        if isFreeMode { return !interaction.isLockedInPlace }
+        return themeStore.showsGrabHandle && !visibleItems.isEmpty
     }
 
-    /// Distance from the view's top to the first row: the content padding, plus the
-    /// grab-handle strip when the card holds items.
+    /// Distance from the row stack's top to the first row: just the content padding.
+    /// (The grab handle is no longer part of the stack — it pins to the window top.)
     private var rowsTopInset: CGFloat {
-        themeStore.theme.contentPadding + (hasGrabber ? RowMetrics.grabberZoneHeight : 0)
+        themeStore.theme.contentPadding
     }
 
-    /// Whether `point` (view coords) falls in the grab-handle strip at the top of a
-    /// populated card — everything above the first row, full width.
+    /// Distance from the view's top to the row stack's top. The grab-handle strip pins
+    /// to the window's top; below it the (padding + rows) stack is vertically centered
+    /// in the remaining space, so on a card floored taller than its content (the
+    /// Height slider) the rows start this far down. On a content-hugging card this
+    /// collapses to just the grabber strip. `measuredContentHeight` mirrors the
+    /// reported height, which includes the grabber strip — subtract it to get the
+    /// centered stack's true height. Every piece of row hit-test math must add this.
+    private var contentTopOffset: CGFloat {
+        guard measuredContentHeight > 0 else { return 0 }
+        let grabber = hasGrabber ? RowMetrics.grabberZoneHeight : 0
+        let stackHeight = measuredContentHeight - grabber
+        return grabber + max(0, (bounds.height - grabber - stackHeight) / 2)
+    }
+
+    /// Whether `point` (view coords) falls in the grab-handle strip pinned to the very
+    /// top of a populated card, full width. The floored card's empty space elsewhere is
+    /// plain background (which also drags the card, but shouldn't light up the capsule).
     private func grabberZoneContains(_ point: NSPoint) -> Bool {
-        hasGrabber && bounds.contains(point) && point.y < rowsTopInset
+        hasGrabber && bounds.contains(point) && point.y < RowMetrics.grabberZoneHeight
     }
 
     /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
@@ -474,7 +519,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let theme = themeStore.theme
         let rowHeight = theme.rowHeight + theme.rowSpacing
         let topInset = rowsTopInset
-        let contentY = point.y + contentScrollOffsetY()
+        let contentY = point.y - contentTopOffset + contentScrollOffsetY()
         // Points above the first row (the grab handle / top padding) are not a row.
         // `Int()` truncates toward zero, so without this guard the small negative
         // fractions up there would all collapse onto row 0.
@@ -489,7 +534,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// easier target. Shifted by the scroll offset so it tracks the visible row.
     private func deleteHitRect(forRow index: Int) -> NSRect {
         let theme = themeStore.theme
-        let rowTop = rowsTopInset + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
+        let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
         let centerX = bounds.width - theme.contentPadding
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
@@ -628,7 +673,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(history)
 
         // A free-floating shelf has no ✕ — this is how it's dismissed (items stay stored).
+        // "Lock Position" turns it into a fixture: the bar hides and card drags are
+        // refused until it's unlocked or closed.
         if isFreeMode {
+            let lock = NSMenuItem(
+                title: "Lock Position",
+                action: #selector(toggleLockAction(_:)),
+                keyEquivalent: ""
+            )
+            lock.target = self
+            lock.state = interaction.isLockedInPlace ? .on : .off
+            menu.addItem(lock)
+
             let closeShelf = NSMenuItem(
                 title: "Close Shelf",
                 action: #selector(closeFreeShelfAction(_:)),
@@ -713,6 +769,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         onCloseFreeShelf?()
     }
 
+    @objc private func toggleLockAction(_ sender: NSMenuItem) {
+        onToggleLock?()
+    }
+
     /// "Appearance ▸ Glass / Minimal / Show Names" — visual-only controls.
     private func appearanceMenuItem() -> NSMenuItem {
         let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
@@ -730,8 +790,86 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
         submenu.addItem(.separator())
         submenu.addItem(showNamesMenuItem())
+        submenu.addItem(shadowMenuItem())
+        submenu.addItem(.separator())
+        submenu.addItem(scaleSliderMenuItem(
+            title: "Height",
+            value: themeStore.heightFraction,
+            range: ThemeStore.heightFractionRange,
+            action: #selector(heightSliderChanged(_:))
+        ))
+        submenu.addItem(scaleSliderMenuItem(
+            title: "Width",
+            value: themeStore.widthScale,
+            range: ThemeStore.widthScaleRange,
+            action: #selector(widthSliderChanged(_:))
+        ))
+        let reset = NSMenuItem(
+            title: "Reset Size",
+            action: #selector(resetSizeAction(_:)),
+            keyEquivalent: ""
+        )
+        reset.target = self
+        submenu.addItem(reset)
         appearance.submenu = submenu
         return appearance
+    }
+
+    /// "Appearance ▸ Height / Width" — continuous sliders sizing the card itself (not
+    /// its contents): Height floors the card taller than its rows, the extra space
+    /// being more drop target; Width scales the card's width. The window re-fits live
+    /// as the thumb moves.
+    private func scaleSliderMenuItem(
+        title: String,
+        value: CGFloat,
+        range: ClosedRange<CGFloat>,
+        action: Selector
+    ) -> NSMenuItem {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 28))
+
+        let label = NSTextField(labelWithString: title)
+        label.font = .menuFont(ofSize: NSFont.systemFontSize(for: .regular))
+        // A fixed label width keeps the two sliders' tracks vertically aligned.
+        label.frame = NSRect(x: 14, y: (container.frame.height - 17) / 2, width: 44, height: 17)
+        container.addSubview(label)
+
+        let sliderX = label.frame.maxX + 6
+        let slider = NSSlider(
+            value: Double(value),
+            minValue: Double(range.lowerBound),
+            maxValue: Double(range.upperBound),
+            target: self,
+            action: action
+        )
+        slider.isContinuous = true
+        slider.frame = NSRect(
+            x: sliderX,
+            y: (container.frame.height - 21) / 2,
+            width: container.frame.width - sliderX - 14,
+            height: 21
+        )
+        container.addSubview(slider)
+
+        let item = NSMenuItem()
+        item.view = container
+        return item
+    }
+
+    @objc private func heightSliderChanged(_ sender: NSSlider) {
+        themeStore.heightFraction = CGFloat(sender.doubleValue)
+    }
+
+    @objc private func widthSliderChanged(_ sender: NSSlider) {
+        // Detent at the design width: close enough to 100% snaps the thumb and the value.
+        if abs(sender.doubleValue - 1) < 0.04 {
+            sender.doubleValue = 1
+        }
+        themeStore.widthScale = CGFloat(sender.doubleValue)
+    }
+
+    @objc private func resetSizeAction(_ sender: NSMenuItem) {
+        themeStore.heightFraction = 0
+        themeStore.widthScale = 1
     }
 
     @objc private func selectStyleAction(_ sender: NSMenuItem) {
@@ -783,6 +921,21 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         themeStore.showsLabels.toggle()
     }
 
+    private func shadowMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Shadow",
+            action: #selector(toggleShadowAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = themeStore.showsShadow ? .on : .off
+        return item
+    }
+
+    @objc private func toggleShadowAction(_ sender: NSMenuItem) {
+        themeStore.showsShadow.toggle()
+    }
+
     private func draggingEnabledMenuItem() -> NSMenuItem {
         let item = NSMenuItem(
             title: "Dragging Enabled",
@@ -813,6 +966,21 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         shakeToSummon.toggle()
     }
 
+    private func keepEmptyShelfMenuItem() -> NSMenuItem {
+        let item = NSMenuItem(
+            title: "Keep Open When Empty",
+            action: #selector(toggleKeepEmptyShelfAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.state = keepEmptyShelf ? .on : .off
+        return item
+    }
+
+    @objc private func toggleKeepEmptyShelfAction(_ sender: NSMenuItem) {
+        keepEmptyShelf.toggle()
+    }
+
     private func behaviorMenuItem() -> NSMenuItem {
         let behavior = NSMenuItem(title: "Behavior", action: nil, keyEquivalent: "")
         let submenu = NSMenu()
@@ -820,6 +988,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         submenu.addItem(autoShowWhileDraggingMenuItem())
         submenu.addItem(draggingEnabledMenuItem())
         submenu.addItem(shakeToSummonMenuItem())
+        submenu.addItem(keepEmptyShelfMenuItem())
         behavior.submenu = submenu
         return behavior
     }
