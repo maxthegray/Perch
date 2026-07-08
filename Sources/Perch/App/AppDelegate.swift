@@ -8,6 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let controller = try ShelfController()
             self.controller = controller
             controller.start()
+            LoginItemController().enableByDefaultIfNeeded()
             // Start Sparkle's background update checks.
             Updater.shared.start()
         } catch {
