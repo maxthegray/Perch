@@ -418,16 +418,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 }
                 return
             }
-            // The item landed somewhere: remove it for real. Deferred briefly so any
-            // in-flight file-promise write (which copies from the holding dir) can
-            // finish before the dir is deleted; the row is already hidden meanwhile.
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(600))
-                guard let self else { return }
-                self.store.remove(item)
-                if self.interaction.vendingItemID == item.id {
-                    self.interaction.vendingItemID = nil
-                }
+            // The item landed somewhere: retire it — the row leaves the shelf now, but
+            // the backing directory stays on disk for a grace period. Destinations read
+            // the vended file URL (or call in the promise) asynchronously, sometimes
+            // seconds after the drop; deleting eagerly made the drop silently vanish.
+            self.store.retire(item)
+            if self.interaction.vendingItemID == item.id {
+                self.interaction.vendingItemID = nil
             }
         }
         activeDragSource = dragSource

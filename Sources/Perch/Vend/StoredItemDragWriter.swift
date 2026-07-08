@@ -40,6 +40,9 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
             if type == .fileURL, hasBackingFile {
                 continue
             }
+            if type.isContextBoundSourceType {
+                continue
+            }
             if providerTypeSet.contains(type) || isFilePromiseControlType(type) {
                 continue
             }

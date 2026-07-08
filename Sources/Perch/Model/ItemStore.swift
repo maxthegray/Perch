@@ -34,6 +34,7 @@ final class ItemStore: ObservableObject {
             let metadata = try JSONDecoder().decode(ItemMetadata.self, from: Data(contentsOf: metaURL))
             return StoredItem(metadata: metadata, directoryURL: itemDir)
         }
+        sweepOrphanedItemDirs(keeping: Set(orderedIDs))
     }
 
     /// Insert an item at `index` (nil = front) and update `index.json`.
@@ -114,6 +115,38 @@ final class ItemStore: ObservableObject {
             let candidate = directory.appendingPathComponent(name, isDirectory: false)
             if !fileManager.fileExists(atPath: candidate.path) { return candidate }
             suffix += 1
+        }
+    }
+
+    /// Remove a vended item from the shelf but leave its `items/<uuid>/` directory on
+    /// disk: the drag pasteboard's concrete file URL (and any not-yet-called-in file
+    /// promise) points into it, and destinations like Messages read the dropped file
+    /// well after the drop lands. The orphaned directory is deleted after a generous
+    /// grace period; `load()` sweeps any leftovers on the next launch.
+    func retire(_ item: StoredItem) {
+        items.removeAll { $0.id == item.id }
+        persistIndexOrLogFailure()
+
+        let directoryURL = item.directoryURL
+        Task.detached(priority: .background) {
+            try? await Task.sleep(for: .seconds(15 * 60))
+            try? FileManager.default.removeItem(at: directoryURL)
+        }
+    }
+
+    /// Delete `items/<uuid>/` directories that are not in the index — left behind by
+    /// `retire(_:)` when the app quit before the grace period elapsed.
+    private func sweepOrphanedItemDirs(keeping ids: Set<UUID>) {
+        let fileManager = FileManager.default
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: holding.itemsDir,
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        ) else { return }
+
+        for entry in entries {
+            guard let id = UUID(uuidString: entry.lastPathComponent), !ids.contains(id) else { continue }
+            try? fileManager.removeItem(at: entry)
         }
     }
 

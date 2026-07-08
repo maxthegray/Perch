@@ -66,6 +66,10 @@ struct PasteboardSnapshotter {
             }
 
             for type in pasteboardItem.types {
+                if type.isContextBoundSourceType {
+                    continue
+                }
+
                 let fileName = "rep-\(repIndex).dat"
                 repIndex += 1
 
