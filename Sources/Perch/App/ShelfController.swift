@@ -137,8 +137,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // any stored items.
         hostView.onCloseFreeShelf = { [weak self] in self?.dismissFreeShelf() }
 
-        // An empty tile can also be dismissed by clicking its body.
-        hostView.onDismissEmptyFree = { [weak self] in self?.dismissFreeShelf() }
+        // An empty tile can also be dismissed by clicking its body — unless it's locked
+        // in place, which makes it a fixture that ignores stray clicks. (A press that
+        // moves is a drag, not a click; the host view already tells those apart.)
+        hostView.onDismissEmptyFree = { [weak self] in
+            guard let self, !self.freeShelfLocked else { return }
+            self.dismissFreeShelf()
+        }
 
         // Deleting the last item hides the card before the store empties, so the
         // empty-state swap happens off-screen instead of flashing mid-dismissal.
@@ -396,7 +401,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if revealMode == .free {
             removalResizeInFlight = true
             target = freePanelFrame()
-        } else if let screen = shownScreen ?? NSScreen.main ?? NSScreen.screens.first {
+        } else if let screen = Self.liveScreen(shownScreen) {
             removalResizeInFlight = true
             target = removalFrameKeepingTop(on: screen)
         } else {
@@ -469,7 +474,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             windowController.resize(to: freePanelFrame(), animated: animated)
             return
         }
-        guard let screen = shownScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        guard let screen = Self.liveScreen(shownScreen) else { return }
         windowController.resize(to: panelFrame(for: screen, edge: shownEdge), animated: animated)
     }
 
@@ -586,8 +591,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// rules, same content-hugging height, same empty strip), positioned at
     /// `freeTopLeft` clamped fully onto its screen.
     private func freePanelFrame() -> NSRect {
-        let screen = summonScreen ?? NSScreen.main ?? NSScreen.screens.first
-        let visible = (screen ?? NSScreen.screens.first)?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+        let screen = Self.liveScreen(summonScreen)
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
         let width = min(cardWidth(for: freeSourceEdge), visible.width - 16)
         let usable = visible.height - 24
         let height = min(max(fittedContentHeight(), themeStore.heightFraction * usable), usable)
@@ -930,7 +935,53 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             hideShelf(animated: false)
         }
+        relocateStrandedFreeShelf()
         NSLog("Perch rebuilt edge tabs (\(NSScreen.screens.count) screen(s), edges \(edgeSettings.enabledEdges.map(\.rawValue).sorted()))")
+    }
+
+    /// A free-floating shelf pinned on a display that's gone (or rearranged away) would
+    /// otherwise stay "visible" at coordinates outside every live screen — unreachable
+    /// forever, because a visible panel blocks every reveal path, the edge tabs are inert
+    /// in free mode, and a free shelf never auto-retracts. Re-pin it onto a live screen,
+    /// centered (the dead display's coordinates mean nothing on this one).
+    private func relocateStrandedFreeShelf() {
+        guard revealMode == .free, panel.isVisible else { return }
+        if let pinned = summonScreen, !NSScreen.screens.contains(pinned) {
+            summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
+                ?? NSScreen.main ?? NSScreen.screens.first
+        }
+        guard !NSScreen.screens.contains(where: { $0.frame.intersects(panel.frame) }) else { return }
+        NSLog("Perch relocating stranded free shelf from \(NSStringFromRect(panel.frame))")
+        summonScreen = NSScreen.main ?? NSScreen.screens.first
+        freeTopLeft = nil
+        windowController.resize(to: freePanelFrame(), animated: false)
+        freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+    }
+
+    /// Reopening the app (Finder/Dock double-click) is the one affordance left when the
+    /// shelf is unreachable — rescue anything stranded and bring the shelf into view.
+    func handleReopen() {
+        if revealMode == .free {
+            relocateStrandedFreeShelf()
+            panel.orderFrontRegardless()
+            return
+        }
+        // An edge shelf stranded off every screen also blocks reveals (panel reads as
+        // visible) — drop it first so the reveal below recomputes a live frame.
+        if panel.isVisible, !NSScreen.screens.contains(where: { $0.frame.intersects(panel.frame) }) {
+            preferredScreen = nil
+            shownScreen = nil
+            hideShelf(animated: false)
+        }
+        revealIfNeeded()
+    }
+
+    /// `screen` if it's still attached, else the main/first live screen. Stale NSScreen
+    /// references (kept across a display disconnect) answer frame queries in a dead
+    /// coordinate space, which is how a card ends up outside every live screen.
+    private static func liveScreen(_ screen: NSScreen?) -> NSScreen? {
+        if let screen, NSScreen.screens.contains(screen) { return screen }
+        return NSScreen.main ?? NSScreen.screens.first
     }
 
     private func makeStrip(on screen: NSScreen, edge: ShelfEdge) -> EdgeStripWindow {
@@ -1108,7 +1159,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         freeShelfLocked = false
         hostView.setLockedInPlace(false)
         hostView.setFreeMode(false)
-        let screen = preferredScreen ?? NSScreen.main ?? NSScreen.screens.first
+        let screen = Self.liveScreen(preferredScreen)
         shownScreen = screen
         shownEdge = preferredEdge
         let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()

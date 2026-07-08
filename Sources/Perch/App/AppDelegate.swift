@@ -16,4 +16,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         }
     }
+
+    // Perch has no Dock icon, so double-clicking the app in Finder is the user's
+    // natural "where did it go?" gesture — use it to rescue a stranded shelf and
+    // bring it back into view.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        controller?.handleReopen()
+        return false
+    }
 }
