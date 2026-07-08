@@ -26,20 +26,19 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
             return super.writableTypes(for: pasteboard)
         }
 
-        let providerTypes = super.writableTypes(for: pasteboard)
-        let providerTypeSet = Set(providerTypes)
-        var types: [NSPasteboard.PasteboardType] = []
-        let hasBackingFile = !snapshot.backingFileURLs.isEmpty
-        if hasBackingFile {
-            types.append(contentsOf: providerTypes)
-            types.append(.fileURL)
+        // File-backed items vend exactly what a Finder drag vends: the promise flavors
+        // plus the concrete file URL, nothing else. Stacking the stored generic data
+        // flavors on top breaks receivers that rank them above the file delivery —
+        // Messages picks an inline `public.png` over the promise, can't load it once
+        // the drop has landed, and abandons the attachment it had already received.
+        if !snapshot.backingFileURLs.isEmpty {
+            return (super.writableTypes(for: pasteboard) + [.fileURL]).removingDuplicates()
         }
 
+        let providerTypeSet = Set(super.writableTypes(for: pasteboard))
+        var types: [NSPasteboard.PasteboardType] = []
         for record in snapshot.representations where !record.isPromisePlaceholder {
             let type = NSPasteboard.PasteboardType(record.typeIdentifier)
-            if type == .fileURL, hasBackingFile {
-                continue
-            }
             if type.isContextBoundSourceType {
                 continue
             }
