@@ -103,6 +103,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// grab handle hides and whole-card drags (and cursor summons) are refused, making
     /// the card a fixture — like another edge — until it's unlocked or closed.
     private var freeShelfLocked = false
+    /// True while the visible free shelf exists only as the settings Appearance
+    /// preview; closing the settings window clears it away again. Locking the shelf,
+    /// re-summoning it, or storing an item in it adopts it as a real shelf.
+    private var shelfIsSettingsPreview = false
     /// Observes user-initiated window moves so a dragged free shelf keeps its new origin.
     private var windowMoveObserver: NSObjectProtocol?
 
@@ -202,6 +206,25 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
+        }
+
+        // Appearance settings preview: pop the real shelf out beside the settings
+        // window so the options visibly tweak the actual card. Never summons over an
+        // existing shelf (visible shelves — locked ones included — already preview).
+        settingsWindow.onAppearancePaneSelected = { [weak self] windowFrame in
+            guard let self, !self.panel.isVisible else { return }
+            self.summonAtCursor(NSPoint(x: windowFrame.maxX + 72, y: windowFrame.maxY - 16))
+            self.shelfIsSettingsPreview = true
+        }
+
+        // The preview shelf leaves with the settings window — unless the user adopted
+        // it in the meantime (locked it or put something on it).
+        settingsWindow.onWindowClosed = { [weak self] in
+            guard let self, self.shelfIsSettingsPreview else { return }
+            self.shelfIsSettingsPreview = false
+            guard self.revealMode == .free, !self.freeShelfLocked, self.store.items.isEmpty
+            else { return }
+            self.dismissFreeShelf()
         }
 
         // Reinstall the edge tabs whenever the user enables/disables an edge dock.
@@ -563,6 +586,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// locked free shelf is a fixture — the summon must not yank it from its spot.
     private func summonAtCursor(_ point: NSPoint) {
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
+        // A deliberate summon adopts any preview shelf (the settings closure re-flags).
+        shelfIsSettingsPreview = false
         let screen = NSScreen.screens.first(where: { $0.frame.contains(point) })
             ?? NSScreen.main ?? NSScreen.screens.first
         summonScreen = screen
@@ -666,6 +691,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func toggleFreeShelfLock() {
         guard revealMode == .free else { return }
         freeShelfLocked.toggle()
+        if freeShelfLocked { shelfIsSettingsPreview = false }
         hostView.setLockedInPlace(freeShelfLocked)
         suppressMeasuredHeightResizes()
         resizeToFitVisible()
@@ -677,6 +703,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func dismissFreeShelf() {
         revealMode = .edge
         freeShelfLocked = false
+        shelfIsSettingsPreview = false
         hostView.setLockedInPlace(false)
         freeTopLeft = nil
         summonScreen = nil

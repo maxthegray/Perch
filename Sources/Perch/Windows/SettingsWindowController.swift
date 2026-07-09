@@ -10,6 +10,16 @@ final class SettingsWindowController {
     private let edgeSettings: EdgeSettings
     private var window: NSWindow?
 
+    /// Fires when the Appearance pane comes up, with the settings window's frame.
+    /// The shelf controller pops the real shelf out beside the window so the
+    /// appearance options visibly tweak the actual card, not a mockup.
+    var onAppearancePaneSelected: ((NSRect) -> Void)?
+
+    /// Fires when the settings window closes, so a shelf that exists only as the
+    /// Appearance preview can be cleared away with it.
+    var onWindowClosed: (() -> Void)?
+    private var closeObserver: NSObjectProtocol?
+
     init(themeStore: ThemeStore, edgeSettings: EdgeSettings) {
         self.themeStore = themeStore
         self.edgeSettings = edgeSettings
@@ -19,11 +29,16 @@ final class SettingsWindowController {
         if let window {
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)
+            notifyIfAppearanceSelected()
             return
         }
 
         let tabs = SettingsTabViewController()
         tabs.tabStyle = .toolbar
+        tabs.onPaneSelected = { [weak self] label in
+            guard let self, label == "Appearance", let frame = self.window?.frame else { return }
+            self.onAppearancePaneSelected?(frame)
+        }
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
@@ -49,8 +64,26 @@ final class SettingsWindowController {
         window.center()
         self.window = window
 
+        closeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification, object: window, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.onWindowClosed?()
+            }
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Reopening the window on a still-selected Appearance tab must re-summon the
+    /// preview shelf; tab-switch callbacks alone would miss it.
+    private func notifyIfAppearanceSelected() {
+        guard let window, let tabs = window.contentViewController as? NSTabViewController,
+              tabs.tabViewItems.indices.contains(tabs.selectedTabViewItemIndex),
+              tabs.tabViewItems[tabs.selectedTabViewItemIndex].label == "Appearance"
+        else { return }
+        onAppearancePaneSelected?(window.frame)
     }
 
     /// Each pane keeps a fixed preferred size so the toolbar tab style can animate the
@@ -70,12 +103,16 @@ final class SettingsWindowController {
     }
 }
 
-/// Mirrors the selected pane's name into the window title, System Settings-style.
+/// Mirrors the selected pane's name into the window title, System Settings-style,
+/// and reports pane changes so the shelf can react (see `onAppearancePaneSelected`).
 private final class SettingsTabViewController: NSTabViewController {
+    var onPaneSelected: ((String) -> Void)?
+
     override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
         super.tabView(tabView, didSelect: tabViewItem)
         if let label = tabViewItem?.label {
             view.window?.title = label
+            onPaneSelected?(label)
         }
     }
 }
