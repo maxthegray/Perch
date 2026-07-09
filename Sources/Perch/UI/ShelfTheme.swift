@@ -169,8 +169,8 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// Whether the perch casts a drop shadow. On by default to lift the card off the
-    /// desktop. Drives `ShelfPanel.hasShadow` (see ShelfController).
+    /// Whether the perch casts a drop shadow. Off by default to keep glass from reading
+    /// as a dark outline. Drives `ShelfPanel.hasShadow` (see ShelfController).
     @Published var showsShadow: Bool {
         didSet {
             guard showsShadow != oldValue else { return }
@@ -211,7 +211,7 @@ final class ThemeStore: ObservableObject {
             showsLabels = true
         }
         showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
-        showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? true
+        showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? false
         let clamp: (Double, ClosedRange<CGFloat>) -> CGFloat = {
             min(max(CGFloat($0), $1.lowerBound), $1.upperBound)
         }
