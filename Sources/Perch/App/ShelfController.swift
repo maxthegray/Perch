@@ -11,6 +11,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let store: ItemStore
     private let ledger: ProvenanceLedger
     private let historyWindow: HistoryWindowController
+    private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
     private let dropView: ShelfDropView
@@ -110,12 +111,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         store = ItemStore(holding: holding)
         ledger = ProvenanceLedger(holding: holding)
         historyWindow = HistoryWindowController(ledger: ledger)
+        settingsWindow = SettingsWindowController(themeStore: themeStore, edgeSettings: edgeSettings)
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore, edgeSettings: edgeSettings, ledger: ledger)
+        hostView = ShelfHostView(store: store, themeStore: themeStore, ledger: ledger)
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -196,6 +198,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onShowHistory = { [weak self] in
             self?.historyWindow.show()
+        }
+
+        hostView.onShowSettings = { [weak self] in
+            self?.settingsWindow.show()
         }
 
         // Reinstall the edge tabs whenever the user enables/disables an edge dock.

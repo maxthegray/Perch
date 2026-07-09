@@ -11,11 +11,9 @@ import SwiftUI
 final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuDelegate {
     private let store: ItemStore
     private let themeStore: ThemeStore
-    private let edgeSettings: EdgeSettings
     private let ledger: ProvenanceLedger
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
-    private let loginItem = LoginItemController()
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
@@ -52,40 +50,30 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// centering offset when the card is floored taller than its content.
     private var measuredContentHeight: CGFloat = 0
 
+    // The behavior flags below are written by the Settings window (@AppStorage on these
+    // keys) and read live from UserDefaults, so a change applies on the next gesture.
+
     /// When true, dragging an item out leaves the original on the shelf (copy);
     /// otherwise it's removed once it lands somewhere (move — the default).
-    private static let vendCopiesKey = "Perch.VendCopies"
+    static let vendCopiesKey = "Perch.VendCopies"
     private var vendCopies: Bool {
-        get { UserDefaults.standard.bool(forKey: Self.vendCopiesKey) }
-        set { UserDefaults.standard.set(newValue, forKey: Self.vendCopiesKey) }
+        UserDefaults.standard.bool(forKey: Self.vendCopiesKey)
     }
 
     /// When true, the shelf reveals at the nearest enabled edge the moment a drag starts,
     /// instead of waiting for the pointer to reach the edge tab. Read live by the
     /// controller's drag handlers. Default true.
     static let revealOnDragStartKey = "Perch.RevealOnDragStart"
-    private var revealOnDragStart: Bool {
-        get { UserDefaults.standard.object(forKey: Self.revealOnDragStartKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.revealOnDragStartKey) }
-    }
 
     /// When true, shaking the cursor summons a free-floating shelf at the pointer. Read
     /// live by the controller's summon handler. Default true (the original behavior), so
     /// an unset value keeps shake-to-summon on.
     static let shakeToSummonKey = "Perch.ShakeToSummon"
-    private var shakeToSummon: Bool {
-        get { UserDefaults.standard.object(forKey: Self.shakeToSummonKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.shakeToSummonKey) }
-    }
 
     /// When true, a free-floating shelf stays where it is after its last item leaves
     /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
     /// itself. Read live by the controller. Default true.
     static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
-    private var keepEmptyShelf: Bool {
-        get { UserDefaults.standard.object(forKey: Self.keepEmptyShelfKey) as? Bool ?? true }
-        set { UserDefaults.standard.set(newValue, forKey: Self.keepEmptyShelfKey) }
-    }
 
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
@@ -93,6 +81,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
+
+    /// Called when the user picks "Settings"; the controller opens the window.
+    var onShowSettings: (() -> Void)?
 
     /// Called when an empty cursor-summoned tile is tapped — there are no items to remove,
     /// so a plain click dismisses the whole tile.
@@ -115,10 +106,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onShelfDragBegan: (() -> Void)?
     var onShelfDragEnded: (() -> Void)?
 
-    init(store: ItemStore, themeStore: ThemeStore, edgeSettings: EdgeSettings, ledger: ProvenanceLedger) {
+    init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger) {
         self.store = store
         self.themeStore = themeStore
-        self.edgeSettings = edgeSettings
         self.ledger = ledger
         hostingView = NSHostingView(
             rootView: ShelfContentView(
@@ -691,39 +681,17 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(closeShelf)
         }
 
+        // Everything configurable lives in the Settings window; the menu stays actions-only.
         menu.addItem(.separator())
-        menu.addItem(appearanceMenuItem())
-        menu.addItem(dockEdgesMenuItem())
-        menu.addItem(behaviorMenuItem())
-
-        if loginItem.isAvailable {
-            let launchAtLogin = NSMenuItem(
-                title: "Launch at Login",
-                action: #selector(toggleLaunchAtLoginAction(_:)),
-                keyEquivalent: ""
-            )
-            launchAtLogin.target = self
-            launchAtLogin.state = loginItem.isEnabled ? .on : .off
-            menu.addItem(launchAtLogin)
-        }
-
-        menu.addItem(.separator())
-        let versionItem = NSMenuItem(
-            title: "Perch \(appVersion)",
-            action: nil,
+        let settings = NSMenuItem(
+            title: "Settings",
+            action: #selector(showSettingsAction(_:)),
             keyEquivalent: ""
         )
-        versionItem.isEnabled = false
-        menu.addItem(versionItem)
+        settings.target = self
+        menu.addItem(settings)
 
-        let checkForUpdates = NSMenuItem(
-            title: "Check for Updates…",
-            action: #selector(checkForUpdatesAction(_:)),
-            keyEquivalent: ""
-        )
-        checkForUpdates.target = self
-        menu.addItem(checkForUpdates)
-
+        menu.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Perch", action: #selector(quitAction(_:)), keyEquivalent: "")
         quit.target = self
         menu.addItem(quit)
@@ -741,25 +709,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         isContextMenuOpen = false
     }
 
-    @objc private func toggleLaunchAtLoginAction(_ sender: NSMenuItem) {
-        loginItem.toggle()
-    }
-
     @objc private func quitAction(_ sender: NSMenuItem) {
         NSApp.terminate(nil)
     }
 
-    @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {
-        Updater.shared.checkForUpdates()
-    }
-
-    /// The bundle's marketing version, shown as a disabled menu header.
-    private var appVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    }
-
     @objc private func showHistoryAction(_ sender: NSMenuItem) {
         onShowHistory?()
+    }
+
+    @objc private func showSettingsAction(_ sender: NSMenuItem) {
+        onShowSettings?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {
@@ -768,266 +727,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func toggleLockAction(_ sender: NSMenuItem) {
         onToggleLock?()
-    }
-
-    /// "Appearance ▸ Glass / Minimal / Show Names" — visual-only controls.
-    private func appearanceMenuItem() -> NSMenuItem {
-        let appearance = NSMenuItem(title: "Appearance", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        for style in ShelfStyle.allCases {
-            let item = NSMenuItem(
-                title: style.displayName,
-                action: #selector(selectStyleAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = style.rawValue
-            item.state = (style == themeStore.style) ? .on : .off
-            submenu.addItem(item)
-        }
-        submenu.addItem(.separator())
-        submenu.addItem(showNamesMenuItem())
-        submenu.addItem(shadowMenuItem())
-        submenu.addItem(.separator())
-        submenu.addItem(scaleSliderMenuItem(
-            title: "Height",
-            value: themeStore.heightFraction,
-            range: ThemeStore.heightFractionRange,
-            action: #selector(heightSliderChanged(_:))
-        ))
-        submenu.addItem(scaleSliderMenuItem(
-            title: "Width",
-            value: themeStore.widthScale,
-            range: ThemeStore.widthScaleRange,
-            action: #selector(widthSliderChanged(_:))
-        ))
-        let reset = NSMenuItem(
-            title: "Reset Size",
-            action: #selector(resetSizeAction(_:)),
-            keyEquivalent: ""
-        )
-        reset.target = self
-        submenu.addItem(reset)
-        appearance.submenu = submenu
-        return appearance
-    }
-
-    /// "Appearance ▸ Height / Width" — continuous sliders sizing the card itself (not
-    /// its contents): Height floors the card taller than its rows, the extra space
-    /// being more drop target; Width scales the card's width. The window re-fits live
-    /// as the thumb moves.
-    private func scaleSliderMenuItem(
-        title: String,
-        value: CGFloat,
-        range: ClosedRange<CGFloat>,
-        action: Selector
-    ) -> NSMenuItem {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 220, height: 28))
-
-        let label = NSTextField(labelWithString: title)
-        label.font = .menuFont(ofSize: NSFont.systemFontSize(for: .regular))
-        // A fixed label width keeps the two sliders' tracks vertically aligned.
-        label.frame = NSRect(x: 14, y: (container.frame.height - 17) / 2, width: 44, height: 17)
-        container.addSubview(label)
-
-        let sliderX = label.frame.maxX + 6
-        let slider = NSSlider(
-            value: Double(value),
-            minValue: Double(range.lowerBound),
-            maxValue: Double(range.upperBound),
-            target: self,
-            action: action
-        )
-        slider.isContinuous = true
-        slider.frame = NSRect(
-            x: sliderX,
-            y: (container.frame.height - 21) / 2,
-            width: container.frame.width - sliderX - 14,
-            height: 21
-        )
-        container.addSubview(slider)
-
-        let item = NSMenuItem()
-        item.view = container
-        return item
-    }
-
-    @objc private func heightSliderChanged(_ sender: NSSlider) {
-        themeStore.heightFraction = CGFloat(sender.doubleValue)
-    }
-
-    @objc private func widthSliderChanged(_ sender: NSSlider) {
-        // Detent at the design width: close enough to 100% snaps the thumb and the value.
-        if abs(sender.doubleValue - 1) < 0.04 {
-            sender.doubleValue = 1
-        }
-        themeStore.widthScale = CGFloat(sender.doubleValue)
-    }
-
-    @objc private func resetSizeAction(_ sender: NSMenuItem) {
-        themeStore.heightFraction = 0
-        themeStore.widthScale = 1
-    }
-
-    @objc private func selectStyleAction(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let style = ShelfStyle(rawValue: raw) else { return }
-        themeStore.style = style
-    }
-
-    /// "Dock Edges ▸ Left / Right / Top" — toggles which screen-edge docks are enabled.
-    private func dockEdgesMenuItem() -> NSMenuItem {
-        let edges = NSMenuItem(title: "Dock Edges", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        let entries: [(String, ShelfEdge)] = [
-            ("Left", .left), ("Right", .right), ("Top (Notch)", .notch)
-        ]
-        for (title, edge) in entries {
-            let item = NSMenuItem(
-                title: title,
-                action: #selector(toggleEdgeAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = edge.rawValue
-            item.state = edgeSettings.isEnabled(edge) ? .on : .off
-            submenu.addItem(item)
-        }
-        edges.submenu = submenu
-        return edges
-    }
-
-    @objc private func toggleEdgeAction(_ sender: NSMenuItem) {
-        guard let raw = sender.representedObject as? String,
-              let edge = ShelfEdge(rawValue: raw) else { return }
-        edgeSettings.toggle(edge)
-    }
-
-    private func showNamesMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Show Names",
-            action: #selector(toggleShowLabelsAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = themeStore.showsLabels ? .on : .off
-        return item
-    }
-
-    @objc private func toggleShowLabelsAction(_ sender: NSMenuItem) {
-        themeStore.showsLabels.toggle()
-    }
-
-    private func shadowMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Shadow",
-            action: #selector(toggleShadowAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = themeStore.showsShadow ? .on : .off
-        return item
-    }
-
-    @objc private func toggleShadowAction(_ sender: NSMenuItem) {
-        themeStore.showsShadow.toggle()
-    }
-
-    private func draggingEnabledMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Dragging Enabled",
-            action: #selector(toggleShowGrabHandleAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = themeStore.showsGrabHandle ? .on : .off
-        return item
-    }
-
-    @objc private func toggleShowGrabHandleAction(_ sender: NSMenuItem) {
-        themeStore.showsGrabHandle.toggle()
-    }
-
-    private func shakeToSummonMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Shake to Summon",
-            action: #selector(toggleShakeToSummonAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = shakeToSummon ? .on : .off
-        return item
-    }
-
-    @objc private func toggleShakeToSummonAction(_ sender: NSMenuItem) {
-        shakeToSummon.toggle()
-    }
-
-    private func keepEmptyShelfMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Keep Open When Empty",
-            action: #selector(toggleKeepEmptyShelfAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = keepEmptyShelf ? .on : .off
-        return item
-    }
-
-    @objc private func toggleKeepEmptyShelfAction(_ sender: NSMenuItem) {
-        keepEmptyShelf.toggle()
-    }
-
-    private func behaviorMenuItem() -> NSMenuItem {
-        let behavior = NSMenuItem(title: "Behavior", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        submenu.addItem(dragOutMenuItem())
-        submenu.addItem(autoShowWhileDraggingMenuItem())
-        submenu.addItem(draggingEnabledMenuItem())
-        submenu.addItem(shakeToSummonMenuItem())
-        submenu.addItem(keepEmptyShelfMenuItem())
-        behavior.submenu = submenu
-        return behavior
-    }
-
-    /// "Drag Out ▸ Move / Copy" — whether vending an item removes it or leaves a copy.
-    private func dragOutMenuItem() -> NSMenuItem {
-        let dragOut = NSMenuItem(title: "Drag Out", action: nil, keyEquivalent: "")
-        let submenu = NSMenu()
-        let entries: [(String, Bool)] = [("Move", false), ("Copy", true)]
-        for (title, copies) in entries {
-            let item = NSMenuItem(
-                title: title,
-                action: #selector(selectDragOutModeAction(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = copies
-            item.state = (copies == vendCopies) ? .on : .off
-            submenu.addItem(item)
-        }
-        dragOut.submenu = submenu
-        return dragOut
-    }
-
-    @objc private func selectDragOutModeAction(_ sender: NSMenuItem) {
-        guard let copies = sender.representedObject as? Bool else { return }
-        vendCopies = copies
-    }
-
-    private func autoShowWhileDraggingMenuItem() -> NSMenuItem {
-        let item = NSMenuItem(
-            title: "Auto Show While Dragging",
-            action: #selector(toggleRevealOnDragStartAction(_:)),
-            keyEquivalent: ""
-        )
-        item.target = self
-        item.state = revealOnDragStart ? .on : .off
-        return item
-    }
-
-    @objc private func toggleRevealOnDragStartAction(_ sender: NSMenuItem) {
-        revealOnDragStart.toggle()
     }
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {

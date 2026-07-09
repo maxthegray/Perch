@@ -1,7 +1,7 @@
 import Combine
 import SwiftUI
 
-/// The two looks the user can toggle between at runtime (right-click ▸ Appearance).
+/// The two looks the user can toggle between at runtime (Settings ▸ Appearance).
 enum ShelfStyle: String, CaseIterable {
     /// Refined native glass: deeper translucency, hairline border, and accent edge pill.
     case glass
@@ -179,7 +179,7 @@ final class ThemeStore: ObservableObject {
     }
 
     /// The card's width multiplier, applied by the controller's width math. Driven live
-    /// by the Appearance ▸ Width slider; callers keep it within `widthScaleRange` (the
+    /// by the Settings window's Width slider; callers keep it within `widthScaleRange` (the
     /// slider is bounded, and the loaded value is clamped in init). Never reassign it
     /// in here — on a @Published property that re-enters didSet and recurses to a crash.
     @Published var widthScale: CGFloat {

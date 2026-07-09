@@ -1,17 +1,19 @@
+import Combine
 import Foundation
 
 /// Which screen edges the user has enabled for shelf docks (Left / Right / Top-notch).
 /// Persisted to `UserDefaults`; `onChange` lets the controller reinstall the edge tabs
-/// when the selection changes. At least one edge always stays enabled so the shelf can
-/// never become unreachable.
+/// when the selection changes, and `ObservableObject` lets the Settings window's
+/// toggles stay live. At least one edge always stays enabled so the shelf can never
+/// become unreachable.
 @MainActor
-final class EdgeSettings {
+final class EdgeSettings: ObservableObject {
     private static let key = "Perch.EnabledEdges"
 
     /// Called after the selection changes (and has been persisted).
     var onChange: (() -> Void)?
 
-    private(set) var enabledEdges: Set<ShelfEdge> {
+    @Published private(set) var enabledEdges: Set<ShelfEdge> {
         didSet {
             UserDefaults.standard.set(enabledEdges.map(\.rawValue), forKey: Self.key)
             onChange?()
