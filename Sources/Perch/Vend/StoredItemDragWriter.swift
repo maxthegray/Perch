@@ -14,8 +14,16 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
     private var snapshot: StoredItemDragSnapshot?
     private var retainedDelegate: StoredItemDragWriterDelegate?
 
-    convenience init(item: StoredItem, recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil) {
-        let delegate = StoredItemDragWriterDelegate(item: item, recordVend: recordVend)
+    convenience init(
+        item: StoredItem,
+        recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
+        onWriteFailed: (@Sendable () -> Void)? = nil
+    ) {
+        let delegate = StoredItemDragWriterDelegate(
+            item: item,
+            recordVend: recordVend,
+            onWriteFailed: onWriteFailed
+        )
         self.init(fileType: delegate.promisedFileType, delegate: delegate)
         snapshot = delegate.snapshot
         retainedDelegate = delegate
@@ -102,12 +110,18 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
     private let operationQueue: OperationQueue
     fileprivate let promisedFileType: String
     private let recordVend: (@Sendable (ProvenanceEntry) -> Void)?
+    private let onWriteFailed: (@Sendable () -> Void)?
 
-    init(item: StoredItem, recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil) {
+    init(
+        item: StoredItem,
+        recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
+        onWriteFailed: (@Sendable () -> Void)? = nil
+    ) {
         snapshot = MainActor.assumeIsolated {
             StoredItemDragSnapshot(item: item)
         }
         self.recordVend = recordVend
+        self.onWriteFailed = onWriteFailed
         operationQueue = OperationQueue()
         operationQueue.name = "Perch.StoredItemDragWriter"
         operationQueue.maxConcurrentOperationCount = 1
@@ -145,7 +159,10 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
                 throw StoredItemDragWriterError.destinationIsDirectory(destinationURL)
             }
 
-            try Data(contentsOf: sourceURL).write(to: destinationURL, options: .atomic)
+            // NOT atomic: the receiver's sandbox grant covers exactly the promised
+            // file path, and an atomic write creates a temp file with a different
+            // name in that folder first — EPERM into e.g. Messages' container.
+            try Data(contentsOf: sourceURL).write(to: destinationURL)
             NSLog("Perch promised file wrote \(sourceURL.lastPathComponent) to \(destinationURL.path)")
             recordVend?(ProvenanceEntry(
                 id: snapshot.itemID,
@@ -158,6 +175,7 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
             completionHandler(nil)
         } catch {
             NSLog("Perch promised file write failed for \(sourceURL.lastPathComponent) to \(destinationURL.path): \(error)")
+            onWriteFailed?()
             completionHandler(error)
         }
     }

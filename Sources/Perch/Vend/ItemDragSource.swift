@@ -18,6 +18,11 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// movement. The host hops it back to the main actor to append to the ledger.
     var recordVend: (@Sendable (ProvenanceEntry) -> Void)?
 
+    /// Called off the main actor when a file-promise write fails after the drop landed
+    /// (e.g. the destination denied the write). The host puts the retired row back so
+    /// the item isn't silently lost.
+    var onWriteFailed: (@Sendable () -> Void)?
+
     init(item: StoredItem) {
         self.item = item
         super.init()
@@ -41,7 +46,11 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// The single dragging item backing this drag (promise-preferred file delivery
     /// + lazy generic data + convenience file URL — see `StoredItemDragWriter`).
     func draggingItem() -> NSDraggingItem {
-        let writer = StoredItemDragWriter(item: item, recordVend: recordVend)
+        let writer = StoredItemDragWriter(
+            item: item,
+            recordVend: recordVend,
+            onWriteFailed: onWriteFailed
+        )
         activeWriter = writer
 
         let draggingItem = NSDraggingItem(pasteboardWriter: writer)

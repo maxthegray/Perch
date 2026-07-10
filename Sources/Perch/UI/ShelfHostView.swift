@@ -395,6 +395,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         dragSource.recordVend = { entry in
             Task { @MainActor in ledger.record(entry) }
         }
+        dragSource.onWriteFailed = { [weak self] in
+            Task { @MainActor in
+                NSLog("Perch vend delivery failed; restoring item \(item.id.uuidString) to shelf")
+                self?.store.unretire(item)
+            }
+        }
         dragSource.onEnded = { [weak self] operation in
             guard let self else { return }
             self.activeDragSource = nil

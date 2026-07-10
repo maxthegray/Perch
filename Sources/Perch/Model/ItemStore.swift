@@ -13,6 +13,7 @@ final class ItemStore: ObservableObject {
 
     private let holding: HoldingDirectory
     private var justAddedClearTask: Task<Void, Never>?
+    private var retireDeletionTasks: [UUID: Task<Void, Never>] = [:]
 
     init(holding: HoldingDirectory) {
         self.holding = holding
@@ -128,10 +129,25 @@ final class ItemStore: ObservableObject {
         persistIndexOrLogFailure()
 
         let directoryURL = item.directoryURL
-        Task.detached(priority: .background) {
+        let id = item.id
+        retireDeletionTasks[id]?.cancel()
+        retireDeletionTasks[id] = Task.detached(priority: .background) { [weak self] in
             try? await Task.sleep(for: .seconds(15 * 60))
+            guard !Task.isCancelled else { return }
             try? FileManager.default.removeItem(at: directoryURL)
+            await MainActor.run { self?.retireDeletionTasks[id] = nil }
         }
+    }
+
+    /// Put a retired item back on the shelf: the destination accepted the drop but then
+    /// failed to take delivery (e.g. its promise write was denied), so the vend never
+    /// actually happened. Cancels the pending grace-period deletion.
+    func unretire(_ item: StoredItem) {
+        retireDeletionTasks[item.id]?.cancel()
+        retireDeletionTasks[item.id] = nil
+        guard !items.contains(where: { $0.id == item.id }),
+              FileManager.default.fileExists(atPath: item.directoryURL.path) else { return }
+        insert(item, at: nil)
     }
 
     /// Delete `items/<uuid>/` directories that are not in the index — left behind by
