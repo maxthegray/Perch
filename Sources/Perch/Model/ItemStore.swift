@@ -135,8 +135,13 @@ final class ItemStore: ObservableObject {
             try? await Task.sleep(for: .seconds(15 * 60))
             guard !Task.isCancelled else { return }
             try? FileManager.default.removeItem(at: directoryURL)
-            await MainActor.run { self?.retireDeletionTasks[id] = nil }
+            guard let self else { return }
+            await self.clearRetireDeletionTask(id)
         }
+    }
+
+    private func clearRetireDeletionTask(_ id: UUID) {
+        retireDeletionTasks[id] = nil
     }
 
     /// Put a retired item back on the shelf: the destination accepted the drop but then
