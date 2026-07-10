@@ -217,14 +217,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self.shelfIsSettingsPreview = true
         }
 
-        // The preview shelf leaves with the settings window — unless the user adopted
-        // it in the meantime (locked it or put something on it).
+        // The preview shelf leaves when the Appearance tab is deselected or the
+        // settings window closes — unless the user adopted it in the meantime
+        // (locked it or put something on it).
+        settingsWindow.onAppearancePaneDeselected = { [weak self] in
+            self?.clearSettingsPreviewShelf()
+        }
         settingsWindow.onWindowClosed = { [weak self] in
-            guard let self, self.shelfIsSettingsPreview else { return }
-            self.shelfIsSettingsPreview = false
-            guard self.revealMode == .free, !self.freeShelfLocked, self.store.items.isEmpty
-            else { return }
-            self.dismissFreeShelf()
+            self?.clearSettingsPreviewShelf()
         }
 
         // Reinstall the edge tabs whenever the user enables/disables an edge dock.
@@ -695,6 +695,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.setLockedInPlace(freeShelfLocked)
         suppressMeasuredHeightResizes()
         resizeToFitVisible()
+    }
+
+    /// Clear away a shelf that exists only as the settings Appearance preview (the tab
+    /// was deselected or the window closed). A shelf the user adopted — locked, put
+    /// items on, or that was already on screen before the preview — stays put.
+    private func clearSettingsPreviewShelf() {
+        guard shelfIsSettingsPreview else { return }
+        shelfIsSettingsPreview = false
+        guard revealMode == .free, !freeShelfLocked, store.items.isEmpty else { return }
+        dismissFreeShelf()
     }
 
     /// Tear down the free-floating shelf (✕ pressed, or it emptied out) and return to

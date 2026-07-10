@@ -15,6 +15,10 @@ final class SettingsWindowController {
     /// appearance options visibly tweak the actual card, not a mockup.
     var onAppearancePaneSelected: ((NSRect) -> Void)?
 
+    /// Fires when the user leaves the Appearance pane for another tab, so the
+    /// preview shelf clears right away instead of waiting for the window to close.
+    var onAppearancePaneDeselected: (() -> Void)?
+
     /// Fires when the settings window closes, so a shelf that exists only as the
     /// Appearance preview can be cleared away with it.
     var onWindowClosed: (() -> Void)?
@@ -36,8 +40,13 @@ final class SettingsWindowController {
         let tabs = SettingsTabViewController()
         tabs.tabStyle = .toolbar
         tabs.onPaneSelected = { [weak self] label in
-            guard let self, label == "Appearance", let frame = self.window?.frame else { return }
-            self.onAppearancePaneSelected?(frame)
+            guard let self else { return }
+            if label == "Appearance" {
+                guard let frame = self.window?.frame else { return }
+                self.onAppearancePaneSelected?(frame)
+            } else {
+                self.onAppearancePaneDeselected?()
+            }
         }
 
         addPane(
