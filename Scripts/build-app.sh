@@ -35,21 +35,24 @@ else
   echo "  WARNING: ${FRAMEWORK} not found -- auto-update will be disabled"
 fi
 
-# Ad-hoc code signature. Sign inside-out: Sparkle's nested helpers/XPC services first,
-# then the framework, then the main binary, then the app. (--deep is unreliable for
-# Sparkle, so each nested component is signed explicitly.) Signing is also required for
-# SMAppService login-item registration.
-echo "Signing (ad-hoc)..."
+# Use the stable Apple Development identity in this machine's Keychain. Ad-hoc signing
+# changes Perch's code identity on every rebuild, which makes macOS repeatedly request
+# Desktop/Downloads access. Override with PERCH_SIGN_IDENTITY when needed.
+SIGN_IDENTITY="${PERCH_SIGN_IDENTITY:-D574D8FBAAF610A87A0C9B5703845E690B7A5676}"
+
+# Sign inside-out: Sparkle's nested helpers/XPC services first, then the framework,
+# main binary, and app. (--deep is unreliable for Sparkle.)
+echo "Signing with stable identity ${SIGN_IDENTITY}..."
 SPARKLE="${APP}/Contents/Frameworks/Sparkle.framework/Versions/B"
 if [ -d "${SPARKLE}" ]; then
-  codesign --force --sign - "${SPARKLE}/XPCServices/Downloader.xpc"
-  codesign --force --sign - "${SPARKLE}/XPCServices/Installer.xpc"
-  codesign --force --sign - "${SPARKLE}/Updater.app"
-  codesign --force --sign - "${SPARKLE}/Autoupdate"
-  codesign --force --sign - "${APP}/Contents/Frameworks/Sparkle.framework"
+  codesign --force --sign "${SIGN_IDENTITY}" "${SPARKLE}/XPCServices/Downloader.xpc"
+  codesign --force --sign "${SIGN_IDENTITY}" "${SPARKLE}/XPCServices/Installer.xpc"
+  codesign --force --sign "${SIGN_IDENTITY}" "${SPARKLE}/Updater.app"
+  codesign --force --sign "${SIGN_IDENTITY}" "${SPARKLE}/Autoupdate"
+  codesign --force --sign "${SIGN_IDENTITY}" "${APP}/Contents/Frameworks/Sparkle.framework"
 fi
-codesign --force --sign - "${APP}/Contents/MacOS/Perch"
-codesign --force --sign - "${APP}"
+codesign --force --sign "${SIGN_IDENTITY}" "${APP}/Contents/MacOS/Perch"
+codesign --force --sign "${SIGN_IDENTITY}" "${APP}"
 
 echo "Built ${APP}"
 echo "Move it to /Applications (so the login-item path stays stable), then launch it"

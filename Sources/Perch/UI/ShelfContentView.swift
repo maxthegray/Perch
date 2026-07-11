@@ -19,6 +19,7 @@ struct ShelfContentView: View {
     @ObservedObject var interaction: RowInteractionState
     @ObservedObject var thumbnails: ThumbnailStore
     @ObservedObject var ledger: ProvenanceLedger
+    @ObservedObject var arrivals: RecentArrivals
     var onContentHeight: (CGFloat) -> Void = { _ in }
 
     private var theme: ShelfTheme { themeStore.theme }
@@ -156,9 +157,20 @@ struct ShelfContentView: View {
                 grabber.transition(.opacity)
             }
             if store.items.isEmpty {
-                emptyState
-                    .background(heightReader(addingGrabberStrip: showsGrabber))
-                    .frame(maxHeight: .infinity)
+                Group {
+                    if ghostOffers.isEmpty {
+                        emptyState
+                    } else {
+                        // On an otherwise-empty shelf the offer *is* the shelf. Starting
+                        // any system drag suppresses offers, swapping this straight back
+                        // to the ordinary empty drop target before the drag reaches us.
+                        ghostStack
+                            .padding(theme.contentPadding)
+                    }
+                }
+                .animation(.easeOut(duration: 0.18), value: ghostOffers)
+                .background(heightReader(addingGrabberStrip: showsGrabber))
+                .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
                     ScrollView {
@@ -203,6 +215,28 @@ struct ShelfContentView: View {
         return name.isEmpty ? "/" : name
     }
 
+    /// Recent-arrival ghosts, hidden while a drag is in flight (`suppressed`) so they
+    /// never shift the drop geometry under the cursor.
+    private var ghostOffers: [ArrivalOffer] {
+        arrivals.suppressed ? [] : arrivals.offers
+    }
+
+    /// The dimmed recent-arrival rows. They follow real rows on a populated shelf and
+    /// replace the drop tile when empty; AppKit hit-testing mirrors both placements.
+    private var ghostStack: some View {
+        VStack(alignment: .leading, spacing: theme.rowSpacing) {
+            ForEach(ghostOffers) { offer in
+                ArrivalGhostRowView(
+                    offer: offer,
+                    theme: theme,
+                    isHovered: interaction.hoveredArrivalID == offer.id,
+                    showsLabels: themeStore.showsLabels
+                )
+                .transition(.opacity)
+            }
+        }
+    }
+
     private var rowStack: some View {
         VStack(alignment: .leading, spacing: theme.rowSpacing) {
             ForEach(displayedItems) { item in
@@ -212,7 +246,7 @@ struct ShelfContentView: View {
                     isHovered: interaction.hoveredItemID == item.id,
                     isSelected: interaction.selectedItemIDs.contains(item.id),
                     isDragging: interaction.draggingItemID == item.id,
-                    isDeleting: interaction.deletingItemID == item.id,
+                    isDeleting: interaction.deletingItemIDs.contains(item.id),
                     thumbnail: thumbnails.thumbnail(for: item),
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
                     showsLabels: themeStore.showsLabels,
@@ -223,7 +257,11 @@ struct ShelfContentView: View {
                     removal: .opacity.combined(with: .scale(scale: 0.8))
                 ))
             }
+            if !ghostOffers.isEmpty {
+                ghostStack
+            }
         }
+        .animation(.easeOut(duration: 0.18), value: ghostOffers)
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         // One transaction drives both the row fade and the layout: a spring while a
@@ -272,6 +310,75 @@ struct ShelfContentView: View {
             .font(.system(size: 22, weight: .light))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity)
-            .frame(height: 64)
+            .frame(height: RowMetrics.emptyTileHeight)
     }
+}
+
+/// A dimmed, dash-outlined row for a file that just landed in a watched folder: not
+/// yet aboard, one tap away. Hover/click and context-menu plumbing is AppKit's
+/// (`ShelfHostView`), same as the real rows.
+struct ArrivalGhostRowView: View {
+    let offer: ArrivalOffer
+    let theme: ShelfTheme
+    let isHovered: Bool
+    let showsLabels: Bool
+
+    var body: some View {
+        HStack(spacing: showsLabels ? 10 : 0) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: theme.iconSize, height: theme.iconSize)
+
+            if showsLabels {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(offer.name)
+                        .font(.system(size: theme.titleSize, weight: theme.titleWeight))
+                        .foregroundStyle(.primary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    if theme.showsSubtitle {
+                        Text(subtitle)
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .tracking(0.4)
+                            .foregroundStyle(.tertiary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.horizontal, showsLabels ? 10 : 0)
+        .frame(
+            maxWidth: .infinity,
+            minHeight: theme.rowHeight,
+            maxHeight: theme.rowHeight,
+            alignment: showsLabels ? .leading : .center
+        )
+        .background(
+            RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
+                .fill(isHovered ? theme.rowHoverFill : .clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
+                .strokeBorder(
+                    Color.primary.opacity(isHovered ? 0.22 : 0.12),
+                    style: StrokeStyle(lineWidth: 1, dash: [3, 2.5])
+                )
+        )
+        .contentShape(Rectangle())
+        .opacity(isHovered ? 0.95 : 0.55)
+        .animation(.easeOut(duration: 0.13), value: isHovered)
+    }
+
+    /// "2m ago · Downloads" — where it landed and how fresh it is.
+    private var subtitle: String {
+        let minutes = Int(-offer.addedAt.timeIntervalSinceNow / 60)
+        let age = minutes < 1 ? "Just now" : "\(minutes)m ago"
+        return "\(age) · \(offer.locationName)"
+    }
+
 }

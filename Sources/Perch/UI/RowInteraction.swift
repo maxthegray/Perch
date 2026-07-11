@@ -9,6 +9,8 @@ import Foundation
 @MainActor
 final class RowInteractionState: ObservableObject {
     @Published var hoveredItemID: UUID?
+    /// The recent-arrival ghost row under the pointer (its offer id), or nil.
+    @Published var hoveredArrivalID: String?
     /// Rows selected for a multi-item vend. Shift-click toggles membership.
     @Published var selectedItemIDs: Set<UUID> = []
 
@@ -17,7 +19,7 @@ final class RowInteractionState: ObservableObject {
 
     /// The item mid-delete: its row does a quick affirmative pop (slight scale-up) before
     /// shrinking away. Set for ~110ms between the click and the actual removal.
-    @Published var deletingItemID: UUID?
+    @Published var deletingItemIDs: Set<UUID> = []
 
     /// The item currently vended out in a move-mode system drag. Its row is hidden while
     /// the drag is in flight — the item travels with the cursor instead of appearing to
@@ -65,4 +67,7 @@ enum RowMetrics {
     /// Size of the grabber capsule itself, centered in the zone.
     static let grabberWidth: CGFloat = 36
     static let grabberHeight: CGFloat = 5
+    /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
+    /// window-size estimate.
+    static let emptyTileHeight: CGFloat = 64
 }

@@ -12,6 +12,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let store: ItemStore
     private let themeStore: ThemeStore
     private let ledger: ProvenanceLedger
+    private let arrivals: RecentArrivals
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let hostingView: NSHostingView<ShelfContentView>
@@ -19,6 +20,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var activeDragSource: ItemDragSource?
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
+    /// The temporary arrival offer under the right-click, dismissed without touching
+    /// the file that remains in its original folder.
+    private var menuTargetArrival: ArrivalOffer?
     /// True while the right-click context menu (or one of its submenus) is open. The
     /// controller checks this so an empty shelf doesn't retract out from under the menu
     /// when the pointer moves into a submenu outside the card.
@@ -26,13 +30,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
+    /// Set on mouse-down over a recent-arrival ghost row; a click adopts the file onto
+    /// the shelf. Ghost presses never start drags; dismissal lives in the context menu.
+    private var pendingArrival: ArrivalOffer?
     /// The row pressed at mouse-down — a pending drag that becomes either an in-shelf
     /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
     private var dragItem: StoredItem?
     private var dragStartPoint: NSPoint = .zero
-    /// A click on one member of a multi-selection preserves it for a possible drag,
-    /// then collapses to that row if the mouse is released without dragging.
-    private var collapseSelectionOnMouseUp = false
     /// True once a reorder is underway (rows live-shuffle a preview order).
     private var reorderActive = false
     /// Item order captured at the start of a reorder, used to recompute the preview.
@@ -82,6 +86,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
+    /// Called when the user clicks a recent-arrival ghost row; the controller moves the
+    /// file onto the shelf as a real item.
+    var onAdoptArrival: ((ArrivalOffer) -> Void)?
+
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
 
@@ -109,17 +117,19 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onShelfDragBegan: (() -> Void)?
     var onShelfDragEnded: (() -> Void)?
 
-    init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger) {
+    init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger, arrivals: RecentArrivals) {
         self.store = store
         self.themeStore = themeStore
         self.ledger = ledger
+        self.arrivals = arrivals
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
                 themeStore: themeStore,
                 interaction: interaction,
                 thumbnails: thumbnails,
-                ledger: ledger
+                ledger: ledger,
+                arrivals: arrivals
             )
         )
         super.init(frame: .zero)
@@ -152,6 +162,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction: interaction,
             thumbnails: thumbnails,
             ledger: ledger,
+            arrivals: arrivals,
             onContentHeight: { [weak self] height in
                 self?.measuredContentHeight = height
                 self?.onContentHeight?(height)
@@ -241,11 +252,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     override func mouseMoved(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         interaction.hoveredItemID = item(at: point)?.id
+        interaction.hoveredArrivalID = arrivalIndex(at: point).map { ghostOffers[$0].id }
         updateGrabberHover(at: point)
     }
 
     override func mouseExited(with event: NSEvent) {
         interaction.hoveredItemID = nil
+        interaction.hoveredArrivalID = nil
         guard !shelfDragActive else { return }
         if interaction.isGrabberHovered {
             interaction.isGrabberHovered = false
@@ -282,6 +295,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
 
+        // A press on a ghost row arms an adopt click and nothing
+        // else — ghosts don't drag, and the press must not fall through to the
+        // empty-tile dismiss or a card drag.
+        if let ghostIndex = arrivalIndex(at: point) {
+            pendingArrival = ghostOffers[ghostIndex]
+            dragStartPoint = point
+            return
+        }
+
         dragItem = item(at: point)
         if let item = dragItem {
             if event.modifierFlags.contains(.shift) {
@@ -291,12 +313,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 } else {
                     interaction.selectedItemIDs.insert(item.id)
                 }
-            } else if interaction.selectedItemIDs.contains(item.id), interaction.selectedItemIDs.count > 1 {
-                collapseSelectionOnMouseUp = true
             } else {
-                interaction.selectedItemIDs = [item.id]
+                // A normal press acts on this row without selecting it. Selection is
+                // reserved for explicit Shift-click batches.
+                interaction.selectedItemIDs.removeAll()
             }
-        } else if !event.modifierFlags.contains(.shift) {
+        } else {
             interaction.selectedItemIDs.removeAll()
         }
         dragStartPoint = point
@@ -304,8 +326,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseDragged(with event: NSEvent) {
-        // A press that started on a delete button must not turn into a drag.
-        guard pendingDeleteItem == nil, !vendStarted else { return }
+        // A press that started on a delete button or a ghost row must not turn into a drag.
+        guard pendingDeleteItem == nil, pendingArrival == nil, !vendStarted else { return }
         guard let item = dragItem else {
             // The press landed on the card's background (padding, row gaps, or the
             // empty tile) — a drag there moves the whole card (drag-to-pin).
@@ -335,6 +357,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseUp(with event: NSEvent) {
+        if let offer = pendingArrival {
+            pendingArrival = nil
+            let point = convert(event.locationInWindow, from: nil)
+            if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) < 6,
+               let index = arrivalIndex(at: point),
+               ghostOffers[index].id == offer.id {
+                NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                onAdoptArrival?(offer)
+            }
+            resetDragState()
+            return
+        }
         if let item = pendingDeleteItem {
             pendingDeleteItem = nil
             let point = convert(event.locationInWindow, from: nil)
@@ -344,14 +378,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                deleteHitRect(forRow: index).contains(point) {
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
-                removeWithBounce(item, returnToOrigin: true)
+                removeWithBounce(actionItems(for: item), returnToOrigin: true)
             }
         } else if reorderActive {
             commitReorder()
         } else if shelfDragActive {
             onShelfDragEnded?()
-        } else if collapseSelectionOnMouseUp, let item = dragItem {
-            interaction.selectedItemIDs = [item.id]
         } else if isFreeMode, store.items.isEmpty {
             // A plain tap (no drag) on the empty tile body dismisses it — but not on
             // the grab handle, which is a drag affordance, not a close button.
@@ -472,10 +504,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private func resetDragState() {
         dragItem = nil
+        pendingArrival = nil
         reorderActive = false
         vendStarted = false
         shelfDragActive = false
-        collapseSelectionOnMouseUp = false
         reorderBaseOrder = []
         interaction.draggingItemID = nil
         interaction.previewOrder = nil
@@ -550,6 +582,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func deleteHitRect(forRow index: Int) -> NSRect {
         let theme = themeStore.theme
         let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
+        return trailingButtonHitRect(rowTop: rowTop)
+    }
+
+    /// A trailing ✕ button's enlarged hit rect for a row whose top edge (pre-scroll)
+    /// is `rowTop` — shared by the item rows' delete and the ghosts' dismiss.
+    private func trailingButtonHitRect(rowTop: CGFloat) -> NSRect {
+        let theme = themeStore.theme
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
         let centerX = bounds.width - theme.contentPadding
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
@@ -557,15 +596,51 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
     }
 
+    // MARK: Recent-arrival ghosts (hit math mirrors ShelfContentView's placements)
+
+    /// The ghost rows as currently rendered (hidden while a system drag is in flight).
+    private var ghostOffers: [ArrivalOffer] {
+        arrivals.suppressed ? [] : arrivals.offers
+    }
+
+    /// The top edge (pre-scroll, view coords) of ghost row `index`. On a populated
+    /// shelf the ghosts continue below the real rows; on an empty shelf they replace
+    /// the drop tile and use the same outer padding as a normal row stack.
+    private func ghostRowTop(_ index: Int) -> CGFloat {
+        let theme = themeStore.theme
+        let pitch = theme.rowHeight + theme.rowSpacing
+        if store.items.isEmpty {
+            return contentTopOffset + theme.contentPadding + CGFloat(index) * pitch
+        }
+        return contentTopOffset + rowsTopInset + CGFloat(visibleItems.count + index) * pitch
+    }
+
+    /// The index of the ghost row under `point`, or nil.
+    private func arrivalIndex(at point: NSPoint) -> Int? {
+        let ghosts = ghostOffers
+        guard !ghosts.isEmpty else { return nil }
+        let theme = themeStore.theme
+        let pitch = theme.rowHeight + theme.rowSpacing
+        let y = point.y + contentScrollOffsetY() - ghostRowTop(0)
+        guard y >= 0 else { return nil }
+        let index = Int(y / pitch)
+        guard index < ghosts.count,
+              y - CGFloat(index) * pitch <= theme.rowHeight else { return nil }
+        return index
+    }
+
     /// Delete with a small affirmative bounce: a haptic tick and a quick pop of the row
     /// (spring scale-up), then the actual removal shrinks it away a beat later.
-    private func removeWithBounce(_ item: StoredItem, returnToOrigin: Bool) {
+    private func removeWithBounce(_ items: [StoredItem], returnToOrigin: Bool) {
+        guard !items.isEmpty else { return }
+        let itemIDs = Set(items.map(\.id))
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-        interaction.deletingItemID = item.id
+        interaction.deletingItemIDs = itemIDs
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(110))
             guard let self else { return }
-            let emptiesShelf = self.store.items.count == 1 && self.store.items.first?.id == item.id
+            let emptiesShelf = !self.store.items.isEmpty
+                && self.store.items.allSatisfy { itemIDs.contains($0.id) }
             if emptiesShelf {
                 // Hide the card with the row still aboard, then swap to the empty state
                 // off-screen — no flash of the empty tray between bounce and dismissal.
@@ -573,14 +648,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 try? await Task.sleep(for: .milliseconds(200))
             }
             if returnToOrigin {
-                self.store.returnToOrigin(item)
+                self.store.returnToOrigin(items)
             } else {
-                self.store.remove(item)
+                self.store.remove(items)
             }
-            self.interaction.selectedItemIDs.remove(item.id)
-            if self.interaction.deletingItemID == item.id {
-                self.interaction.deletingItemID = nil
-            }
+            self.interaction.selectedItemIDs.subtract(itemIDs)
+            self.interaction.deletingItemIDs.subtract(itemIDs)
             guard !emptiesShelf else { return }
             // The next row slides up under the stationary cursor; re-derive hover so it
             // doesn't keep pointing at the removed item until the mouse moves.
@@ -589,6 +662,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 self.interaction.hoveredItemID = self.item(at: point)?.id
             }
         }
+    }
+
+    /// A row action applies to the whole selection when its target is selected;
+    /// otherwise it remains a single-row action.
+    private func actionItems(for target: StoredItem) -> [StoredItem] {
+        guard interaction.selectedItemIDs.contains(target.id) else { return [target] }
+        return store.items.filter { interaction.selectedItemIDs.contains($0.id) }
     }
 
     /// SwiftUI's `ScrollView` is backed by an `NSScrollView`; when the list overflows the
@@ -634,8 +714,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// shelf hides so stale state doesn't carry into the next reveal).
     func resetInteraction() {
         interaction.hoveredItemID = nil
+        interaction.hoveredArrivalID = nil
         interaction.isGrabberHovered = false
         interaction.selectedItemIDs.removeAll()
+        interaction.deletingItemIDs.removeAll()
         pendingDeleteItem = nil
         resetDragState()
     }
@@ -647,39 +729,68 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let menu = NSMenu()
         menu.delegate = self
 
-        if let item = item(at: point) {
+        if let ghostIndex = arrivalIndex(at: point) {
+            menuTargetItem = nil
+            menuTargetArrival = ghostOffers[ghostIndex]
+            interaction.selectedItemIDs.removeAll()
+
+            let dismiss = NSMenuItem(
+                title: "Dismiss",
+                action: #selector(dismissArrivalMenuAction(_:)),
+                keyEquivalent: ""
+            )
+            dismiss.target = self
+            menu.addItem(dismiss)
+            menu.addItem(.separator())
+        } else if let item = item(at: point) {
+            menuTargetArrival = nil
+            // A context click outside the Shift-selection targets only this row.
+            if !interaction.selectedItemIDs.contains(item.id) {
+                interaction.selectedItemIDs.removeAll()
+            }
             menuTargetItem = item
+            let targets = actionItems(for: item)
 
             let quickLook = NSMenuItem(
-                title: "Quick Look",
+                title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
                 action: #selector(quickLookMenuAction(_:)),
                 keyEquivalent: ""
             )
             quickLook.target = self
-            quickLook.isEnabled = !previewableURLs(for: item).isEmpty
+            quickLook.isEnabled = targets.contains { !previewableURLs(for: $0).isEmpty }
             menu.addItem(quickLook)
 
             let delete = NSMenuItem(
-                title: "Delete",
+                title: targets.count > 1 ? "Delete \(targets.count) Items" : "Delete",
                 action: #selector(deleteMenuAction(_:)),
                 keyEquivalent: ""
             )
             delete.target = self
             menu.addItem(delete)
 
+            let returnItems = NSMenuItem(
+                title: targets.count > 1 ? "Return \(targets.count) Items" : "Return",
+                action: #selector(returnMenuAction(_:)),
+                keyEquivalent: ""
+            )
+            returnItems.target = self
+            menu.addItem(returnItems)
+
             menu.addItem(.separator())
         } else {
             menuTargetItem = nil
+            menuTargetArrival = nil
+            interaction.selectedItemIDs.removeAll()
         }
 
-        let clearAll = NSMenuItem(
-            title: "Clear All",
-            action: #selector(clearAllMenuAction(_:)),
+        let returnAll = NSMenuItem(
+            title: "Return All",
+            action: #selector(returnAllMenuAction(_:)),
             keyEquivalent: ""
         )
-        clearAll.target = self
-        clearAll.isEnabled = !store.items.isEmpty
-        menu.addItem(clearAll)
+        returnAll.target = self
+        returnAll.isEnabled = !store.items.isEmpty
+        menu.addItem(returnAll)
 
         let history = NSMenuItem(
             title: "History",
@@ -761,18 +872,30 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }
-        removeWithBounce(item, returnToOrigin: false)
+        removeWithBounce(actionItems(for: item), returnToOrigin: false)
         menuTargetItem = nil
     }
 
-    @objc private func clearAllMenuAction(_ sender: NSMenuItem) {
-        store.clearAll()
+    @objc private func returnMenuAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        removeWithBounce(actionItems(for: item), returnToOrigin: true)
+        menuTargetItem = nil
+    }
+
+    @objc private func dismissArrivalMenuAction(_ sender: NSMenuItem) {
+        guard let offer = menuTargetArrival else { return }
+        arrivals.dismiss(offer)
+        menuTargetArrival = nil
+    }
+
+    @objc private func returnAllMenuAction(_ sender: NSMenuItem) {
+        store.returnToOrigin(store.items)
         menuTargetItem = nil
     }
 
     @objc private func quickLookMenuAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }
-        presentQuickLook(for: item)
+        presentQuickLook(for: actionItems(for: item))
     }
 
     // MARK: - Quick Look
@@ -781,8 +904,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         item.backingFileURLs().filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    private func presentQuickLook(for item: StoredItem) {
-        let urls = previewableURLs(for: item)
+    private func presentQuickLook(for items: [StoredItem]) {
+        let urls = items.flatMap(previewableURLs)
         guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
 
         quickLookURLs = urls

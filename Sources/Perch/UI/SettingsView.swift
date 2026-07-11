@@ -106,6 +106,7 @@ struct BehaviorSettingsPane: View {
     @AppStorage(ShelfHostView.revealOnDragStartKey) private var revealOnDragStart = true
     @AppStorage(ShelfHostView.keepEmptyShelfKey) private var keepEmptyShelf = true
     @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
+    @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
 
     var body: some View {
         Form {
@@ -156,6 +157,22 @@ struct BehaviorSettingsPane: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .fixedSize()
+                }
+                .padding(.vertical, 2)
+            }
+
+            Section {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Offer recent downloads")
+                        Text("Files that just landed in Downloads or on the Desktop appear as dimmed rows — click one to bring it aboard.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("Offer recent downloads", isOn: $offerRecentArrivals)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
                 }
                 .padding(.vertical, 2)
             }

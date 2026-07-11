@@ -15,6 +15,11 @@ final class ItemStore: ObservableObject {
     private var justAddedClearTask: Task<Void, Never>?
     private var retireDeletionTasks: [UUID: Task<Void, Never>] = [:]
 
+    /// Fired with the URLs a return-to-origin actually restored, so the controller can
+    /// silence them as recent-arrival offers (the shelf must never offer back a file
+    /// the user just put down).
+    var onFilesRestored: (([URL]) -> Void)?
+
     init(holding: HoldingDirectory) {
         self.holding = holding
     }
@@ -73,8 +78,18 @@ final class ItemStore: ObservableObject {
     /// URLs successfully restored.
     @discardableResult
     func returnToOrigin(_ item: StoredItem) -> [URL] {
-        let restored = restoreBackingFiles(of: item)
-        remove(item)
+        return returnToOrigin([item])
+    }
+
+    /// Return a selection as one store mutation so observers never see partially
+    /// removed batches and resize the shelf once per row.
+    @discardableResult
+    func returnToOrigin(_ items: [StoredItem]) -> [URL] {
+        let restored = items.flatMap(restoreBackingFiles)
+        remove(items)
+        if !restored.isEmpty {
+            onFilesRestored?(restored)
+        }
         return restored
     }
 
@@ -173,32 +188,24 @@ final class ItemStore: ObservableObject {
 
     /// Remove an item and delete its `items/<uuid>/` directory.
     func remove(_ item: StoredItem) {
-        items.removeAll { $0.id == item.id }
-
-        do {
-            try FileManager.default.removeItem(at: item.directoryURL)
-        } catch CocoaError.fileNoSuchFile {
-            // Already absent; the in-memory order and index still need to be updated.
-        } catch {
-            NSLog("Perch failed to remove item directory \(item.directoryURL.path): \(error)")
-        }
-
-        persistIndexOrLogFailure()
+        remove([item])
     }
 
-    /// Remove every item and delete all `items/<uuid>/` directories.
-    func clearAll() {
-        for item in items {
+    /// Permanently remove several items in one published update.
+    func remove(_ removedItems: [StoredItem]) {
+        let removedIDs = Set(removedItems.map(\.id))
+        items.removeAll { removedIDs.contains($0.id) }
+
+        for item in removedItems {
             do {
                 try FileManager.default.removeItem(at: item.directoryURL)
             } catch CocoaError.fileNoSuchFile {
-                // Already absent; continue.
+                // Already absent; the in-memory order and index still need updating.
             } catch {
                 NSLog("Perch failed to remove item directory \(item.directoryURL.path): \(error)")
             }
         }
 
-        items.removeAll()
         persistIndexOrLogFailure()
     }
 

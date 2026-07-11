@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Darwin
+import UniformTypeIdentifiers
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
 @MainActor
@@ -18,6 +19,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let hostView: ShelfHostView
     private let themeStore = ThemeStore()
     private let edgeSettings = EdgeSettings()
+    /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
+    private let arrivals = RecentArrivals()
     private var edgeStrips: [EdgeStripWindow] = []
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
@@ -82,6 +85,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var labelsCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
+    private var arrivalsCancellable: AnyCancellable?
+    /// Coalesces the several writes/renames produced by one browser download.
+    private var arrivalRefreshTask: Task<Void, Never>?
+    /// A shelf opened only to advertise a new arrival goes away again after a short
+    /// glance; adopting, pinning, locking, or hovering it hands control to normal UI.
+    private var arrivalAutoHideTask: Task<Void, Never>?
 
     /// Where the shelf is currently anchored: docked to a screen edge, or free-floating
     /// at the cursor (shake-to-summon). The two coexist on the same panel.
@@ -125,7 +134,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore, ledger: ledger)
+        hostView = ShelfHostView(store: store, themeStore: themeStore, ledger: ledger, arrivals: arrivals)
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -210,6 +219,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
+        }
+
+        // Clicking a recent-arrival ghost brings the file aboard as a real item.
+        hostView.onAdoptArrival = { [weak self] offer in
+            self?.adoptArrival(offer)
+        }
+
+        // A file put back where it came from must not bounce straight back as an offer.
+        store.onFilesRestored = { [weak self] urls in
+            self?.arrivals.excludePermanently(urls.map(\.path))
         }
 
         // Appearance settings preview: pop the real shelf out beside the settings
@@ -299,6 +318,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         mouseMonitor.start()
 
+        arrivals.startWatching { [weak self] in
+            self?.arrivalDirectoryDidChange()
+        }
+
         // Keep a dragged free shelf's chosen position: when the user moves the panel via
         // the grab handle, remember its new top-left so content resizes grow from there.
         windowMoveObserver = NotificationCenter.default.addObserver(
@@ -377,6 +400,136 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] shows in
                 self?.panel.hasShadow = shows
             }
+
+        // Ghost rows appearing/leaving change the card's height (and, when empty, its
+        // width). Same willSet/next-pass dance as the toggles above.
+        arrivalsCancellable = arrivals.$offers
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
+            }
+    }
+
+    // MARK: Recent arrivals (ghost rows)
+
+    /// Re-scan the watched folders for offerable files. Called on each fresh reveal
+    /// (`markRevealed` spends one of every shown file's limited offer chances) and after
+    /// mutations that change what should be offered.
+    private func refreshArrivals(markRevealed: Bool = false) {
+        arrivals.refresh(excluding: arrivalExclusions(), markRevealed: markRevealed)
+    }
+
+    /// A watched folder changed. Wait for Chrome's temporary download + rename burst
+    /// to settle, then update a visible shelf or briefly reveal a hidden one.
+    private func arrivalDirectoryDidChange() {
+        arrivalRefreshTask?.cancel()
+        arrivalRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(700))
+            guard let self, !Task.isCancelled else { return }
+
+            let previousIDs = Set(self.arrivals.offers.map(\.id))
+            self.refreshArrivals()
+            let newIDs = Set(self.arrivals.offers.map(\.id)).subtracting(previousIDs)
+            guard !newIDs.isEmpty else { return }
+
+            if self.panel.isVisible {
+                // Includes locked free shelves: they never re-enter a reveal path, so
+                // the watcher is what makes their ghost rows appear and resize in place.
+                self.resizeToFitVisible()
+                return
+            }
+
+            self.refreshArrivals(markRevealed: true)
+            guard !self.arrivals.offers.isEmpty else { return }
+            self.revealAtPreferredEdge()
+            self.scheduleArrivalAutoHide()
+        }
+    }
+
+    private func scheduleArrivalAutoHide() {
+        arrivalAutoHideTask?.cancel()
+        arrivalAutoHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard let self, !Task.isCancelled else { return }
+            guard self.panel.isVisible,
+                  self.revealMode == .edge,
+                  self.store.items.isEmpty,
+                  !self.pointerInRegion,
+                  !self.hostView.isContextMenuOpen
+            else { return }
+            self.hideShelf(animated: true)
+            self.arrivalAutoHideTask = nil
+        }
+    }
+
+    /// Paths the shelf must never offer: files Perch itself recently vended into a
+    /// folder (ledger destinations), and the recorded origins of items currently
+    /// aboard (a copy-fallback stash leaves the original in place).
+    private func arrivalExclusions() -> Set<String> {
+        var excluded = Set<String>()
+        let cutoff = Date().addingTimeInterval(-RecentArrivals.window - 60)
+        for entry in ledger.entries where entry.vendedAt > cutoff {
+            excluded.insert(entry.destination)
+        }
+        for item in store.items {
+            guard let origins = item.metadata.originPaths else { continue }
+            excluded.formUnion(origins.values)
+        }
+        return excluded
+    }
+
+    /// Bring an offered file aboard: move it into a fresh item directory (Finder-drop
+    /// semantics — ownership moves, origin recorded so ✕ can put it back; copy fallback
+    /// if the move is refused) and insert the item at the front.
+    private func adoptArrival(_ offer: ArrivalOffer) {
+        let fileManager = FileManager.default
+        guard fileManager.fileExists(atPath: offer.url.path) else {
+            refreshArrivals()
+            return
+        }
+
+        let directory = store.newItemDirectory()
+        let filesDir = directory.url.appendingPathComponent("files", isDirectory: true)
+        let destination = filesDir.appendingPathComponent(offer.name, isDirectory: false)
+        var originPaths: [String: String]? = [offer.name: offer.url.path]
+        do {
+            do {
+                try fileManager.moveItem(at: offer.url, to: destination)
+            } catch {
+                NSLog("Perch could not move arrival \(offer.url.path) (\(error)); copying instead")
+                try fileManager.copyItem(at: offer.url, to: destination)
+                originPaths = nil
+            }
+        } catch {
+            NSLog("Perch failed to adopt arrival \(offer.url.path): \(error)")
+            try? fileManager.removeItem(at: directory.url)
+            return
+        }
+
+        let contentType = (try? destination.resourceValues(forKeys: [.contentTypeKey]).contentType)
+            ?? UTType(filenameExtension: destination.pathExtension)
+        let metadata = ItemMetadata(
+            id: directory.id,
+            createdAt: Date(),
+            title: offer.name,
+            representations: [],
+            backingFileNames: [offer.name],
+            primaryFileType: contentType?.identifier,
+            originPaths: originPaths
+        )
+        let metaURL = directory.url.appendingPathComponent("meta.json", isDirectory: false)
+        do {
+            try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
+        } catch {
+            NSLog("Perch failed to persist adopted arrival metadata: \(error)")
+        }
+
+        store.insert(StoredItem(metadata: metadata, directoryURL: directory.url), at: nil)
+        // The copy-fallback case leaves the original in the folder; the origin-path
+        // exclusion keeps it from being re-offered.
+        refreshArrivals()
+        NSLog("Perch adopted arrival \(offer.name)")
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -546,6 +699,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func setDragActive(_ active: Bool) {
         dragActive = active
+        // Ghost rows hide for the drag's duration so the drop geometry never shifts
+        // under the cursor.
+        arrivals.suppressed = active
         if store.items.isEmpty {
             measuredContentHeight = nil
         }
@@ -619,6 +775,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
         // A deliberate summon adopts any preview shelf (the settings closure re-flags).
         shelfIsSettingsPreview = false
+        if !panel.isVisible {
+            refreshArrivals(markRevealed: true)
+        }
         let screen = NSScreen.screens.first(where: { $0.frame.contains(point) })
             ?? NSScreen.main ?? NSScreen.screens.first
         summonScreen = screen
@@ -911,7 +1070,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// just wide enough for an icon; once it holds items *and* names are shown it grows to
     /// a comfortable list width.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
-        if store.items.isEmpty {
+        // An empty shelf showing ghost rows needs the full list width for their names.
+        let showsGhosts = !arrivals.suppressed && !arrivals.offers.isEmpty
+        if store.items.isEmpty && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }
         guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
@@ -1229,6 +1390,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         cancelRetract()
         startRetractWatcher()
         guard !panel.isVisible else { return }
+        refreshArrivals(markRevealed: true)
         revealAtPreferredEdge()
     }
 
