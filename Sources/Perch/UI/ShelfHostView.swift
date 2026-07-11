@@ -30,6 +30,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
     private var dragItem: StoredItem?
     private var dragStartPoint: NSPoint = .zero
+    /// A click on one member of a multi-selection preserves it for a possible drag,
+    /// then collapses to that row if the mouse is released without dragging.
+    private var collapseSelectionOnMouseUp = false
     /// True once a reorder is underway (rows live-shuffle a preview order).
     private var reorderActive = false
     /// Item order captured at the start of a reorder, used to recompute the preview.
@@ -280,6 +283,22 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         dragItem = item(at: point)
+        if let item = dragItem {
+            if event.modifierFlags.contains(.shift) {
+                if interaction.selectedItemIDs.contains(item.id) {
+                    interaction.selectedItemIDs.remove(item.id)
+                    dragItem = nil
+                } else {
+                    interaction.selectedItemIDs.insert(item.id)
+                }
+            } else if interaction.selectedItemIDs.contains(item.id), interaction.selectedItemIDs.count > 1 {
+                collapseSelectionOnMouseUp = true
+            } else {
+                interaction.selectedItemIDs = [item.id]
+            }
+        } else if !event.modifierFlags.contains(.shift) {
+            interaction.selectedItemIDs.removeAll()
+        }
         dragStartPoint = point
         shelfDragScreenStart = NSEvent.mouseLocation
     }
@@ -331,6 +350,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             commitReorder()
         } else if shelfDragActive {
             onShelfDragEnded?()
+        } else if collapseSelectionOnMouseUp, let item = dragItem {
+            interaction.selectedItemIDs = [item.id]
         } else if isFreeMode, store.items.isEmpty {
             // A plain tap (no drag) on the empty tile body dismisses it — but not on
             // the grab handle, which is a drag affordance, not a close button.
@@ -383,22 +404,26 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
+        let items = interaction.selectedItemIDs.contains(item.id)
+            ? store.items.filter { interaction.selectedItemIDs.contains($0.id) }
+            : [item]
+        let itemIDs = Set(items.map(\.id))
         // Move semantics: the row leaves the shelf with the drag — the item is "in the
         // cursor's hand", not cloned. If the drag ends nowhere valid, the system ghost
         // slides back and the row reappears. Copy mode keeps the original visible.
         let isMove = !vendCopies
         if isMove {
-            interaction.vendingItemID = item.id
+            interaction.vendingItemIDs = itemIDs
         }
-        let dragSource = ItemDragSource(item: item)
+        let dragSource = ItemDragSource(items: items)
         let ledger = ledger
         dragSource.recordVend = { entry in
             Task { @MainActor in ledger.record(entry) }
         }
         dragSource.onWriteFailed = { [weak self] in
             Task { @MainActor in
-                NSLog("Perch vend delivery failed; restoring item \(item.id.uuidString) to shelf")
-                self?.store.unretire(item)
+                NSLog("Perch multi-item vend delivery failed; restoring selection to shelf")
+                for item in items { self?.store.unretire(item) }
             }
         }
         dragSource.onEnded = { [weak self] operation in
@@ -409,23 +434,20 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 // No drop landed: put the row back on its perch, exactly as it was.
                 // (endedAt fires after the ghost's slide-back animation completes, so
                 // the row fades in right as the ghost arrives.)
-                if self.interaction.vendingItemID == item.id {
-                    self.interaction.vendingItemID = nil
-                }
+                self.interaction.vendingItemIDs.removeAll()
                 return
             }
             // The item landed somewhere: retire it — the row leaves the shelf now, but
             // the backing directory stays on disk for a grace period. Destinations read
             // the vended file URL (or call in the promise) asynchronously, sometimes
             // seconds after the drop; deleting eagerly made the drop silently vanish.
-            self.store.retire(item)
-            if self.interaction.vendingItemID == item.id {
-                self.interaction.vendingItemID = nil
-            }
+            for item in items { self.store.retire(item) }
+            self.interaction.vendingItemIDs.removeAll()
+            self.interaction.selectedItemIDs.subtract(itemIDs)
         }
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
-        NSLog("Perch row drag (vend) started for item \(item.id.uuidString)")
+        NSLog("Perch row drag (vend) started for \(items.count) item(s)")
     }
 
     /// Track a background drag of the whole card: past a small slop the window follows
@@ -453,6 +475,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         reorderActive = false
         vendStarted = false
         shelfDragActive = false
+        collapseSelectionOnMouseUp = false
         reorderBaseOrder = []
         interaction.draggingItemID = nil
         interaction.previewOrder = nil
@@ -461,8 +484,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// The items as currently rendered: a row vended out in a move-mode drag is hidden
     /// until the drag resolves, so hit-testing must skip it too.
     private var visibleItems: [StoredItem] {
-        guard let vendingID = interaction.vendingItemID else { return store.items }
-        return store.items.filter { $0.id != vendingID }
+        store.items.filter { !interaction.vendingItemIDs.contains($0.id) }
     }
 
     private func item(at point: NSPoint) -> StoredItem? {
@@ -555,6 +577,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             } else {
                 self.store.remove(item)
             }
+            self.interaction.selectedItemIDs.remove(item.id)
             if self.interaction.deletingItemID == item.id {
                 self.interaction.deletingItemID = nil
             }
@@ -612,6 +635,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     func resetInteraction() {
         interaction.hoveredItemID = nil
         interaction.isGrabberHovered = false
+        interaction.selectedItemIDs.removeAll()
         pendingDeleteItem = nil
         resetDragState()
     }

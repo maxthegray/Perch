@@ -10,70 +10,103 @@ struct PasteboardSnapshotter {
     func snapshot(
         _ pasteboard: NSPasteboard,
         into store: ItemStore
-    ) throws -> (item: StoredItem, pendingPromises: [NSFilePromiseReceiver]) {
-        let directory = store.newItemDirectory()
-        let expectedDirectoryURL = holding.itemDir(directory.id)
-        guard directory.url == expectedDirectoryURL else {
-            throw PasteboardSnapshotError.holdingMismatch(
-                snapshotterURL: expectedDirectoryURL,
-                storeURL: directory.url
-            )
-        }
+    ) throws -> [(item: StoredItem, pendingPromises: [NSFilePromiseReceiver])] {
+        let pasteboardItems = pasteboard.pasteboardItems ?? []
+        guard !pasteboardItems.isEmpty else { throw PasteboardSnapshotError.noItems }
 
-        do {
-            let result = try snapshotPasteboardItems(
-                pasteboard.pasteboardItems ?? [],
-                pasteboard: pasteboard,
-                id: directory.id,
-                directoryURL: directory.url
-            )
-            if result.pendingPromises.isEmpty {
-                store.insert(result.item, at: nil)
-            }
-            return result
-        } catch {
-            try? FileManager.default.removeItem(at: directory.url)
-            throw error
-        }
-    }
-
-    private func snapshotPasteboardItems(
-        _ pasteboardItems: [NSPasteboardItem],
-        pasteboard: NSPasteboard,
-        id: UUID,
-        directoryURL: URL
-    ) throws -> (item: StoredItem, pendingPromises: [NSFilePromiseReceiver]) {
-        let fileManager = FileManager.default
-        let repsDir = directoryURL.appendingPathComponent("reps", isDirectory: true)
-        let filesDir = directoryURL.appendingPathComponent("files", isDirectory: true)
-        let promiseTypeIdentifiers = Set(NSFilePromiseReceiver.readableDraggedTypes)
-        let pendingPromises = pasteboard.readObjects(
+        // Finder supplies file data lazily. Capture every representation before moving
+        // any source file; moving the first selected file can otherwise invalidate data
+        // that Finder has not supplied for the remaining selection yet.
+        let capturedItems = try pasteboardItems.map(capture)
+        let receivers = pasteboard.readObjects(
             forClasses: [NSFilePromiseReceiver.self],
             options: nil
         ) as? [NSFilePromiseReceiver] ?? []
 
+        // Promise receivers cannot reliably be matched back to individual pasteboard
+        // items, so retain the historical grouped behavior for promise-based drops.
+        // Concrete Finder selections become one shelf row per selected file/item.
+        let groups = receivers.isEmpty ? capturedItems.map { [$0] } : [capturedItems]
+        var results: [(item: StoredItem, pendingPromises: [NSFilePromiseReceiver])] = []
+        var createdDirectories: [URL] = []
+
+        do {
+            for group in groups {
+                let directory = store.newItemDirectory()
+                createdDirectories.append(directory.url)
+                let expectedDirectoryURL = holding.itemDir(directory.id)
+                guard directory.url == expectedDirectoryURL else {
+                    throw PasteboardSnapshotError.holdingMismatch(
+                        snapshotterURL: expectedDirectoryURL,
+                        storeURL: directory.url
+                    )
+                }
+                let item = try writeSnapshot(group, id: directory.id, directoryURL: directory.url)
+                results.append((item, receivers))
+            }
+
+            if receivers.isEmpty {
+                // insert-at-front reverses its input, so insert backwards to preserve
+                // Finder's selection order on the shelf.
+                for result in results.reversed() { store.insert(result.item, at: nil) }
+            }
+            return results
+        } catch {
+            for directory in createdDirectories { try? FileManager.default.removeItem(at: directory) }
+            throw error
+        }
+    }
+
+    private struct CapturedItem {
+        let representations: [(type: NSPasteboard.PasteboardType, data: Data?, isPromise: Bool)]
+        let stringTitle: String?
+    }
+
+    private func capture(_ pasteboardItem: NSPasteboardItem) throws -> CapturedItem {
+        let promiseTypes = Set(NSFilePromiseReceiver.readableDraggedTypes)
+        var representations: [(NSPasteboard.PasteboardType, Data?, Bool)] = []
+
+        for type in pasteboardItem.types where !type.isContextBoundSourceType {
+            if promiseTypes.contains(type.rawValue) {
+                representations.append((type, nil, true))
+            } else if let data = pasteboardItem.data(forType: type) {
+                representations.append((type, data, false))
+            } else {
+                throw PasteboardSnapshotError.missingData(type.rawValue)
+            }
+        }
+
+        let title = pasteboardItem.string(forType: .string)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return CapturedItem(
+            representations: representations,
+            stringTitle: title?.isEmpty == false ? title : nil
+        )
+    }
+
+    private func writeSnapshot(
+        _ capturedItems: [CapturedItem],
+        id: UUID,
+        directoryURL: URL
+    ) throws -> StoredItem {
+        let fileManager = FileManager.default
+        let repsDir = directoryURL.appendingPathComponent("reps", isDirectory: true)
+        let filesDir = directoryURL.appendingPathComponent("files", isDirectory: true)
         var representations: [RepRecord] = []
         var backingFileNames: [String] = []
         var originPaths: [String: String] = [:]
         var stringTitle: String?
         var repIndex = 0
 
-        for pasteboardItem in pasteboardItems {
-            if stringTitle == nil,
-               let title = pasteboardItem.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines),
-               !title.isEmpty {
-                stringTitle = title
-            }
+        for capturedItem in capturedItems {
+            if stringTitle == nil { stringTitle = capturedItem.stringTitle }
 
-            for type in pasteboardItem.types {
-                if type.isContextBoundSourceType {
-                    continue
-                }
-
+            for captured in capturedItem.representations {
+                let type = captured.type
                 let fileName = "rep-\(repIndex).dat"
                 repIndex += 1
 
-                if promiseTypeIdentifiers.contains(type.rawValue) {
+                if captured.isPromise {
                     representations.append(
                         RepRecord(
                             typeIdentifier: type.rawValue,
@@ -81,7 +114,7 @@ struct PasteboardSnapshotter {
                             isPromisePlaceholder: true
                         )
                     )
-                } else if let data = pasteboardItem.data(forType: type) {
+                } else if let data = captured.data {
                     let repURL = repsDir.appendingPathComponent(fileName, isDirectory: false)
                     try data.write(to: repURL, options: .atomic)
                     representations.append(
@@ -96,7 +129,7 @@ struct PasteboardSnapshotter {
                 }
 
                 if type == .fileURL {
-                    let sourceURL = try fileURL(from: pasteboardItem, data: pasteboardItem.data(forType: type))
+                    let sourceURL = try fileURL(from: captured.data)
                     let destinationURL = uniqueDestinationURL(
                         for: sourceURL.lastPathComponent,
                         in: filesDir,
@@ -133,19 +166,10 @@ struct PasteboardSnapshotter {
         let metaURL = directoryURL.appendingPathComponent("meta.json", isDirectory: false)
         try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
 
-        return (
-            StoredItem(metadata: metadata, directoryURL: directoryURL),
-            pendingPromises
-        )
+        return StoredItem(metadata: metadata, directoryURL: directoryURL)
     }
 
-    private func fileURL(from pasteboardItem: NSPasteboardItem, data: Data?) throws -> URL {
-        if let string = pasteboardItem.string(forType: .fileURL),
-           let url = URL(string: string),
-           url.isFileURL {
-            return url
-        }
-
+    private func fileURL(from data: Data?) throws -> URL {
         if let data,
            let url = URL(dataRepresentation: data, relativeTo: nil),
            url.isFileURL {
@@ -201,6 +225,7 @@ struct PasteboardSnapshotter {
 }
 
 private enum PasteboardSnapshotError: Error {
+    case noItems
     case holdingMismatch(snapshotterURL: URL, storeURL: URL)
     case invalidFileURL
     case missingData(String)

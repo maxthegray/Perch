@@ -25,6 +25,10 @@ final class ShelfWindowController {
     private static let freeStartScale: CGFloat = 0.9
 
     private var revealedFrame: NSRect
+    /// Invalidates completion of an older frame animation when a newer resize wins.
+    /// AppKit can let an already-running `animator().setFrame` reach its old target even
+    /// after a direct resize, so stale completions must restore the newest target.
+    private var resizeGeneration: UInt = 0
     private var edge: ShelfEdge = .right
     /// When true, hide scales about the card's center (the cursor-summoned shelf's pop).
     var usesFreeAnimation = false
@@ -147,6 +151,8 @@ final class ShelfWindowController {
         duration: CFTimeInterval = 0.26,
         timing: CAMediaTimingFunction? = nil
     ) {
+        resizeGeneration &+= 1
+        let generation = resizeGeneration
         revealedFrame = targetFrame
         guard panel.isVisible else {
             panel.setFrame(targetFrame, display: false)
@@ -164,7 +170,15 @@ final class ShelfWindowController {
             context.timingFunction = timing ?? Self.revealCurve
             panel.animator().setFrame(targetFrame, display: true)
         } completionHandler: { [weak self] in
-            self?.healContentViewShear()
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if generation != self.resizeGeneration, self.panel.frame != self.revealedFrame {
+                    // A newer resize superseded this animation, but AppKit allowed the old
+                    // animation to finish at its stale frame. Reassert the current target.
+                    self.panel.setFrame(self.revealedFrame, display: true)
+                }
+                self.healContentViewShear()
+            }
         }
     }
 

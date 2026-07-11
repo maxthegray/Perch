@@ -178,7 +178,7 @@ struct ShelfContentView: View {
     /// and reappears here if the drag ends nowhere valid.
     private var displayedItems: [StoredItem] {
         (interaction.previewOrder ?? store.items)
-            .filter { $0.id != interaction.vendingItemID }
+            .filter { !interaction.vendingItemIDs.contains($0.id) }
     }
 
     /// An `origin → destination` provenance breadcrumb, using each path's parent folder
@@ -210,6 +210,7 @@ struct ShelfContentView: View {
                     item: item,
                     theme: theme,
                     isHovered: interaction.hoveredItemID == item.id,
+                    isSelected: interaction.selectedItemIDs.contains(item.id),
                     isDragging: interaction.draggingItemID == item.id,
                     isDeleting: interaction.deletingItemID == item.id,
                     thumbnail: thumbnails.thumbnail(for: item),

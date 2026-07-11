@@ -25,6 +25,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var pointerInRegion = false
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
+    /// Internal drops can retire their old row just before the promised replacement is
+    /// inserted. Keep the current frame during that handoff so it never visibly shrinks
+    /// and grows for what is logically the same item returning to the shelf.
+    private var pendingInternalDropReplacements = 0
     /// True when the current drag (in "reveal while dragging" mode) is what opened the
     /// shelf, so it follows the nearest edge during the drag and retracts on drag-end if
     /// nothing was dropped onto it.
@@ -384,15 +388,42 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
-            animateRemovalResize()
+            if pendingInternalDropReplacements == 0 {
+                animateRemovalResize()
+            }
         } else if items.count > previousCount {
             // New content arriving cancels any in-flight removal shrink so the card can
             // grow for it right away.
             endRemovalResize()
+            scheduleInsertionResize()
         }
         guard isEmpty != wasEmpty else { return }
         wasEmpty = isEmpty
         shelfContentDidChange(isEmpty: isEmpty)
+    }
+
+    /// Grow from the exact fixed-row estimate whenever items are inserted. Previously
+    /// insertion growth depended solely on SwiftUI's natural-height preference. If the
+    /// old, shorter viewport briefly turned the row stack into an overflowing ScrollView,
+    /// that preference could remain constrained to the old viewport and never request a
+    /// larger window — leaving (for example) two rows inside a one-row scrolling card.
+    ///
+    /// Drops arrive in the drag event-tracking runloop mode, so perform the frame change
+    /// in the default mode just like measured-height changes. `lastItemCount` has already
+    /// received the new value and `fittedContentHeight()` floors stale measurements at
+    /// its exact per-row estimate.
+    private func scheduleInsertionResize() {
+        RunLoop.main.perform(inModes: [.default]) { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.resizeToFitVisible(animated: false)
+                // The old viewport may have acquired a scroll offset during the brief
+                // overflow. Clamp only after the window has reached its grown frame.
+                RunLoop.main.perform(inModes: [.default]) { [weak self] in
+                    Task { @MainActor in self?.hostView.clampScrollToTopIfContentFits() }
+                }
+            }
+        }
     }
 
     /// The SwiftUI content reported a new natural height — size the visible window to
@@ -734,21 +765,27 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     // MARK: ShelfDropHandling
 
-    func handleDrop(_ pasteboard: NSPasteboard) -> Bool {
+    func handleDrop(_ pasteboard: NSPasteboard, fromPerch: Bool) -> Bool {
         let beforeCount = store.items.count
 
         do {
-            let result = try snapshotter.snapshot(pasteboard, into: store)
+            let results = try snapshotter.snapshot(pasteboard, into: store)
             let afterCount = store.items.count
-            let repTypes = result.item.metadata.representations.map(\.typeIdentifier).joined(separator: ",")
-            let backingFiles = result.item.backingFileURLs().map(\.lastPathComponent).joined(separator: ",")
+            let backingFiles = results.flatMap { $0.item.backingFileURLs() }.map(\.lastPathComponent).joined(separator: ",")
 
             NSLog(
-                "Perch drop stored item \(result.item.id.uuidString); count \(beforeCount)->\(afterCount); reps [\(repTypes)]; files [\(backingFiles)]; pendingPromises \(result.pendingPromises.count)"
+                "Perch drop stored \(results.count) item(s); count \(beforeCount)->\(afterCount); files [\(backingFiles)]"
             )
 
-            if !result.pendingPromises.isEmpty {
-                materializePendingPromises(for: result.item, receivers: result.pendingPromises, initialCount: beforeCount)
+            for result in results where !result.pendingPromises.isEmpty {
+                let preservesHeight = fromPerch
+                if preservesHeight { pendingInternalDropReplacements += 1 }
+                materializePendingPromises(
+                    for: result.item,
+                    receivers: result.pendingPromises,
+                    initialCount: beforeCount,
+                    preservesHeight: preservesHeight
+                )
             }
 
             // Keep the shelf open after a drop (the pointer is over it); it closes
@@ -1251,7 +1288,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func materializePendingPromises(
         for item: StoredItem,
         receivers: [NSFilePromiseReceiver],
-        initialCount: Int
+        initialCount: Int,
+        preservesHeight: Bool
     ) {
         let filesDir = item.directoryURL.appendingPathComponent("files", isDirectory: true)
 
@@ -1266,6 +1304,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                         to: item
                     )
                     self.store.insert(finalItem, at: nil)
+                    self.finishInternalDropReplacement(ifNeeded: preservesHeight, succeeded: true)
 
                     let repTypes = finalItem.metadata.representations.map(\.typeIdentifier).joined(separator: ",")
                     let backingFiles = finalItem.backingFileURLs().map(\.lastPathComponent).joined(separator: ",")
@@ -1275,8 +1314,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 } catch {
                     NSLog("Perch promise materialization failed for item \(item.id.uuidString): \(error)")
                     try? FileManager.default.removeItem(at: item.directoryURL)
+                    self.finishInternalDropReplacement(ifNeeded: preservesHeight, succeeded: false)
                 }
             }
+        }
+    }
+
+    private func finishInternalDropReplacement(ifNeeded needed: Bool, succeeded: Bool) {
+        guard needed else { return }
+        pendingInternalDropReplacements = max(0, pendingInternalDropReplacements - 1)
+        // Success restores the original count before releasing the hold, so no frame
+        // change is needed. On failure, settle smoothly to the genuinely smaller list.
+        if !succeeded, pendingInternalDropReplacements == 0 {
+            resizeToFitVisible(animated: true)
         }
     }
 

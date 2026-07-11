@@ -9,6 +9,8 @@ import Foundation
 @MainActor
 final class RowInteractionState: ObservableObject {
     @Published var hoveredItemID: UUID?
+    /// Rows selected for a multi-item vend. Shift-click toggles membership.
+    @Published var selectedItemIDs: Set<UUID> = []
 
     /// The item currently being dragged to reorder (lifted styling), or nil.
     @Published var draggingItemID: UUID?
@@ -20,7 +22,7 @@ final class RowInteractionState: ObservableObject {
     /// The item currently vended out in a move-mode system drag. Its row is hidden while
     /// the drag is in flight — the item travels with the cursor instead of appearing to
     /// clone — and comes back if the drag ends nowhere valid.
-    @Published var vendingItemID: UUID?
+    @Published var vendingItemIDs: Set<UUID> = []
     /// While a reorder drag is in progress, the live previewed ordering the rows should
     /// render in. Nil when not reordering (rows follow the store's order).
     @Published var previewOrder: [StoredItem]?

@@ -1,13 +1,13 @@
 import AppKit
 
-/// RE-VEND: the concrete `NSDraggingSource` for a stored item (Decisions K, L).
+/// RE-VEND: the concrete `NSDraggingSource` for one or more stored items.
 /// Created and **retained by the host view** for the drag's duration. Pins the
 /// operation mask to `.copy` for file-backed items so the holding-dir master is
 /// never moved or relocated out of the shelf.
 @MainActor
 final class ItemDragSource: NSObject, NSDraggingSource {
-    private let item: StoredItem
-    private var activeWriter: StoredItemDragWriter?
+    private let items: [StoredItem]
+    private var activeWriters: [StoredItemDragWriter] = []
 
     /// Called when the drag session ends, with the operation the destination
     /// performed (empty == no drop). Used to apply move semantics (remove the row
@@ -23,42 +23,41 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// the item isn't silently lost.
     var onWriteFailed: (@Sendable () -> Void)?
 
-    init(item: StoredItem) {
-        self.item = item
+    init(items: [StoredItem]) {
+        precondition(!items.isEmpty)
+        self.items = items
         super.init()
     }
 
     /// Start the session from `view`, with `self` as the dragging source.
     func beginDrag(from view: NSView, event: NSEvent) -> NSDraggingSession {
-        let draggingItem = draggingItem()
+        let draggingItems = self.draggingItems()
         let location = view.convert(event.locationInWindow, from: nil)
-        let frame = NSRect(
-            x: location.x - 24,
-            y: location.y - 24,
-            width: 48,
-            height: 48
-        )
-        draggingItem.setDraggingFrame(frame, contents: item.iconImage())
+        for (index, draggingItem) in draggingItems.enumerated() {
+            let offset = CGFloat(min(index, 4)) * 4
+            draggingItem.setDraggingFrame(
+                NSRect(x: location.x - 24 + offset, y: location.y - 24 - offset, width: 48, height: 48),
+                contents: items[index].iconImage()
+            )
+        }
 
-        return view.beginDraggingSession(with: [draggingItem], event: event, source: self)
+        return view.beginDraggingSession(with: draggingItems, event: event, source: self)
     }
 
-    /// The single dragging item backing this drag (promise-preferred file delivery
-    /// + lazy generic data + convenience file URL — see `StoredItemDragWriter`).
-    func draggingItem() -> NSDraggingItem {
-        let writer = StoredItemDragWriter(
-            item: item,
-            recordVend: recordVend,
-            onWriteFailed: onWriteFailed
-        )
-        activeWriter = writer
-
-        let draggingItem = NSDraggingItem(pasteboardWriter: writer)
-        draggingItem.setDraggingFrame(
-            NSRect(x: 0, y: 0, width: 48, height: 48),
-            contents: item.iconImage()
-        )
-        return draggingItem
+    /// One pasteboard writer per stored item lets Finder and other destinations receive
+    /// the selection as distinct files rather than one compound pasteboard item.
+    func draggingItems() -> [NSDraggingItem] {
+        activeWriters = items.map {
+            StoredItemDragWriter(item: $0, recordVend: recordVend, onWriteFailed: onWriteFailed)
+        }
+        return zip(items, activeWriters).map { item, writer in
+            let draggingItem = NSDraggingItem(pasteboardWriter: writer)
+            draggingItem.setDraggingFrame(
+                NSRect(x: 0, y: 0, width: 48, height: 48),
+                contents: item.iconImage()
+            )
+            return draggingItem
+        }
     }
 
     // MARK: NSDraggingSource

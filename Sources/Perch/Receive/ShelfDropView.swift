@@ -3,7 +3,7 @@ import AppKit
 /// Receives a dropped pasteboard and routes it into the STORE pipeline.
 @MainActor
 protocol ShelfDropHandling: AnyObject {
-    func handleDrop(_ pasteboard: NSPasteboard) -> Bool
+    func handleDrop(_ pasteboard: NSPasteboard, fromPerch: Bool) -> Bool
     /// The pointer (hover or drag) entered the shelf panel's bounds (keep it open).
     func pointerDidEnterShelf()
     /// The pointer left the shelf panel's bounds (retract back to the tab).
@@ -96,7 +96,10 @@ final class ShelfDropView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         // A drop doesn't fire draggingExited, so snap the outline off here.
         dropHandler?.dragOverShelfDidChange(false)
-        let ok = dropHandler?.handleDrop(sender.draggingPasteboard) ?? false
+        let ok = dropHandler?.handleDrop(
+            sender.draggingPasteboard,
+            fromPerch: sender.draggingSource is ItemDragSource
+        ) ?? false
         NSLog("Perch DROPDBG performDragOperation ok=\(ok)")
         return ok
     }

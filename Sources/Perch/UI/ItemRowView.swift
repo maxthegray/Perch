@@ -11,6 +11,7 @@ struct ItemRowView: View {
     let item: StoredItem
     let theme: ShelfTheme
     let isHovered: Bool
+    let isSelected: Bool
     /// Whether this row is the one being dragged to reorder (lifted styling).
     let isDragging: Bool
     /// Whether this row is mid-delete: it pops up slightly (affirmative bounce) just
@@ -61,7 +62,7 @@ struct ItemRowView: View {
         )
         .background(
             RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
-                .fill(isHovered ? theme.rowHoverFill : theme.rowFill)
+                .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? theme.rowHoverFill : theme.rowFill))
         )
         .overlay(alignment: .bottom) { separator }
         .overlay(alignment: .trailing) { deleteButton }
@@ -71,6 +72,7 @@ struct ItemRowView: View {
         .opacity(isDragging ? 0.95 : 1)
         .zIndex(isDragging || isDeleting ? 1 : 0)
         .animation(.easeOut(duration: 0.13), value: isHovered)
+        .animation(.easeOut(duration: 0.13), value: isSelected)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
