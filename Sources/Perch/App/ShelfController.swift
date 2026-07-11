@@ -482,11 +482,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Bring an offered file aboard: move it into a fresh item directory (Finder-drop
     /// semantics — ownership moves, origin recorded so ✕ can put it back; copy fallback
     /// if the move is refused) and insert the item at the front.
-    private func adoptArrival(_ offer: ArrivalOffer) {
+    @discardableResult
+    private func adoptArrival(_ offer: ArrivalOffer) -> StoredItem? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
-            return
+            return nil
         }
 
         let directory = store.newItemDirectory()
@@ -504,7 +505,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         } catch {
             NSLog("Perch failed to adopt arrival \(offer.url.path): \(error)")
             try? fileManager.removeItem(at: directory.url)
-            return
+            return nil
         }
 
         let contentType = (try? destination.resourceValues(forKeys: [.contentTypeKey]).contentType)
@@ -525,11 +526,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch failed to persist adopted arrival metadata: \(error)")
         }
 
-        store.insert(StoredItem(metadata: metadata, directoryURL: directory.url), at: nil)
+        let item = StoredItem(metadata: metadata, directoryURL: directory.url)
+        store.insert(item, at: nil)
         // The copy-fallback case leaves the original in the folder; the origin-path
         // exclusion keeps it from being re-offered.
         refreshArrivals()
         NSLog("Perch adopted arrival \(offer.name)")
+        return item
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the

@@ -30,8 +30,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
-    /// Set on mouse-down over a recent-arrival ghost row; a click adopts the file onto
-    /// the shelf. Ghost presses never start drags; dismissal lives in the context menu.
+    /// Set on mouse-down over a recent-arrival ghost row. A click adopts it in place;
+    /// crossing the drag threshold adopts it and immediately begins a normal vend.
     private var pendingArrival: ArrivalOffer?
     /// The row pressed at mouse-down — a pending drag that becomes either an in-shelf
     /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
@@ -88,7 +88,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// Called when the user clicks a recent-arrival ghost row; the controller moves the
     /// file onto the shelf as a real item.
-    var onAdoptArrival: ((ArrivalOffer) -> Void)?
+    var onAdoptArrival: ((ArrivalOffer) -> StoredItem?)?
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
@@ -295,9 +295,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
 
-        // A press on a ghost row arms an adopt click and nothing
-        // else — ghosts don't drag, and the press must not fall through to the
-        // empty-tile dismiss or a card drag.
+        // A press on a ghost row arms either a click-to-adopt or drag-to-vend. It must
+        // not fall through to the empty-tile dismissal or whole-card drag.
         if let ghostIndex = arrivalIndex(at: point) {
             pendingArrival = ghostOffers[ghostIndex]
             dragStartPoint = point
@@ -326,8 +325,22 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseDragged(with event: NSEvent) {
-        // A press that started on a delete button or a ghost row must not turn into a drag.
-        guard pendingDeleteItem == nil, pendingArrival == nil, !vendStarted else { return }
+        if let offer = pendingArrival {
+            let point = convert(event.locationInWindow, from: nil)
+            let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
+            guard moved >= 4 else { return }
+            pendingArrival = nil
+            guard let item = onAdoptArrival?(offer) else {
+                resetDragState()
+                return
+            }
+            dragItem = item
+            startVend(item, event: event)
+            return
+        }
+
+        // A press that started on a delete button must not turn into a drag.
+        guard pendingDeleteItem == nil, !vendStarted else { return }
         guard let item = dragItem else {
             // The press landed on the card's background (padding, row gaps, or the
             // empty tile) — a drag there moves the whole card (drag-to-pin).
@@ -364,7 +377,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                let index = arrivalIndex(at: point),
                ghostOffers[index].id == offer.id {
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-                onAdoptArrival?(offer)
+                _ = onAdoptArrival?(offer)
             }
             resetDragState()
             return
