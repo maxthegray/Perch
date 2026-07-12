@@ -133,7 +133,7 @@ struct BehaviorSettingsPane: View {
                 behaviorRow(
                     demo: .moveShelf,
                     title: "Dragging enabled",
-                    caption: "Grab the handle to move the shelf anywhere on the screen.",
+                    caption: "Hover the shelf and grab the handle to move it anywhere on the screen.",
                     isOn: $themeStore.showsGrabHandle
                 )
             }

@@ -90,10 +90,12 @@ struct ShelfContentView: View {
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
-            // The bar also comes and goes with pinning (free mode) and Lock Position;
-            // without these bindings its transition would cut in with no animation.
+            // The bar also comes and goes with pinning (free mode), Lock Position, and
+            // the pointer entering/leaving a docked card; without these bindings its
+            // transition would cut in with no animation.
             .animation(.easeInOut(duration: 0.2), value: interaction.isFreeFloating)
             .animation(.easeInOut(duration: 0.2), value: interaction.isLockedInPlace)
+            .animation(.easeInOut(duration: 0.2), value: interaction.isCardHovered)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
@@ -147,11 +149,13 @@ struct ShelfContentView: View {
         // the viewport the min-height is moot and the ScrollView scrolls as before.
         //
         // A free-floating card always carries the bar — even empty — unless locked in
-        // place; docked cards follow the "Dragging Enabled" toggle and need rows. Must
-        // mirror ShelfHostView.hasGrabber and the controller's height estimate.
+        // place; docked cards follow the "Dragging Enabled" toggle, need rows, and only
+        // carry the bar while the pointer is over the card (it fades in with the hover
+        // and leaves with it, taking its strip of height along). Must mirror
+        // ShelfHostView.hasGrabber and the controller's height estimate.
         let showsGrabber = interaction.isFreeFloating
             ? !interaction.isLockedInPlace
-            : (themeStore.showsGrabHandle && !displayedItems.isEmpty)
+            : (themeStore.showsGrabHandle && !displayedItems.isEmpty && interaction.isCardHovered)
         VStack(spacing: 0) {
             if showsGrabber {
                 grabber.transition(.opacity)

@@ -117,6 +117,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onShelfDragBegan: (() -> Void)?
     var onShelfDragEnded: (() -> Void)?
 
+    /// Fires when the pointer enters/leaves the card. On a docked card the grab handle
+    /// rides along only while hovered, so the controller re-fits the window as the
+    /// strip joins/leaves the layout.
+    var onCardHoverChanged: ((Bool) -> Void)?
+
+    /// Whether the pointer is currently over the card. The controller's height
+    /// estimate reads this so it agrees with the layout's hover-only grab handle.
+    var isCardHovered: Bool { interaction.isCardHovered }
+
     init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger, arrivals: RecentArrivals) {
         self.store = store
         self.themeStore = themeStore
@@ -249,7 +258,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         )
     }
 
+    override func mouseEntered(with event: NSEvent) {
+        setCardHovered(true)
+    }
+
     override func mouseMoved(with event: NSEvent) {
+        // Also asserted here: when the card slides open under a stationary pointer the
+        // entered event can be missed, but the first twitch lands a mouseMoved.
+        setCardHovered(true)
         let point = convert(event.locationInWindow, from: nil)
         interaction.hoveredItemID = item(at: point)?.id
         interaction.hoveredArrivalID = arrivalIndex(at: point).map { ghostOffers[$0].id }
@@ -260,10 +276,19 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.hoveredItemID = nil
         interaction.hoveredArrivalID = nil
         guard !shelfDragActive else { return }
+        setCardHovered(false)
         if interaction.isGrabberHovered {
             interaction.isGrabberHovered = false
             NSCursor.arrow.set()
         }
+    }
+
+    /// Update the card-hover flag and tell the controller, which resizes the docked
+    /// window as the grab-handle strip fades in/out with the pointer.
+    private func setCardHovered(_ hovered: Bool) {
+        guard interaction.isCardHovered != hovered else { return }
+        interaction.isCardHovered = hovered
+        onCardHoverChanged?(hovered)
     }
 
     /// Highlight the grab handle under the pointer and match the cursor to it: open
@@ -538,11 +563,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// Whether the card currently shows the grab handle: a free-floating card always
     /// carries it — even empty — unless locked in place (the bar is always aboard a
-    /// hand-placed card); a docked card needs visible items and "Dragging Enabled" on.
+    /// hand-placed card); a docked card needs visible items, "Dragging Enabled" on,
+    /// and the pointer over the card — the strip only rides along while hovered.
     /// Must mirror ShelfContentView's layout exactly.
     private var hasGrabber: Bool {
         if isFreeMode { return !interaction.isLockedInPlace }
-        return themeStore.showsGrabHandle && !visibleItems.isEmpty
+        return themeStore.showsGrabHandle && !visibleItems.isEmpty && interaction.isCardHovered
     }
 
     /// Distance from the row stack's top to the first row: just the content padding.
@@ -729,6 +755,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.hoveredItemID = nil
         interaction.hoveredArrivalID = nil
         interaction.isGrabberHovered = false
+        // Cleared without the hover callback: the shelf is hiding, so a re-fit resize
+        // would only fight the hide animation. The controller reads the live flag.
+        interaction.isCardHovered = false
         interaction.selectedItemIDs.removeAll()
         interaction.deletingItemIDs.removeAll()
         pendingDeleteItem = nil

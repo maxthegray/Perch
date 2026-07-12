@@ -42,6 +42,11 @@ final class RowInteractionState: ObservableObject {
     /// flight), so the grabber brightens to advertise that it moves the whole card.
     @Published var isGrabberHovered = false
 
+    /// True while the pointer is anywhere over the card. A docked card only carries
+    /// the grab handle while hovered — the strip (and the card height it adds) comes
+    /// and goes with the pointer, instead of sitting there permanently.
+    @Published var isCardHovered = false
+
     /// True while the shelf is free-floating (torn off an edge or cursor-summoned).
     /// A free card always shows the grab handle — it was placed by hand and must stay
     /// movable — regardless of the docked "Dragging Enabled" toggle.
