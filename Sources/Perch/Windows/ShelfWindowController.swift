@@ -29,6 +29,10 @@ final class ShelfWindowController {
     /// AppKit can let an already-running `animator().setFrame` reach its old target even
     /// after a direct resize, so stale completions must restore the newest target.
     private var resizeGeneration: UInt = 0
+    /// Invalidates a hide completion when a newer reveal wins. Without this, opening
+    /// the shelf while its fade-out is still finishing can leave AppKit reporting a
+    /// visible panel whose stale completion has nevertheless ordered it out.
+    private var visibilityGeneration: UInt = 0
     private var edge: ShelfEdge = .right
     /// When true, hide scales about the card's center (the cursor-summoned shelf's pop).
     var usesFreeAnimation = false
@@ -42,10 +46,24 @@ final class ShelfWindowController {
         reveal(animated: animated, targetFrame: revealedFrame, edge: edge)
     }
 
+    /// Reassert the model presentation of a panel that AppKit already calls visible.
+    /// `isVisible` alone is not a sufficient invariant: a superseded fade/menu-tracking
+    /// sequence can leave the window ordered or rendered inconsistently while the flag
+    /// remains true. This is intentionally frame-neutral so a correctly positioned
+    /// free shelf is never moved by a recovery check.
+    func ensurePresented() {
+        visibilityGeneration &+= 1
+        panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
+        panel.alphaValue = 1
+        panel.orderFrontRegardless()
+        healContentViewShear()
+    }
+
     /// Reveal at a specific frame. The window lands at `targetFrame` immediately; the
     /// content fades in in place, or — when `slides` (drag reveals) — eases in from a
     /// small offset toward the originating edge.
     func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge, slides: Bool = false) {
+        visibilityGeneration &+= 1
         usesFreeAnimation = false
         self.edge = edge
         revealedFrame = targetFrame
@@ -81,6 +99,7 @@ final class ShelfWindowController {
     /// the content layer scales up + fades in from the card's center (no edge to slide
     /// from).
     func revealFromCursor(animated: Bool, targetFrame: NSRect) {
+        visibilityGeneration &+= 1
         usesFreeAnimation = true
         revealedFrame = targetFrame
         panel.setFrame(targetFrame, display: false)
@@ -110,6 +129,8 @@ final class ShelfWindowController {
     }
 
     func hide(animated: Bool) {
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
         guard animated, let layer = panel.contentView?.layer else {
             panel.orderOut(nil)
             panel.alphaValue = 1
@@ -134,10 +155,13 @@ final class ShelfWindowController {
             context.duration = Self.hideDuration
             context.timingFunction = Self.hideCurve
             panel.animator().alphaValue = 0
-        } completionHandler: { [weak panel] in
-            panel?.orderOut(nil)
-            panel?.alphaValue = 1
-            panel?.contentView?.layer?.removeAnimation(forKey: transformKey)
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, generation == self.visibilityGeneration else { return }
+                self.panel.orderOut(nil)
+                self.panel.alphaValue = 1
+                self.panel.contentView?.layer?.removeAnimation(forKey: transformKey)
+            }
         }
     }
 

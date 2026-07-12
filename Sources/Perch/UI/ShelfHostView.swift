@@ -122,6 +122,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// strip joins/leaves the layout.
     var onCardHoverChanged: ((Bool) -> Void)?
 
+    /// Fires after AppKit dismisses the context menu. Menu tracking can swallow the
+    /// ordinary enter/exit/up sequence, so the controller must reconcile against the
+    /// real cursor rather than trusting the pre-menu interaction flags.
+    var onContextMenuClosed: (() -> Void)?
+
     /// Whether the pointer is currently over the card. The controller's height
     /// estimate reads this so it agrees with the layout's hover-only grab handle.
     var isCardHovered: Bool { interaction.isCardHovered }
@@ -890,6 +895,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     func menuDidClose(_ menu: NSMenu) {
         isContextMenuOpen = false
+        onContextMenuClosed?()
     }
 
     @objc private func quitAction(_ sender: NSMenuItem) {

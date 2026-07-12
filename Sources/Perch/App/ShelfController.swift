@@ -220,6 +220,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self.resizeToFitVisible()
         }
 
+        hostView.onContextMenuClosed = { [weak self] in
+            self?.contextMenuDidClose()
+        }
+
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
@@ -615,7 +619,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // autoresizing — shearing the card one row upward, permanently. Waiting for the
         // default mode means the window grows a few ms after the drag ends instead.
         RunLoop.main.perform(inModes: [.default]) { [weak self] in
-            self?.resizeToFitVisible(animated: false)
+            Task { @MainActor [weak self] in
+                self?.resizeToFitVisible(animated: false)
+            }
         }
     }
 
@@ -1248,17 +1254,40 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     func handleReopen() {
         if revealMode == .free {
             relocateStrandedFreeShelf()
-            panel.orderFrontRegardless()
+            windowController.ensurePresented()
             return
         }
-        // An edge shelf stranded off every screen also blocks reveals (panel reads as
-        // visible) — drop it first so the reveal below recomputes a live frame.
-        if panel.isVisible, !NSScreen.screens.contains(where: { $0.frame.intersects(panel.frame) }) {
-            preferredScreen = nil
-            shownScreen = nil
-            hideShelf(animated: false)
+        // Reopen is also the recovery affordance for a panel whose AppKit visibility,
+        // render state, and interaction state diverged during menu tracking. Clear all
+        // transient holds and perform a real reveal even if `isVisible` claims the
+        // panel is already open; the reveal invalidates any stale hide completion and
+        // restores the canonical edge frame/alpha/front ordering.
+        cancelOpen()
+        cancelRetract()
+        stopRetractWatcher()
+        pointerInRegion = false
+        revealedForDrag = false
+        dragOutDockedFrame = nil
+        hostView.resetInteraction()
+        preferredScreen = Self.liveScreen(shownScreen ?? preferredScreen)
+        preferredEdge = shownEdge
+        revealAtPreferredEdge()
+        startRetractWatcher()
+    }
+
+    /// Menu tracking may consume the mouse exit/up that normally clears hover and drag
+    /// holds. Rebuild the keep-open decision from the actual cursor when it ends.
+    private func contextMenuDidClose() {
+        guard revealMode == .edge, panel.isVisible else { return }
+        let overShelf = pointerOverShelfOrTab(NSEvent.mouseLocation)
+        pointerInRegion = overShelf
+        if !dragActive {
+            revealedForDrag = false
+            dragOutDockedFrame = nil
         }
-        revealIfNeeded()
+        startRetractWatcher()
+        guard !overShelf, store.items.isEmpty else { return }
+        scheduleRetract(immediate: true)
     }
 
     /// `screen` if it's still attached, else the main/first live screen. Stale NSScreen
@@ -1433,7 +1462,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func revealIfNeeded() {
         cancelRetract()
         startRetractWatcher()
-        guard !panel.isVisible else { return }
+        guard !panel.isVisible else {
+            // Treat edge activation as a repair signal too. AppKit can report a panel
+            // visible after menu/animation races even though its alpha, content layer,
+            // or ordering no longer matches that state.
+            windowController.ensurePresented()
+            return
+        }
         refreshArrivals(markRevealed: true)
         revealAtPreferredEdge()
     }
