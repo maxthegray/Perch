@@ -8,30 +8,48 @@
   A drag-and-drop shelf for macOS.
 </p>
 
+Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
-Start dragging something and a tab snaps to the nearest screen edge. Drop onto it to stash, hover the edge to pull it back out. Works with files, text, images, URLs, and file promises from Photos, Mail, or Messages — in both directions.
+It also understands file promises from apps like Photos, Mail, and Messages, so it works with the things that don't become ordinary files until you actually drop them somewhere.
 
-<!-- TODO: add a demo GIF here -->
+<p align="center">
+  <img src="assets/demo.gif" width="800" alt="Dragging a file into Perch and back out again">
+</p>
 
 ## Install
 
-Grab `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases), unzip, and drag it to Applications.
+Download `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases/latest), unzip it, and move Perch to your Applications folder.
 
-Since it's not notarized, macOS will probably block the first launch. Right-click → Open once to get past it, or just run:
+Perch isn't notarized yet, so macOS may stop it the first time you open it. Right-click the app and choose **Open** once, or clear the quarantine flag in Terminal:
 
 ```sh
 xattr -dr com.apple.quarantine /Applications/Perch.app
 ```
 
-No Dock icon, no menu-bar icon — it just runs in the background. Requires macOS 14+.
+Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched, it quietly waits at the screen edge. You can enable Launch at Login from Settings.
 
 ## How it works
 
-- **Stash** — start dragging anything and a tab appears on the nearest screen edge. Drop onto it.
-- **Retrieve** — hover the edge to reveal the shelf, drag an item back out into any app.
-- **Right-click** the shelf for Quick Look, Delete, Clear All, and settings like appearance, edges, and Launch at Login.
+- **Put something aside.** Start dragging and Perch can open automatically at the nearest enabled edge. Drop onto the shelf to keep the item there.
+- **Pick it up later.** Hover the edge to bring Perch back, then drag the item into Finder or another app. Dragging out can move the item off the shelf or leave a copy behind.
+- **Bring the shelf to you.** Shake the pointer to summon Perch near the cursor. If you'd rather keep it somewhere specific, enable dragging, pull it away from the edge, and optionally lock it in place.
+- **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Click one to bring it onto the shelf.
+- **Right-click for the useful stuff.** Quick Look, Delete, Return, History, Settings, and update checks are all close at hand.
 
-Everything is stored as plain files under `~/Library/Application Support/Perch/`. No network, no accounts, no tracking.
+## Make it yours
+
+Settings are split into a few simple groups:
+
+- Choose the Glass or Minimal style, show or hide names and shadows, and adjust the shelf's width and height.
+- Dock on the left, right, or beneath the notch. At least one edge always stays enabled.
+- Toggle shake-to-summon, automatic drag reveals, recent-download suggestions, movable shelves, and whether an empty floating shelf stays open.
+- Choose whether dragging an item out moves it or copies it.
+
+Perch remembers these choices between launches and can check for updates through Sparkle.
+
+## Your files stay yours
+
+Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
 
 ## License
 
