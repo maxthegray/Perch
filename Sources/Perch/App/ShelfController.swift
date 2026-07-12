@@ -208,6 +208,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.shelfDragDidEnd()
         }
 
+        // On a docked card the grab handle only rides along under the pointer: the
+        // card grows by the strip as the hover arrives and shrinks back when it
+        // leaves. One animated re-fit per flip, with the bar's animated height ticks
+        // suppressed so they can't snap-cut it (same dance as Lock Position). Free
+        // cards ignore this — their bar is always aboard.
+        hostView.onCardHoverChanged = { [weak self] _ in
+            guard let self, self.revealMode == .edge, self.panel.isVisible,
+                  self.themeStore.showsGrabHandle, self.lastItemCount > 0 else { return }
+            self.suppressMeasuredHeightResizes()
+            self.resizeToFitVisible()
+        }
+
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
@@ -409,6 +421,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] _ in
                 self?.resizeToFitVisible()
             }
+
     }
 
     // MARK: Recent arrivals (ghost rows)
@@ -824,8 +837,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let anchor = freeTopLeft ?? NSPoint(x: visible.midX - width / 2, y: visible.midY + height / 2)
         let x = min(max(anchor.x, visible.minX + 8), visible.maxX - width - 8)
         // freeTopLeft is the top edge; convert to a bottom-left origin and clamp.
-        let y = min(max(anchor.y - height, visible.minY + 8), visible.maxY - height - 8)
+        // The floor is the *screen* edge, not the visible frame: a hand-placed card
+        // may sit level with the Dock, beside it (overlapping the Dock itself just
+        // puts the card behind it — still the user's call). The ceiling keeps the
+        // visible frame so the card never slides under the menu bar.
+        let y = min(max(anchor.y - height, Self.freeBottomFloor(screen: screen, visible: visible)),
+                    visible.maxY - height - 8)
         return NSRect(x: x, y: y, width: width, height: height)
+    }
+
+    /// The lowest y a free card may occupy: 8pt above the true screen bottom, so
+    /// "next to the Dock, at its level" is a valid parking spot. Shared by
+    /// `freePanelFrame` and the lock re-fit so they can never disagree.
+    private static func freeBottomFloor(screen: NSScreen?, visible: NSRect) -> CGFloat {
+        (screen?.frame.minY ?? visible.minY) + 8
     }
 
     /// Remember the user's chosen position after they drag the free shelf by its handle.
@@ -881,13 +906,27 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Toggle "Lock Position" on the free shelf. The bar strip leaves/rejoins the
     /// layout with the lock: one animated re-fit to the estimate's final frame, with
     /// the bar's animated height ticks suppressed so they can't snap-cut it.
+    ///
+    /// The strip sits *above* the rows, so the re-fit anchors at the card's bottom
+    /// edge — the rows stay put and only the top edge moves. (The old top-anchored
+    /// re-fit lifted the bottom by the strip on every lock, so a card parked next to
+    /// the Dock scooted up away from it.) Clamped to the same bounds as
+    /// `freePanelFrame`, which every later resize re-applies — a looser clamp here
+    /// would just hop back at the post-animation true-up.
     private func toggleFreeShelfLock() {
         guard revealMode == .free else { return }
         freeShelfLocked.toggle()
         if freeShelfLocked { shelfIsSettingsPreview = false }
         hostView.setLockedInPlace(freeShelfLocked)
+        guard panel.isVisible else { return }
         suppressMeasuredHeightResizes()
-        resizeToFitVisible()
+        var target = freePanelFrame()
+        let screen = Self.liveScreen(summonScreen)
+        let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
+        target.origin.y = min(max(panel.frame.minY, Self.freeBottomFloor(screen: screen, visible: visible)),
+                              visible.maxY - target.height - 8)
+        freeTopLeft = NSPoint(x: target.minX, y: target.maxY)
+        windowController.resize(to: target)
     }
 
     /// Clear away a shelf that exists only as the settings Appearance preview (the tab
@@ -1018,15 +1057,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// card also carries the grab-handle strip above its rows, unless hidden.
     private func contentHeight(for itemCount: Int) -> CGFloat {
         // Mirrors ShelfContentView's bar visibility: a free card always carries the
-        // bar — even empty — unless locked; a docked one needs rows and the "Dragging
-        // Enabled" toggle.
+        // bar — even empty — unless locked; a docked one needs rows, the "Dragging
+        // Enabled" toggle, and the pointer over the card (the strip rides along only
+        // while hovered).
         let freeGrabber = revealMode == .free && !freeShelfLocked
         guard itemCount > 0 else {
             return (dragActive ? Self.dropTargetHeight : Self.emptyStateHeight)
                 + (freeGrabber ? RowMetrics.grabberZoneHeight : 0)
         }
         let theme = themeStore.theme
-        let showsGrabber = freeGrabber || (revealMode == .edge && themeStore.showsGrabHandle)
+        let showsGrabber = freeGrabber
+            || (revealMode == .edge && themeStore.showsGrabHandle && hostView.isCardHovered)
         let grabber = showsGrabber ? RowMetrics.grabberZoneHeight : 0
         let rows = CGFloat(itemCount) * theme.rowHeight
             + CGFloat(itemCount - 1) * theme.rowSpacing
