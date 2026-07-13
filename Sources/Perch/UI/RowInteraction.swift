@@ -42,14 +42,18 @@ final class RowInteractionState: ObservableObject {
     /// flight), so the grabber brightens to advertise that it moves the whole card.
     @Published var isGrabberHovered = false
 
-    /// True while the pointer is anywhere over the card. A docked card only carries
-    /// the grab handle while hovered — the strip (and the card height it adds) comes
-    /// and goes with the pointer, instead of sitting there permanently.
+    /// True while the pointer is anywhere over the card. A movable card keeps a stable
+    /// handle reveal in sync with the panel's live resize.
     @Published var isCardHovered = false
 
+    /// Live 0...1 progress of the handle lane. The controller derives this from the
+    /// panel's actual animated height so each point added above is consumed by the lane,
+    /// leaving the shelf body and rows pixel-stationary.
+    @Published var grabberRevealProgress: CGFloat = 0
+
     /// True while the shelf is free-floating (torn off an edge or cursor-summoned).
-    /// A free card always shows the grab handle — it was placed by hand and must stay
-    /// movable — regardless of the docked "Dragging Enabled" toggle.
+    /// A free card remains movable regardless of the docked "Dragging Enabled" toggle,
+    /// but its handle is still only revealed on hover.
     @Published var isFreeFloating = false
 
     /// True while a free-floating shelf is locked in place: the grab handle hides and

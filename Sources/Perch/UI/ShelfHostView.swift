@@ -37,6 +37,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
     private var dragItem: StoredItem?
     private var dragStartPoint: NSPoint = .zero
+    /// A normal press on an already-selected row keeps the batch intact until we know
+    /// whether this is a drag. If it remains a click, mouse-up restores the usual
+    /// normal-click behavior by clearing the Shift-selection.
+    private var preservesSelectionForDrag = false
     /// True once a reorder is underway (rows live-shuffle a preview order).
     private var reorderActive = false
     /// Item order captured at the start of a reorder, used to recompute the preview.
@@ -81,6 +85,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
     /// itself. Read live by the controller. Default true.
     static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
+    /// When true, releasing a free shelf near an enabled dock previews the target and
+    /// snaps it back into ordinary edge behavior. Default true.
+    static let snapBackToEdgesKey = "Perch.SnapBackToEdges"
 
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
@@ -115,11 +122,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// snap-back when it ends.
     var canBeginShelfDrag: (() -> Bool)?
     var onShelfDragBegan: (() -> Void)?
+    var onShelfDragMoved: (() -> Void)?
     var onShelfDragEnded: (() -> Void)?
 
-    /// Fires when the pointer enters/leaves the card. On a docked card the grab handle
-    /// rides along only while hovered, so the controller re-fits the window as the
-    /// strip joins/leaves the layout.
+    /// Fires after the desired hover state flips. The controller grows/shrinks the
+    /// panel while streaming its real height back as `grabberRevealProgress`.
     var onCardHoverChanged: ((Bool) -> Void)?
 
     /// Fires after AppKit dismisses the context menu. Menu tracking can swallow the
@@ -127,9 +134,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// real cursor rather than trusting the pre-menu interaction flags.
     var onContextMenuClosed: (() -> Void)?
 
-    /// Whether the pointer is currently over the card. The controller's height
-    /// estimate reads this so it agrees with the layout's hover-only grab handle.
     var isCardHovered: Bool { interaction.isCardHovered }
+    var grabberRevealProgress: CGFloat { interaction.grabberRevealProgress }
+
+    func setGrabberRevealProgress(_ progress: CGFloat) {
+        let clamped = min(max(progress, 0), 1)
+        guard abs(interaction.grabberRevealProgress - clamped) > 0.0001 else { return }
+        interaction.grabberRevealProgress = clamped
+    }
 
     init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger, arrivals: RecentArrivals) {
         self.store = store
@@ -184,9 +196,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         )
     }
 
-    /// Toggle free-floating behavior (click-to-dismiss when empty, "Close Shelf" in the
-    /// context menu, an always-on grab handle). Mirrored into the interaction state so
-    /// the SwiftUI side shows/hides the bar to match.
+    /// Toggle free-floating behavior (click-to-dismiss when empty and "Close Shelf" in
+    /// the context menu). Mirrored into the interaction state so SwiftUI can apply the
+    /// free card's drag and lock rules.
     func setFreeMode(_ free: Bool) {
         isFreeMode = free
         interaction.isFreeFloating = free
@@ -288,8 +300,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
     }
 
-    /// Update the card-hover flag and tell the controller, which resizes the docked
-    /// window as the grab-handle strip fades in/out with the pointer.
+    /// Update the card-hover flag. The reserved handle lane is geometry-stable; this
+    /// state now drives only the capsule's visual reveal.
     private func setCardHovered(_ hovered: Bool) {
         guard interaction.isCardHovered != hovered else { return }
         interaction.isCardHovered = hovered
@@ -342,6 +354,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 } else {
                     interaction.selectedItemIDs.insert(item.id)
                 }
+            } else if interaction.selectedItemIDs.contains(item.id) {
+                // Do not throw away a Shift-selected batch on the very press that is
+                // meant to drag it. We can still clear it on mouse-up if no drag occurs.
+                preservesSelectionForDrag = true
             } else {
                 // A normal press acts on this row without selecting it. Selection is
                 // reserved for explicit Shift-click batches.
@@ -378,6 +394,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
         let point = convert(event.locationInWindow, from: nil)
+
+        // A selected batch vends as a unit. Moving inside the card must not begin a
+        // one-row reorder first; wait until the pointer exits, then hand the entire
+        // selection to AppKit's dragging session.
+        if interaction.selectedItemIDs.contains(item.id),
+           interaction.selectedItemIDs.count > 1 {
+            let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
+            guard moved >= 4 else { return }
+            guard !bounds.contains(point) else { return }
+            startVend(item, event: event)
+            return
+        }
 
         if !reorderActive {
             let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
@@ -436,6 +464,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 onDismissEmptyFree?()
             }
         }
+        if preservesSelectionForDrag {
+            let point = convert(event.locationInWindow, from: nil)
+            let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
+            if moved < 4 {
+                interaction.selectedItemIDs.removeAll()
+            }
+        }
         resetDragState()
         updateGrabberHover(at: convert(event.locationInWindow, from: nil))
     }
@@ -479,6 +514,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
+        preservesSelectionForDrag = false
         let items = interaction.selectedItemIDs.contains(item.id)
             ? store.items.filter { interaction.selectedItemIDs.contains($0.id) }
             : [item]
@@ -501,14 +537,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 for item in items { self?.store.unretire(item) }
             }
         }
-        dragSource.onEnded = { [weak self] operation in
+        dragSource.onEnded = { [weak self] operation, returnedToPerch in
             guard let self else { return }
             self.activeDragSource = nil
             guard isMove else { return }
-            if operation.isEmpty {
-                // No drop landed: put the row back on its perch, exactly as it was.
-                // (endedAt fires after the ghost's slide-back animation completes, so
-                // the row fades in right as the ghost arrives.)
+            if returnedToPerch || operation.isEmpty {
+                // A canceled drag or a drop back onto Perch restores the original rows,
+                // exactly as they were. For cancellation, endedAt fires after AppKit's
+                // slide-back completes, so the rows return as the drag image arrives.
                 self.interaction.vendingItemIDs.removeAll()
                 return
             }
@@ -543,11 +579,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             x: shelfDragWindowOrigin.x + (location.x - shelfDragScreenStart.x),
             y: shelfDragWindowOrigin.y + (location.y - shelfDragScreenStart.y)
         ))
+        onShelfDragMoved?()
     }
 
     private func resetDragState() {
         dragItem = nil
         pendingArrival = nil
+        preservesSelectionForDrag = false
         reorderActive = false
         vendStarted = false
         shelfDragActive = false
@@ -566,14 +604,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { visibleItems[$0] }
     }
 
-    /// Whether the card currently shows the grab handle: a free-floating card always
-    /// carries it — even empty — unless locked in place (the bar is always aboard a
-    /// hand-placed card); a docked card needs visible items, "Dragging Enabled" on,
-    /// and the pointer over the card — the strip only rides along while hovered.
+    /// Whether the card currently shows the grab handle. Every movable card reveals it
+    /// only while hovered: a free-floating card must be unlocked, while a docked card
+    /// needs "Dragging Enabled" on.
     /// Must mirror ShelfContentView's layout exactly.
     private var hasGrabber: Bool {
-        if isFreeMode { return !interaction.isLockedInPlace }
-        return themeStore.showsGrabHandle && !visibleItems.isEmpty && interaction.isCardHovered
+        if isFreeMode { return !interaction.isLockedInPlace && interaction.isCardHovered }
+        return themeStore.showsGrabHandle && interaction.isCardHovered
     }
 
     /// Distance from the row stack's top to the first row: just the content padding.
@@ -591,7 +628,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// centered stack's true height. Every piece of row hit-test math must add this.
     private var contentTopOffset: CGFloat {
         guard measuredContentHeight > 0 else { return 0 }
-        let grabber = hasGrabber ? RowMetrics.grabberZoneHeight : 0
+        let grabber = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         let stackHeight = measuredContentHeight - grabber
         return grabber + max(0, (bounds.height - grabber - stackHeight) / 2)
     }
@@ -600,7 +637,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// top of a populated card, full width. The floored card's empty space elsewhere is
     /// plain background (which also drags the card, but shouldn't light up the capsule).
     private func grabberZoneContains(_ point: NSPoint) -> Bool {
-        hasGrabber && bounds.contains(point) && point.y < RowMetrics.grabberZoneHeight
+        let height = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
+        return hasGrabber && bounds.contains(point) && point.y < height
     }
 
     /// The index of the row under `point`, or nil. Mirrors ShelfContentView's layout:
@@ -763,6 +801,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // Cleared without the hover callback: the shelf is hiding, so a re-fit resize
         // would only fight the hide animation. The controller reads the live flag.
         interaction.isCardHovered = false
+        interaction.grabberRevealProgress = 0
         interaction.selectedItemIDs.removeAll()
         interaction.deletingItemIDs.removeAll()
         pendingDeleteItem = nil

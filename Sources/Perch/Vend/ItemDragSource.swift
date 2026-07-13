@@ -10,9 +10,14 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     private var activeWriters: [StoredItemDragWriter] = []
 
     /// Called when the drag session ends, with the operation the destination
-    /// performed (empty == no drop). Used to apply move semantics (remove the row
-    /// once it has actually landed somewhere).
-    var onEnded: ((NSDragOperation) -> Void)?
+    /// performed (empty == no drop) and whether it landed back on this Perch.
+    /// Used to apply move semantics only after a real external landing.
+    var onEnded: ((NSDragOperation, Bool) -> Void)?
+
+    /// Set when this drag lands back on the same Perch shelf. The destination accepts
+    /// the drop so AppKit can finish normally, but the host restores the original rows
+    /// instead of retiring and re-importing its own file promises.
+    private var returnedToPerch = false
 
     /// Called off the main actor when a file-promise vend completes, with the recorded
     /// movement. The host hops it back to the main actor to append to the ledger.
@@ -60,6 +65,10 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         }
     }
 
+    func markReturnedToPerch() {
+        returnedToPerch = true
+    }
+
     // MARK: NSDraggingSource
 
     func draggingSession(
@@ -77,6 +86,6 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
-        onEnded?(operation)
+        onEnded?(operation, returnedToPerch)
     }
 }

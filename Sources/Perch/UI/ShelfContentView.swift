@@ -90,12 +90,10 @@ struct ShelfContentView: View {
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
-            // The bar also comes and goes with pinning (free mode), Lock Position, and
-            // the pointer entering/leaving a docked card; without these bindings its
-            // transition would cut in with no animation.
+            // The controller streams grabber reveal progress from the panel's live
+            // resize, so hover itself must not add another implicit layout animation.
             .animation(.easeInOut(duration: 0.2), value: interaction.isFreeFloating)
             .animation(.easeInOut(duration: 0.2), value: interaction.isLockedInPlace)
-            .animation(.easeInOut(duration: 0.2), value: interaction.isCardHovered)
             .animation(.easeOut(duration: 0.18), value: interaction.isDropTarget)
             .scaleEffect(thunkScale)
             .onPreferenceChange(ContentHeightKey.self) { onContentHeight($0) }
@@ -148,18 +146,16 @@ struct ShelfContentView: View {
         // assigns it), matched to the rows' insert/remove ease. When the rows outgrow
         // the viewport the min-height is moot and the ScrollView scrolls as before.
         //
-        // A free-floating card always carries the bar — even empty — unless locked in
-        // place; docked cards follow the "Dragging Enabled" toggle, need rows, and only
-        // carry the bar while the pointer is over the card (it fades in with the hover
-        // and leaves with it, taking its strip of height along). Must mirror
-        // ShelfHostView.hasGrabber and the controller's height estimate.
-        let showsGrabber = interaction.isFreeFloating
-            ? !interaction.isLockedInPlace
-            : (themeStore.showsGrabHandle && !displayedItems.isEmpty && interaction.isCardHovered)
+        // The lane grows by exactly the same amount as the AppKit window on every frame.
+        // The content below therefore retains a constant height and screen position.
+        let grabberProgress = min(max(interaction.grabberRevealProgress, 0), 1)
+        let grabberHeight = RowMetrics.grabberZoneHeight * grabberProgress
         VStack(spacing: 0) {
-            if showsGrabber {
-                grabber.transition(.opacity)
-            }
+            grabber
+                .opacity(grabberProgress)
+                .offset(y: (1 - grabberProgress) * 7)
+                .frame(height: grabberHeight, alignment: .bottom)
+                .clipped()
             if store.items.isEmpty {
                 Group {
                     if ghostOffers.isEmpty {
@@ -173,13 +169,13 @@ struct ShelfContentView: View {
                     }
                 }
                 .animation(.easeOut(duration: 0.18), value: ghostOffers)
-                .background(heightReader(addingGrabberStrip: showsGrabber))
+                .background(heightReader(addingGrabberStrip: grabberHeight))
                 .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
                     ScrollView {
                         rowStack
-                            .background(heightReader(addingGrabberStrip: showsGrabber))
+                            .background(heightReader(addingGrabberStrip: grabberHeight))
                             .frame(minHeight: proxy.size.height)
                             .animation(.easeOut(duration: 0.18), value: displayedItems.map(\.id))
                     }
@@ -300,11 +296,11 @@ struct ShelfContentView: View {
     /// grab handle lives outside the measured row stack (pinned to the window top), so
     /// its strip is added back here — the reported total (grabber + padding + rows)
     /// must keep matching the controller's per-item estimate.
-    private func heightReader(addingGrabberStrip: Bool = false) -> some View {
+    private func heightReader(addingGrabberStrip grabberHeight: CGFloat = 0) -> some View {
         GeometryReader { proxy in
             Color.clear.preference(
                 key: ContentHeightKey.self,
-                value: proxy.size.height + (addingGrabberStrip ? RowMetrics.grabberZoneHeight : 0)
+                value: proxy.size.height + grabberHeight
             )
         }
     }

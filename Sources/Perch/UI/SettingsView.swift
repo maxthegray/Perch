@@ -105,6 +105,7 @@ struct BehaviorSettingsPane: View {
     @AppStorage(ShelfHostView.shakeToSummonKey) private var shakeToSummon = true
     @AppStorage(ShelfHostView.revealOnDragStartKey) private var revealOnDragStart = true
     @AppStorage(ShelfHostView.keepEmptyShelfKey) private var keepEmptyShelf = true
+    @AppStorage(ShelfHostView.snapBackToEdgesKey) private var snapBackToEdges = true
     @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
     @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
 
@@ -135,6 +136,12 @@ struct BehaviorSettingsPane: View {
                     title: "Dragging enabled",
                     caption: "Hover the shelf and grab the handle to move it anywhere on the screen.",
                     isOn: $themeStore.showsGrabHandle
+                )
+                behaviorRow(
+                    demo: .moveShelf,
+                    title: "Snap back to edges",
+                    caption: "Release a free shelf near an enabled dock to return it there.",
+                    isOn: $snapBackToEdges
                 )
             }
 

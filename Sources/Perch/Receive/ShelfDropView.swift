@@ -96,10 +96,14 @@ final class ShelfDropView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         // A drop doesn't fire draggingExited, so snap the outline off here.
         dropHandler?.dragOverShelfDidChange(false)
+        let perchSource = sender.draggingSource as? ItemDragSource
         let ok = dropHandler?.handleDrop(
             sender.draggingPasteboard,
-            fromPerch: sender.draggingSource is ItemDragSource
+            fromPerch: perchSource != nil
         ) ?? false
+        if ok {
+            perchSource?.markReturnedToPerch()
+        }
         NSLog("Perch DROPDBG performDragOperation ok=\(ok)")
         return ok
     }
