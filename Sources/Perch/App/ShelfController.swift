@@ -32,6 +32,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Holds late hover/measurement callbacks off while a free shelf is fading away;
     /// otherwise switching to edge mode can flash the still-visible panel at its dock.
     private var dismissingFreeShelf = false
+    /// Clears `dismissingFreeShelf` once the fade completes. Kept cancelable: a
+    /// re-summon inside the window must lift the hold immediately, and a second
+    /// dismissal must not have its hold ended early by the first one's timer.
+    private var dismissingFreeShelfResetTask: Task<Void, Never>?
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
     /// True when the current drag (in "reveal while dragging" mode) is what opened the
@@ -933,6 +937,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
         // A deliberate summon adopts any preview shelf (the settings closure re-flags).
         shelfIsSettingsPreview = false
+        // A summon within the dismissal fade must lift the resize hold, or the fresh
+        // shelf keeps its stale size until the old dismissal's timer clears the flag.
+        dismissingFreeShelfResetTask?.cancel()
+        dismissingFreeShelfResetTask = nil
+        dismissingFreeShelf = false
         if !panel.isVisible {
             refreshArrivals(markRevealed: true)
         }
@@ -1259,8 +1268,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         windowController.hide(animated: true)
         // The host's free-mode behaviors are reset when the shelf next docks at an edge.
         windowController.usesFreeAnimation = false
-        Task { @MainActor [weak self] in
+        dismissingFreeShelfResetTask?.cancel()
+        dismissingFreeShelfResetTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(220))
+            guard !Task.isCancelled else { return }
             self?.dismissingFreeShelf = false
         }
     }
@@ -1302,6 +1313,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     receivers: result.pendingPromises,
                     initialCount: beforeCount
                 )
+            }
+
+            for result in results where !result.pendingCopies.isEmpty {
+                performDeferredCopies(result.pendingCopies, for: result.item)
             }
 
             // Keep the shelf open after a drop (the pointer is over it); it closes
@@ -1796,6 +1811,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         preferredEdge = strip.edge
 
         // Docking at an edge clears any leftover free-mode layout, including the lock.
+        dismissingFreeShelfResetTask?.cancel()
+        dismissingFreeShelfResetTask = nil
         dismissingFreeShelf = false
         revealMode = .edge
         freeShelfLocked = false
@@ -1866,6 +1883,33 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         stopRetractWatcher()
         hostView.resetInteraction()
         windowController.hide(animated: animated)
+    }
+
+    /// Copy-fallback files the snapshotter deferred (the move was refused, e.g. a
+    /// cross-volume source). The item is already on the shelf with these file names
+    /// recorded; the bulk copy runs off the main thread so a large external-volume
+    /// drop can't beachball the app. If a copy fails the file never arrives, leaving
+    /// a dead row (nothing to vend or preview) — take the item back off the shelf,
+    /// matching the old synchronous behavior where the drop failed outright.
+    private func performDeferredCopies(
+        _ copies: [(source: URL, destination: URL)],
+        for item: StoredItem
+    ) {
+        Task.detached(priority: .userInitiated) { [weak self] in
+            var failed = false
+            for copy in copies {
+                do {
+                    try FileManager.default.copyItem(at: copy.source, to: copy.destination)
+                } catch {
+                    NSLog("Perch deferred copy failed for \(copy.source.path): \(error)")
+                    failed = true
+                }
+            }
+            guard failed, let self else { return }
+            await MainActor.run {
+                self.store.remove(item)
+            }
+        }
     }
 
     private func materializePendingPromises(

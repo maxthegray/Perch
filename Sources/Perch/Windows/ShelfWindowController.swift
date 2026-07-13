@@ -29,6 +29,11 @@ final class ShelfWindowController {
     /// AppKit can let an already-running `animator().setFrame` reach its old target even
     /// after a direct resize, so stale completions must restore the newest target.
     private var resizeGeneration: UInt = 0
+    /// The generation of the newest *animated* resize still in flight, if any. A stale
+    /// completion must only reassert the target when no newer animation is running —
+    /// otherwise it snaps the window to the final frame mid-animation (two removals in
+    /// quick succession made the second shrink visibly teleport).
+    private var animatingResizeGeneration: UInt?
     /// Invalidates a hide completion when a newer reveal wins. Without this, opening
     /// the shelf while its fade-out is still finishing can leave AppKit reporting a
     /// visible panel whose stale completion has nevertheless ordered it out.
@@ -189,6 +194,7 @@ final class ShelfWindowController {
             healContentViewShear()
             return
         }
+        animatingResizeGeneration = generation
         NSAnimationContext.runAnimationGroup { context in
             context.duration = duration
             context.timingFunction = timing ?? Self.revealCurve
@@ -196,9 +202,16 @@ final class ShelfWindowController {
         } completionHandler: { [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                if generation != self.resizeGeneration, self.panel.frame != self.revealedFrame {
+                if self.animatingResizeGeneration == generation {
+                    self.animatingResizeGeneration = nil
+                }
+                if generation != self.resizeGeneration,
+                   self.animatingResizeGeneration == nil,
+                   self.panel.frame != self.revealedFrame {
                     // A newer resize superseded this animation, but AppKit allowed the old
-                    // animation to finish at its stale frame. Reassert the current target.
+                    // animation to finish at its stale frame. Reassert the current target —
+                    // unless a newer animation is still traveling there itself, in which
+                    // case snapping now would cut it off mid-flight.
                     self.panel.setFrame(self.revealedFrame, display: true)
                 }
                 self.healContentViewShear()

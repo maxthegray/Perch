@@ -149,14 +149,22 @@ final class ItemStore: ObservableObject {
         retireDeletionTasks[id] = Task.detached(priority: .background) { [weak self] in
             try? await Task.sleep(for: .seconds(15 * 60))
             guard !Task.isCancelled else { return }
-            try? FileManager.default.removeItem(at: directoryURL)
-            guard let self else { return }
-            await self.clearRetireDeletionTask(id)
+            guard let self else {
+                try? FileManager.default.removeItem(at: directoryURL)
+                return
+            }
+            await self.completeRetireDeletion(of: id, at: directoryURL)
         }
     }
 
-    private func clearRetireDeletionTask(_ id: UUID) {
+    /// Delete a retired item's directory once the grace period elapses. Runs on the
+    /// main actor so it serializes against `unretire`: an unretire whose `cancel()`
+    /// lands after the sleep already finished would otherwise race the deletion and
+    /// destroy the backing directory of a row it just restored to the shelf.
+    private func completeRetireDeletion(of id: UUID, at directoryURL: URL) {
+        guard !Task.isCancelled, !items.contains(where: { $0.id == id }) else { return }
         retireDeletionTasks[id] = nil
+        try? FileManager.default.removeItem(at: directoryURL)
     }
 
     /// Put a retired item back on the shelf: the destination accepted the drop but then

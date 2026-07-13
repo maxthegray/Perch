@@ -1,5 +1,15 @@
 import AppKit
 
+/// One stored item produced by a drop, plus the work that still has to happen after
+/// `performDragOperation` returns: file promises to materialize, and copy fallbacks
+/// deferred off the main thread (a cross-volume or move-refused source would otherwise
+/// copy synchronously inside the drop and beachball the app).
+struct PasteboardSnapshotResult {
+    let item: StoredItem
+    let pendingPromises: [NSFilePromiseReceiver]
+    let pendingCopies: [(source: URL, destination: URL)]
+}
+
 /// RECEIVE → STORE: snapshot every representation of every pasteboard item into a
 /// new `items/<uuid>/`, copy real files, and surface any promise receivers that
 /// still need to be materialized.
@@ -10,7 +20,7 @@ struct PasteboardSnapshotter {
     func snapshot(
         _ pasteboard: NSPasteboard,
         into store: ItemStore
-    ) throws -> [(item: StoredItem, pendingPromises: [NSFilePromiseReceiver])] {
+    ) throws -> [PasteboardSnapshotResult] {
         let pasteboardItems = pasteboard.pasteboardItems ?? []
         guard !pasteboardItems.isEmpty else { throw PasteboardSnapshotError.noItems }
 
@@ -27,7 +37,7 @@ struct PasteboardSnapshotter {
         // items, so retain the historical grouped behavior for promise-based drops.
         // Concrete Finder selections become one shelf row per selected file/item.
         let groups = receivers.isEmpty ? capturedItems.map { [$0] } : [capturedItems]
-        var results: [(item: StoredItem, pendingPromises: [NSFilePromiseReceiver])] = []
+        var results: [PasteboardSnapshotResult] = []
         var createdDirectories: [URL] = []
 
         do {
@@ -41,8 +51,12 @@ struct PasteboardSnapshotter {
                         storeURL: directory.url
                     )
                 }
-                let item = try writeSnapshot(group, id: directory.id, directoryURL: directory.url)
-                results.append((item, receivers))
+                let (item, pendingCopies) = try writeSnapshot(group, id: directory.id, directoryURL: directory.url)
+                results.append(PasteboardSnapshotResult(
+                    item: item,
+                    pendingPromises: receivers,
+                    pendingCopies: pendingCopies
+                ))
             }
 
             if receivers.isEmpty {
@@ -88,13 +102,14 @@ struct PasteboardSnapshotter {
         _ capturedItems: [CapturedItem],
         id: UUID,
         directoryURL: URL
-    ) throws -> StoredItem {
+    ) throws -> (item: StoredItem, pendingCopies: [(source: URL, destination: URL)]) {
         let fileManager = FileManager.default
         let repsDir = directoryURL.appendingPathComponent("reps", isDirectory: true)
         let filesDir = directoryURL.appendingPathComponent("files", isDirectory: true)
         var representations: [RepRecord] = []
         var backingFileNames: [String] = []
         var originPaths: [String: String] = [:]
+        var pendingCopies: [(source: URL, destination: URL)] = []
         var stringTitle: String?
         var repIndex = 0
 
@@ -147,7 +162,10 @@ struct PasteboardSnapshotter {
                         NSLog("Perch could not move \(sourceURL.path) into shelf (\(error)); copying instead")
                         // Copy fallback: the original is still in place, so no origin
                         // to restore — removing the shelf copy already "puts it back".
-                        try fileManager.copyItem(at: sourceURL, to: destinationURL)
+                        // Deferred off the main thread: a cross-volume copy of a large
+                        // file here would beachball the app mid-drop. The item is
+                        // stored now; the controller performs the copy right after.
+                        pendingCopies.append((source: sourceURL, destination: destinationURL))
                     }
                     backingFileNames.append(destinationURL.lastPathComponent)
                 }
@@ -166,7 +184,7 @@ struct PasteboardSnapshotter {
         let metaURL = directoryURL.appendingPathComponent("meta.json", isDirectory: false)
         try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
 
-        return StoredItem(metadata: metadata, directoryURL: directoryURL)
+        return (StoredItem(metadata: metadata, directoryURL: directoryURL), pendingCopies)
     }
 
     private func fileURL(from data: Data?) throws -> URL {

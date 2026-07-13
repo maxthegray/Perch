@@ -49,6 +49,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var vendStarted = false
     /// True while a background press is dragging the whole card (drag-to-pin).
     private var shelfDragActive = false
+    /// Invalidates deferred mouse-exit checks. Resizing the panel rebuilds AppKit's
+    /// tracking geometry and can emit a transient exit even though the cursor is still
+    /// inside the window; accepting that exit immediately reverses the resize and can
+    /// make the grabber oscillate indefinitely at a window boundary.
+    private var hoverExitGeneration = 0
     /// Screen-coord anchor of the background press and the window's origin at drag
     /// start, so the card follows the cursor 1:1 in screen space.
     private var shelfDragScreenStart: NSPoint = .zero
@@ -276,12 +281,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseEntered(with event: NSEvent) {
+        hoverExitGeneration += 1
         setCardHovered(true)
     }
 
     override func mouseMoved(with event: NSEvent) {
         // Also asserted here: when the card slides open under a stationary pointer the
         // entered event can be missed, but the first twitch lands a mouseMoved.
+        hoverExitGeneration += 1
         setCardHovered(true)
         let point = convert(event.locationInWindow, from: nil)
         interaction.hoveredItemID = item(at: point)?.id
@@ -290,14 +297,34 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseExited(with event: NSEvent) {
-        interaction.hoveredItemID = nil
-        interaction.hoveredArrivalID = nil
-        guard !shelfDragActive else { return }
-        setCardHovered(false)
-        if interaction.isGrabberHovered {
-            interaction.isGrabberHovered = false
-            NSCursor.arrow.set()
+        hoverExitGeneration += 1
+        let generation = hoverExitGeneration
+
+        // A live panel resize can briefly invalidate/rebuild the tracking area and
+        // synthesize an exit. Re-check on the next main-loop turn, after the window and
+        // tracking geometry agree, before collapsing the grabber lane.
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.hoverExitGeneration == generation,
+                  !self.shelfDragActive,
+                  !self.cursorIsInsideWindow
+            else { return }
+
+            self.interaction.hoveredItemID = nil
+            self.interaction.hoveredArrivalID = nil
+            self.setCardHovered(false)
+            if self.interaction.isGrabberHovered {
+                self.interaction.isGrabberHovered = false
+                NSCursor.arrow.set()
+            }
         }
+    }
+
+    /// Screen-space containment is stable while the content view's tracking area is
+    /// being regenerated during an animated window resize.
+    private var cursorIsInsideWindow: Bool {
+        guard let window else { return false }
+        return window.frame.contains(NSEvent.mouseLocation)
     }
 
     /// Update the card-hover flag. The reserved handle lane is geometry-stable; this
