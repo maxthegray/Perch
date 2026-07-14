@@ -47,6 +47,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var reorderBaseOrder: [StoredItem] = []
     /// True once the gesture has handed off to a system drag (vend); local tracking stops.
     private var vendStarted = false
+    /// True only after this view receives the left mouse-down for the current gesture.
+    /// AppKit's context-menu tracking can consume that down while still forwarding later
+    /// drag/up events after the menu closes; those orphaned events must not move the card.
+    private var hasActiveLeftPress = false
     /// True while a background press is dragging the whole card (drag-to-pin).
     private var shelfDragActive = false
     /// Invalidates deferred mouse-exit checks. Resizing the panel rebuilds AppKit's
@@ -356,6 +360,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         resetDragState()
+        guard !isContextMenuOpen else { return }
+        hasActiveLeftPress = true
 
         if themeStore.theme.showsDeleteButton, themeStore.showsLabels,
            let index = rowIndex(at: point),
@@ -398,6 +404,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseDragged(with event: NSEvent) {
+        // Clicking outside an open NSMenu dismisses it, but AppKit can then forward the
+        // remaining drag events without the initiating mouse-down. Starting a card drag
+        // from that incomplete sequence reuses stale anchors and makes the shelf jump.
+        guard hasActiveLeftPress else { return }
+
         if let offer = pendingArrival {
             let point = convert(event.locationInWindow, from: nil)
             let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
@@ -455,6 +466,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard hasActiveLeftPress else { return }
+
         if let offer = pendingArrival {
             pendingArrival = nil
             let point = convert(event.locationInWindow, from: nil)
@@ -610,6 +623,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private func resetDragState() {
+        hasActiveLeftPress = false
         dragItem = nil
         pendingArrival = nil
         preservesSelectionForDrag = false
@@ -962,6 +976,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     // MARK: NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        // Menu tracking owns the current pointer sequence. Cancel any stale local
+        // gesture so the click that dismisses the menu cannot continue it as a drag.
+        pendingDeleteItem = nil
+        resetDragState()
         isContextMenuOpen = true
     }
 
