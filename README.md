@@ -20,11 +20,8 @@ It also understands file promises from apps like Photos, Mail, and Messages, so 
 
 Download `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases/latest), unzip it, and move Perch to your Applications folder.
 
-Perch isn't notarized yet, so macOS may stop it the first time you open it. Right-click the app and choose **Open** once, or clear the quarantine flag in Terminal:
-
-```sh
-xattr -dr com.apple.quarantine /Applications/Perch.app
-```
+Perch releases are signed with Developer ID and notarized by Apple for normal
+Gatekeeper installation.
 
 Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched, it quietly waits at the screen edge. You can enable Launch at Login from Settings.
 
@@ -50,6 +47,22 @@ Perch remembers these choices between launches and can check for updates through
 ## Your files stay yours
 
 Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
+
+## Releasing
+
+Create a **Developer ID Application** certificate once in Xcode under **Settings →
+Accounts → Manage Certificates**. Then save notarization credentials in Keychain:
+
+```sh
+./Scripts/setup-notarization.sh your-apple-account@example.com
+```
+
+After that, one command builds, Developer ID-signs, notarizes, staples, verifies,
+Sparkle-signs, and publishes each release:
+
+```sh
+./Scripts/release.sh 0.5.0
+```
 
 ## License
 

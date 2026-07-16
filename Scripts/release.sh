@@ -1,7 +1,7 @@
 #!/bin/bash
 #
-# Cut a new Perch release in one command: bump the version, build + sign + zip the app,
-# publish a GitHub Release, and update the appcast.
+# Cut a new Perch release in one command: bump the version, build + Developer ID
+# sign, notarize, staple, zip, publish a GitHub Release, and update the appcast.
 #
 #   ./Scripts/release.sh 0.2.0
 #
@@ -11,40 +11,41 @@ cd "$(dirname "$0")/.."
 VERSION="${1:?usage: release.sh <version>   e.g. ./Scripts/release.sh 0.2.0}"
 TAG="v${VERSION}"
 ZIP="/tmp/Perch.zip"
+NOTARY_ZIP="/tmp/Perch-notary.zip"
 APPCAST="appcast.xml"
 DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/Perch.zip"
-
-# Sparkle's sign_update tool (fetched by SwiftPM alongside the Sparkle framework).
-SIGN_UPDATE="$(find .build/artifacts -name sign_update -type f 2>/dev/null | head -1)"
-[ -n "${SIGN_UPDATE}" ] || { echo "sign_update not found -- run 'swift build -c release' first"; exit 1; }
+NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
 
 # 1. Stamp the version into the bundle.
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" Resources/Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" Resources/Info.plist
 
-# 2. Build + zip, then hash.
-./Scripts/build-app.sh
+# 2. Build with Developer ID, hardened runtime, and secure timestamps.
+PERCH_DISTRIBUTION=1 ./Scripts/build-app.sh
+
+# Sparkle's sign_update tool is fetched by SwiftPM alongside the framework.
+SIGN_UPDATE="$(find .build/artifacts -name sign_update -type f 2>/dev/null | head -1)"
+[ -n "${SIGN_UPDATE}" ] || { echo "sign_update not found after release build"; exit 1; }
+
+# 3. Submit a ZIP to Apple, then staple the resulting ticket to the app. ZIP files
+# cannot themselves be stapled, so the final distributable is created afterward.
+rm -f "${NOTARY_ZIP}"
+ditto -c -k --keepParent Perch.app "${NOTARY_ZIP}"
+xcrun notarytool submit "${NOTARY_ZIP}" \
+  --keychain-profile "${NOTARY_PROFILE}" \
+  --wait
+xcrun stapler staple Perch.app
+xcrun stapler validate Perch.app
+
+# 4. Verify Gatekeeper acceptance and create the final, stapled update archive.
+codesign --verify --deep --strict --verbose=2 Perch.app
+spctl --assess --type execute --verbose=4 Perch.app
 rm -f "${ZIP}"
 ditto -c -k --keepParent Perch.app "${ZIP}"
 SHA="$(shasum -a 256 "${ZIP}" | awk '{print $1}')"
 echo "sha256: ${SHA}"
 
-# 3. Commit the version bump on the app repo.
-if ! git diff --quiet Resources/Info.plist; then
-  git add Resources/Info.plist
-  git commit -m "Release ${TAG}"
-  git push origin HEAD
-fi
-
-# 4. Publish the GitHub Release.
-gh release create "${TAG}" "${ZIP}" \
-  --repo maxthegray/Perch \
-  --target main \
-  --title "Perch ${VERSION}" \
-  --notes "Download \`Perch.zip\`, unzip, and drag to /Applications. Right-click ▸ Open once (or \`xattr -dr com.apple.quarantine /Applications/Perch.app\`) to clear the Gatekeeper prompt."
-
-# 4b. Sign the zip with Sparkle's EdDSA key and regenerate the appcast so existing
-#     installs auto-update. The feed lives on main (SUFeedURL points at raw.github).
+# 5. Sign the final ZIP with Sparkle's EdDSA key and regenerate the appcast.
 SIG_ATTRS="$(${SIGN_UPDATE} "${ZIP}")"   # sparkle:edSignature="..." length="..."
 PUBDATE="$(LC_ALL=C date -u +"%a, %d %b %Y %H:%M:%S +0000")"
 cat > "${APPCAST}" <<EOF
@@ -66,8 +67,17 @@ cat > "${APPCAST}" <<EOF
   </channel>
 </rss>
 EOF
-git add "${APPCAST}"
-git commit -m "Appcast ${TAG}"
+
+# 6. Commit release metadata before publishing so the appcast exists on main.
+git add Resources/Info.plist "${APPCAST}"
+git commit -m "Release ${TAG}"
 git push origin HEAD
+
+# 7. Publish the notarized, stapled archive.
+gh release create "${TAG}" "${ZIP}" \
+  --repo maxthegray/Perch \
+  --target main \
+  --title "Perch ${VERSION}" \
+  --notes "Download \`Perch.zip\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple."
 
 echo "Released ${TAG}."
