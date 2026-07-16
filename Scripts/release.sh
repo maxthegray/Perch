@@ -16,6 +16,21 @@ APPCAST="appcast.xml"
 DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/Perch.zip"
 NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
 
+create_release_zip() {
+  local destination="$1"
+
+  rm -f "${destination}"
+  /usr/bin/zip -qry --symlinks "${destination}" Perch.app
+
+  # Finder metadata stored as AppleDouble files invalidates the sealed root of
+  # embedded frameworks when extracted by non-Apple tools (including Chrome's
+  # ZIP handling). Never publish an archive containing those entries.
+  if /usr/bin/unzip -Z1 "${destination}" | grep -Eq '(^|/)\._|^__MACOSX/'; then
+    echo "error: ${destination} contains AppleDouble metadata"
+    exit 1
+  fi
+}
+
 # 1. Stamp the version into the bundle.
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" Resources/Info.plist
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" Resources/Info.plist
@@ -29,8 +44,7 @@ SIGN_UPDATE="$(find .build/artifacts -name sign_update -type f 2>/dev/null | hea
 
 # 3. Submit a ZIP to Apple, then staple the resulting ticket to the app. ZIP files
 # cannot themselves be stapled, so the final distributable is created afterward.
-rm -f "${NOTARY_ZIP}"
-ditto -c -k --keepParent Perch.app "${NOTARY_ZIP}"
+create_release_zip "${NOTARY_ZIP}"
 xcrun notarytool submit "${NOTARY_ZIP}" \
   --keychain-profile "${NOTARY_PROFILE}" \
   --wait
@@ -40,8 +54,19 @@ xcrun stapler validate Perch.app
 # 4. Verify Gatekeeper acceptance and create the final, stapled update archive.
 codesign --verify --deep --strict --verbose=2 Perch.app
 spctl --assess --type execute --verbose=4 Perch.app
-rm -f "${ZIP}"
-ditto -c -k --keepParent Perch.app "${ZIP}"
+create_release_zip "${ZIP}"
+
+# Validate what users actually receive: extract with the system unzip tool and
+# re-run signature, ticket, and Gatekeeper checks on that extracted bundle.
+VERIFY_DIR="$(mktemp -d /tmp/Perch-release-verify.XXXXXX)"
+trap 'rm -rf "${VERIFY_DIR}"' EXIT
+/usr/bin/unzip -q "${ZIP}" -d "${VERIFY_DIR}"
+codesign --verify --deep --strict --verbose=2 "${VERIFY_DIR}/Perch.app"
+xcrun stapler validate "${VERIFY_DIR}/Perch.app"
+spctl --assess --type execute --verbose=4 "${VERIFY_DIR}/Perch.app"
+rm -rf "${VERIFY_DIR}"
+trap - EXIT
+
 SHA="$(shasum -a 256 "${ZIP}" | awk '{print $1}')"
 echo "sha256: ${SHA}"
 
