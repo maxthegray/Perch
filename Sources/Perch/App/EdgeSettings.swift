@@ -20,8 +20,8 @@ final class EdgeSettings: ObservableObject {
         }
     }
 
-    /// On a fresh install only the left dock is enabled; the user opts into the others.
-    private static let defaultEdges: Set<ShelfEdge> = [.left]
+    /// Fresh installs expose both reachable side docks; the notch remains opt-in.
+    private static let defaultEdges: Set<ShelfEdge> = [.left, .right]
 
     init() {
         if let raw = UserDefaults.standard.array(forKey: Self.key) as? [String] {
