@@ -2,16 +2,16 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v0.4.9/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v0.5.0/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 0.4.9</title>
-      <pubDate>Thu, 16 Jul 2026 14:46:47 +0000</pubDate>
-      <sparkle:version>0.4.9</sparkle:version>
-      <sparkle:shortVersionString>0.4.9</sparkle:shortVersionString>
+      <title>Version 0.5.0</title>
+      <pubDate>Thu, 16 Jul 2026 19:14:17 +0000</pubDate>
+      <sparkle:version>0.5.0</sparkle:version>
+      <sparkle:shortVersionString>0.5.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v0.4.9/Perch.zip" sparkle:edSignature="WJXJ5xyVoS8kAbb/dHQW+6HxH5ed9aKLS9qryJDbfYIsWX/b2bE3s9+qoDNwCv53xElHnSvCl71AUyYdY3blBw==" length="1743583" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v0.5.0/Perch.zip" sparkle:edSignature="uitS2SSryS778eO7QT+xIdUdIrruVhBTaKF8eROvNAlI7yn9XwZdYilVU+sBE/eEijB1rAMmPCnStXr5daeoDQ==" length="1766991" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
