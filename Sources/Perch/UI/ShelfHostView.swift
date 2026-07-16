@@ -51,14 +51,17 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// AppKit's context-menu tracking can consume that down while still forwarding later
     /// drag/up events after the menu closes; those orphaned events must not move the card.
     private var hasActiveLeftPress = false
-    /// True while a background press is dragging the whole card (drag-to-pin).
+    /// True while a shelf-move gesture is dragging the whole card (drag-to-pin).
     private var shelfDragActive = false
+    /// Captured at mouse-down so only the interaction selected in Settings can move the
+    /// shelf: its visible handle, or Command-drag anywhere on the card.
+    private var shelfDragArmed = false
     /// Invalidates deferred mouse-exit checks. Resizing the panel rebuilds AppKit's
     /// tracking geometry and can emit a transient exit even though the cursor is still
     /// inside the window; accepting that exit immediately reverses the resize and can
     /// make the grabber oscillate indefinitely at a window boundary.
     private var hoverExitGeneration = 0
-    /// Screen-coord anchor of the background press and the window's origin at drag
+    /// Screen-coord anchor of the shelf-move press and the window's origin at drag
     /// start, so the card follows the cursor 1:1 in screen space.
     private var shelfDragScreenStart: NSPoint = .zero
     private var shelfDragWindowOrigin: NSPoint = .zero
@@ -125,7 +128,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// resize) never flashes on screen.
     var onWillRemoveLastItem: (() -> Void)?
 
-    /// Gate + hooks for whole-card drags (the grab handle or a background press; from an
+    /// Gate + hooks for whole-card drags (the grab handle or Command-drag; from an
     /// edge they tear the docked card off). The controller answers whether a card drag
     /// may start, captures the docked frame when one begins, and decides pin vs.
     /// snap-back when it ends.
@@ -363,6 +366,20 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard !isContextMenuOpen else { return }
         hasActiveLeftPress = true
 
+        // Shelf movement takes precedence over row/delete/arrival interactions only
+        // when the selected gesture is used. In handle mode, ordinary row drags keep
+        // vending or reordering items. In Command mode, the modifier deliberately
+        // turns that same press into a whole-card move from anywhere on the shelf.
+        let requestedShelfDrag = themeStore.showsGrabHandle
+            ? grabberZoneContains(point)
+            : event.modifierFlags.contains(.command)
+        if requestedShelfDrag, canBeginShelfDrag?() == true {
+            shelfDragArmed = true
+            dragStartPoint = point
+            shelfDragScreenStart = NSEvent.mouseLocation
+            return
+        }
+
         if themeStore.theme.showsDeleteButton, themeStore.showsLabels,
            let index = rowIndex(at: point),
            deleteHitRect(forRow: index).contains(point) {
@@ -425,12 +442,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
         // A press that started on a delete button must not turn into a drag.
         guard pendingDeleteItem == nil, !vendStarted else { return }
-        guard let item = dragItem else {
-            // The press landed on the card's background (padding, row gaps, or the
-            // empty tile) — a drag there moves the whole card (drag-to-pin).
+        if shelfDragArmed {
             trackShelfDrag()
             return
         }
+        guard let item = dragItem else { return }
         let point = convert(event.locationInWindow, from: nil)
 
         // A selected batch vends as a unit. Moving inside the card must not begin a
@@ -495,7 +511,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             commitReorder()
         } else if shelfDragActive {
             onShelfDragEnded?()
-        } else if isFreeMode, store.items.isEmpty {
+        } else if isFreeMode, store.items.isEmpty, !shelfDragArmed {
             // A plain tap (no drag) on the empty tile body dismisses it — but not on
             // the grab handle, which is a drag affordance, not a close button.
             let point = convert(event.locationInWindow, from: nil)
@@ -601,7 +617,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         NSLog("Perch row drag (vend) started for \(items.count) item(s)")
     }
 
-    /// Track a background drag of the whole card: past a small slop the window follows
+    /// Track an armed drag of the whole card: past a small slop the window follows
     /// the cursor 1:1; the controller decides at mouse-up whether it detaches (pins as
     /// a free shelf) or snaps back to its edge.
     private func trackShelfDrag() {
@@ -630,6 +646,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         reorderActive = false
         vendStarted = false
         shelfDragActive = false
+        shelfDragArmed = false
         reorderBaseOrder = []
         interaction.draggingItemID = nil
         interaction.previewOrder = nil
@@ -645,13 +662,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         rowIndex(at: point).map { visibleItems[$0] }
     }
 
-    /// Whether the card currently shows the grab handle. Every movable card reveals it
-    /// only while hovered: a free-floating card must be unlocked, while a docked card
-    /// needs "Dragging Enabled" on.
+    /// Whether the card currently shows the grab handle. Handle mode reveals it only
+    /// while hovered, and a locked free-floating card never exposes movement affordances.
     /// Must mirror ShelfContentView's layout exactly.
     private var hasGrabber: Bool {
-        if isFreeMode { return !interaction.isLockedInPlace && interaction.isCardHovered }
-        return themeStore.showsGrabHandle && interaction.isCardHovered
+        themeStore.showsGrabHandle
+            && (!isFreeMode || !interaction.isLockedInPlace)
+            && interaction.isCardHovered
     }
 
     /// Distance from the row stack's top to the first row: just the content padding.
@@ -676,7 +693,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// Whether `point` (view coords) falls in the grab-handle strip pinned to the very
     /// top of a populated card, full width. The floored card's empty space elsewhere is
-    /// plain background (which also drags the card, but shouldn't light up the capsule).
+    /// plain background and is not draggable unless Command mode is selected.
     private func grabberZoneContains(_ point: NSPoint) -> Bool {
         let height = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         return hasGrabber && bounds.contains(point) && point.y < height

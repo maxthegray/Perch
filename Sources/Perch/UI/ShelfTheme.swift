@@ -138,8 +138,8 @@ final class ThemeStore: ObservableObject {
     private static let widthScaleKey = "Perch.WidthScale"
     private static let heightFractionKey = "Perch.HeightFraction"
 
-    /// Bounds of the width slider (75%–150% of the design width).
-    static let widthScaleRange: ClosedRange<CGFloat> = 0.75...1.5
+    /// Bounds of the width slider (75%–200% of the design width).
+    static let widthScaleRange: ClosedRange<CGFloat> = 0.75...2
     /// Bounds of the height slider: 0 = hug the content (the default), 1 = fill the
     /// screen's usable height.
     static let heightFractionRange: ClosedRange<CGFloat> = 0...1
@@ -160,8 +160,9 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// Whether a populated card shows the grab handle above its rows (the always-safe
-    /// place to drag the whole card). Off, the card is only draggable by its background.
+    /// How the user moves the shelf. On, hovering reveals a dedicated grab handle;
+    /// off, holding Command while dragging anywhere on the card moves it instead.
+    /// The existing boolean key is retained so upgrades preserve the user's choice.
     @Published var showsGrabHandle: Bool {
         didSet {
             guard showsGrabHandle != oldValue else { return }

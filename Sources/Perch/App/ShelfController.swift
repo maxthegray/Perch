@@ -143,6 +143,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var windowMoveObserver: NSObjectProtocol?
     /// Mirrors the panel's actual animated size into the dock preview frame-by-frame.
     private var windowResizeObserver: NSObjectProtocol?
+    /// When snapped beside the system Dock, identifies which live end Perch follows.
+    private var dockAttachment: DockSnapTargetKind?
+    /// Streams the Dock's Accessibility position into the panel so both auto-hide
+    /// animations share the same progress.
+    private var dockTrackingTask: Task<Void, Never>?
 
     init() throws {
         holding = try HoldingDirectory.standard()
@@ -199,18 +204,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
         }
 
-        // Dragging the card's grab handle or its background (not a row) moves the whole
-        // card. From an edge it tears the docked shelf off: past a small distance it
-        // pins where it's dropped as a free-floating shelf, otherwise it snaps back. A
-        // free shelf moves freely unless it is released near an enabled dock, where it
-        // snaps home and resumes normal edge behavior. The
-        // "Show Drag Handle" toggle is the single switch for the docked drag-out; a free
-        // shelf stays movable regardless so it can never get stuck — unless the user
-        // explicitly locked it in place.
+        // Dragging the card with the configured gesture (handle or Command-drag) moves
+        // the whole card. From an edge it tears the docked shelf off: past a small
+        // distance it pins where it's dropped as a free-floating shelf; otherwise it
+        // snaps back. A free shelf moves freely unless it is released near an enabled
+        // dock, where it snaps home and resumes normal edge behavior.
+        // A free shelf stays movable in either gesture mode unless the user explicitly
+        // locks it in place.
         hostView.canBeginShelfDrag = { [weak self] in
             guard let self, self.panel.isVisible else { return false }
             if self.revealMode == .free { return !self.freeShelfLocked }
-            return self.themeStore.showsGrabHandle
+            return true
         }
 
         // "Lock Position" on a free shelf: freeze it where it stands (bar hidden, no
@@ -220,6 +224,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onShelfDragBegan = { [weak self] in
             guard let self else { return }
+            self.detachFromSystemDock(makeVisible: false)
             self.clearDockSnapPreview()
             if self.revealMode == .edge {
                 self.dragOutDockedFrame = self.panel.frame
@@ -763,9 +768,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// separate clock, so SwiftUI consumes exactly the height AppKit adds each frame.
     private func resizeForGrabberHover(_ hovered: Bool) {
         guard panel.isVisible, !dismissingFreeShelf else { return }
-        let canShowHandle = revealMode == .free
-            ? !freeShelfLocked
-            : themeStore.showsGrabHandle
+        let canShowHandle = themeStore.showsGrabHandle
+            && (revealMode != .free || !freeShelfLocked)
         // Capability gates opening, never closing. A setting or lock change can revoke
         // the handle while its reveal progress is still nonzero.
         guard !hovered || canShowHandle else { return }
@@ -807,9 +811,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Reconcile the progress-driven handle after a capability change that does not
     /// itself generate a mouse-enter/exit event (settings, locking, or re-docking).
     private func reconcileGrabberForCurrentState() {
-        let canShowHandle = revealMode == .free
-            ? !freeShelfLocked
-            : themeStore.showsGrabHandle
+        let canShowHandle = themeStore.showsGrabHandle
+            && (revealMode != .free || !freeShelfLocked)
         let shouldShow = hostView.isCardHovered && canShowHandle
         measuredContentHeight = nil
         let targetProgress: CGFloat = shouldShow ? 1 : 0
@@ -935,6 +938,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// locked free shelf is a fixture — the summon must not yank it from its spot.
     private func summonAtCursor(_ point: NSPoint) {
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
+        detachFromSystemDock(makeVisible: false)
         // A deliberate summon adopts any preview shelf (the settings closure re-flags).
         shelfIsSettingsPreview = false
         // A summon within the dismissal fade must lift the resize hold, or the fresh
@@ -984,6 +988,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let width = min(cardWidth(for: freeSourceEdge), visible.width - 16)
         let usable = visible.height - 24
         let height = min(max(fittedContentHeight(), themeStore.heightFraction * usable), usable)
+        let size = NSSize(width: width, height: height)
+
+        if let dockAttachment,
+           let attached = systemDockFrames(for: size, followsVisibility: true)
+            .first(where: { $0.kind == dockAttachment }) {
+            return attached.frame
+        }
 
         let anchor = freeTopLeft ?? NSPoint(x: visible.midX - width / 2, y: visible.midY + height / 2)
         let x = min(max(anchor.x, visible.minX + 8), visible.maxX - width - 8)
@@ -1006,7 +1017,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Remember the user's chosen position after they drag the free shelf by its handle.
     private func captureFreeOrigin() {
-        guard revealMode == .free, panel.isVisible else { return }
+        guard revealMode == .free, dockAttachment == nil, panel.isVisible else { return }
         freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
     }
 
@@ -1020,9 +1031,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// movements around the threshold from flickering it on and off.
     private static let dockPreviewExitDistance: CGFloat = 145
 
+    private enum DockSnapTargetKind: Equatable {
+        case edge(ShelfEdge)
+        case dockLeading
+        case dockTrailing
+    }
+
     private struct DockSnapTarget {
         let screen: NSScreen
-        let edge: ShelfEdge
+        let kind: DockSnapTargetKind
         let frame: NSRect
         let distance: CGFloat
     }
@@ -1064,31 +1081,131 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// free card. `edgeStrips` already excludes disabled edges, notch docks on screens
     /// without a notch, and side edges that are internal seams between displays.
     private func nearestDockSnapTarget() -> DockSnapTarget? {
-        edgeStrips.compactMap { strip -> DockSnapTarget? in
+        availableDockSnapTargets()
+            .filter { $0.distance <= Self.dockSnapDistance }
+            .min { $0.distance < $1.distance }
+    }
+
+    private func availableDockSnapTargets() -> [DockSnapTarget] {
+        let edgeTargets = edgeStrips.map { strip -> DockSnapTarget in
             let frame = panelFrame(for: strip.pinnedScreen, edge: strip.edge)
             let distance = hypot(panel.frame.midX - frame.midX, panel.frame.midY - frame.midY)
-            guard distance <= Self.dockSnapDistance else { return nil }
             return DockSnapTarget(
                 screen: strip.pinnedScreen,
-                edge: strip.edge,
+                kind: .edge(strip.edge),
                 frame: frame,
                 distance: distance
             )
         }
-        .min { $0.distance < $1.distance }
+        return edgeTargets + dockAdjacentSnapTargets()
+    }
+
+    /// Two live targets at the Dock's ends. Horizontal Docks get left/right targets;
+    /// vertical Docks get below/above targets. Geometry comes from Accessibility so the
+    /// positions follow the actual item-dependent Dock length instead of an estimate.
+    private func dockAdjacentSnapTargets() -> [DockSnapTarget] {
+        systemDockFrames(for: panel.frame.size, followsVisibility: false).map { placement in
+            DockSnapTarget(
+                screen: placement.screen,
+                kind: placement.kind,
+                frame: placement.frame,
+                distance: hypot(
+                    panel.frame.midX - placement.frame.midX,
+                    panel.frame.midY - placement.frame.midY
+                )
+            )
+        }
+    }
+
+    private struct SystemDockPlacement {
+        let screen: NSScreen
+        let kind: DockSnapTargetKind
+        let frame: NSRect
+    }
+
+    /// Frames beside the Dock at its fully shown position, or translated off-screen by
+    /// the Dock's current auto-hide progress. The card travels its own full dimension
+    /// while the smaller Dock travels its full thickness, so both disappear together.
+    private func systemDockFrames(
+        for size: NSSize,
+        followsVisibility: Bool,
+        requireFeatureEnabled: Bool = true
+    ) -> [SystemDockPlacement] {
+        guard let dock = DockGeometryReader.currentGeometry(
+            useCache: !followsVisibility,
+            requireFeatureEnabled: requireFeatureEnabled
+        ) else { return [] }
+        let gap: CGFloat = 12
+        let inset: CGFloat = 8
+        let screen = dock.screen.frame
+        let shownCandidates: [(DockSnapTargetKind, NSPoint)]
+        let visibility: CGFloat
+
+        switch dock.orientation {
+        case .horizontal:
+            let y = screen.minY + inset
+            shownCandidates = [
+                (.dockLeading, NSPoint(x: dock.frame.minX - gap - size.width, y: y)),
+                (.dockTrailing, NSPoint(x: dock.frame.maxX + gap, y: y))
+            ]
+            let hiddenTop = screen.minY + 4
+            visibility = min(max(
+                (dock.frame.maxY - hiddenTop) / max(1, dock.frame.height + 4),
+                0
+            ), 1)
+        case .vertical:
+            let dockIsLeft = dock.frame.midX < screen.midX
+            let x = dockIsLeft
+                ? dock.frame.maxX + gap
+                : dock.frame.minX - gap - size.width
+            shownCandidates = [
+                (.dockLeading, NSPoint(x: x, y: dock.frame.minY - gap - size.height)),
+                (.dockTrailing, NSPoint(x: x, y: dock.frame.maxY + gap))
+            ]
+            let visibleThickness = dockIsLeft
+                ? dock.frame.maxX - (screen.minX + 4)
+                : (screen.maxX - 4) - dock.frame.minX
+            visibility = min(max(visibleThickness / max(1, dock.frame.width + 4), 0), 1)
+        }
+
+        return shownCandidates.compactMap { kind, shownOrigin in
+            let shownFrame = NSRect(origin: shownOrigin, size: size)
+            guard shownFrame.minX >= screen.minX + inset,
+                  shownFrame.maxX <= screen.maxX - inset,
+                  shownFrame.minY >= screen.minY + inset,
+                  shownFrame.maxY <= screen.maxY - inset
+            else { return nil }
+
+            var liveOrigin = shownOrigin
+            if followsVisibility {
+                switch dock.orientation {
+                case .horizontal:
+                    let hiddenY = screen.minY - size.height
+                    liveOrigin.y = hiddenY + (shownOrigin.y - hiddenY) * visibility
+                case .vertical:
+                    let dockIsLeft = dock.frame.midX < screen.midX
+                    let hiddenX = dockIsLeft ? screen.minX - size.width : screen.maxX
+                    liveOrigin.x = hiddenX + (shownOrigin.x - hiddenX) * visibility
+                }
+            }
+            return SystemDockPlacement(
+                screen: dock.screen,
+                kind: kind,
+                frame: NSRect(origin: liveOrigin, size: size)
+            )
+        }
     }
 
     /// Recompute the latched preview target using the slightly wider exit radius. This
     /// keeps the indicator and release behavior in agreement throughout the buffer.
     private func refreshedPreviewedDockTarget() -> DockSnapTarget? {
         guard let previewedDockTarget,
-              let strip = edgeStrips.first(where: {
-                  $0.pinnedScreen == previewedDockTarget.screen && $0.edge == previewedDockTarget.edge
-              }) else { return nil }
-        let frame = panelFrame(for: strip.pinnedScreen, edge: strip.edge)
-        let distance = hypot(panel.frame.midX - frame.midX, panel.frame.midY - frame.midY)
-        guard distance <= Self.dockPreviewExitDistance else { return nil }
-        return DockSnapTarget(screen: strip.pinnedScreen, edge: strip.edge, frame: frame, distance: distance)
+              let refreshed = availableDockSnapTargets().first(where: {
+                  $0.screen == previewedDockTarget.screen && $0.kind == previewedDockTarget.kind
+              }),
+              refreshed.distance <= Self.dockPreviewExitDistance
+        else { return nil }
+        return refreshed
     }
 
     /// Reveal the exact landing frame while a free shelf is inside the snap radius.
@@ -1117,17 +1234,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// tick. Only its origin is recomputed for the dock anchor, so width and height are
     /// never approximated by a second independent animation.
     private func syncDockPreviewToLivePanelSize() {
-        guard revealMode == .edge, let previewedDockTarget else { return }
+        guard revealMode == .edge,
+              let previewedDockTarget,
+              case let .edge(edge) = previewedDockTarget.kind
+        else { return }
         let frame = Self.panelFrame(
             for: previewedDockTarget.screen,
-            edge: previewedDockTarget.edge,
+            edge: edge,
             contentHeight: panel.frame.height,
             width: panel.frame.width,
             centerY: nil
         )
         self.previewedDockTarget = DockSnapTarget(
             screen: previewedDockTarget.screen,
-            edge: previewedDockTarget.edge,
+            kind: previewedDockTarget.kind,
             frame: frame,
             distance: previewedDockTarget.distance
         )
@@ -1148,6 +1268,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Animate a free shelf into an enabled dock and restore the ordinary edge lifecycle:
     /// enabled tab behavior, empty-shelf auto-retraction, and future edge reveals.
     private func snapFreeShelf(to target: DockSnapTarget) {
+        if case .dockLeading = target.kind {
+            snapFreeShelfBesideDock(to: target)
+            return
+        }
+        if case .dockTrailing = target.kind {
+            snapFreeShelfBesideDock(to: target)
+            return
+        }
+        guard case let .edge(edge) = target.kind else { return }
+        clearSystemDockAttachment()
+
         // Keep the destination ghost in place while the real card travels toward it,
         // then remove it just before the card finishes covering the target.
         previewedDockTarget = target
@@ -1164,11 +1295,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         freeShelfLocked = false
         freeTopLeft = nil
         summonScreen = nil
-        freeSourceEdge = target.edge
+        freeSourceEdge = edge
         preferredScreen = target.screen
         shownScreen = target.screen
-        preferredEdge = target.edge
-        shownEdge = target.edge
+        preferredEdge = edge
+        shownEdge = edge
         revealedForDrag = false
         dragOutDockedFrame = nil
         pointerInRegion = false
@@ -1197,16 +1328,96 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                   self.panel.isVisible,
                   self.revealMode == .edge,
                   self.shownScreen == target.screen,
-                  self.shownEdge == target.edge else { return }
+                  self.shownEdge == edge else { return }
             self.reconcileGrabberForCurrentState()
             self.startRetractWatcher()
         }
-        NSLog("Perch snapped free shelf to \(target.edge.rawValue) dock")
+        NSLog("Perch snapped free shelf to \(edge.rawValue) edge")
+    }
+
+    /// Land at one end of the live system Dock and adopt its visibility lifecycle.
+    /// Perch remains a free-layout card, but its origin follows the Dock until the user
+    /// grabs it again or snaps it to a screen edge.
+    private func snapFreeShelfBesideDock(to target: DockSnapTarget) {
+        previewedDockTarget = target
+        dockSnapPreviewHideTask?.cancel()
+        dockSnapPreviewHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            self?.dockSnapPreview.hide()
+            self?.previewedDockTarget = nil
+            self?.dockSnapPreviewHideTask = nil
+        }
+        shelfIsSettingsPreview = false
+        freeShelfLocked = false
+        summonScreen = target.screen
+        freeTopLeft = nil
+        dockAttachment = target.kind
+        hostView.setLockedInPlace(false)
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        windowController.usesFreeAnimation = true
+        windowController.resize(
+            to: target.frame,
+            animated: true,
+            duration: 0.36,
+            timing: CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+        )
+        startSystemDockTracking()
+        NSLog("Perch snapped free shelf beside the Dock")
+    }
+
+    private func startSystemDockTracking() {
+        dockTrackingTask?.cancel()
+        guard let attachment = dockAttachment else { return }
+        dockTrackingTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.dockAttachment == attachment else { return }
+                if !UserDefaults.standard.bool(forKey: DockGeometryReader.enabledKey) {
+                    self.detachFromSystemDock(makeVisible: true)
+                    return
+                }
+                if let placement = self.systemDockFrames(
+                    for: self.panel.frame.size,
+                    followsVisibility: true
+                ).first(where: { $0.kind == attachment }) {
+                    // Direct origin updates preserve the Dock's live timing instead of
+                    // layering a second AppKit animation on top of it.
+                    self.panel.setFrameOrigin(placement.frame.origin)
+                }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
+    /// Stop following the Dock. A user-initiated drag keeps the current presentation
+    /// position; disabling the feature restores the fully shown adjacent position.
+    private func detachFromSystemDock(makeVisible: Bool) {
+        guard let attachment = dockAttachment else { return }
+        if makeVisible,
+           let placement = systemDockFrames(
+            for: panel.frame.size,
+            followsVisibility: false,
+            requireFeatureEnabled: false
+           )
+            .first(where: { $0.kind == attachment }) {
+            panel.setFrameOrigin(placement.frame.origin)
+        }
+        clearSystemDockAttachment()
+        summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
+            ?? summonScreen
+        freeTopLeft = NSPoint(x: panel.frame.minX, y: panel.frame.maxY)
+    }
+
+    private func clearSystemDockAttachment() {
+        dockAttachment = nil
+        dockTrackingTask?.cancel()
+        dockTrackingTask = nil
     }
 
     /// Convert the dragged-out card into a free-floating shelf pinned at its current
     /// position — the drag-out twin of `summonAtCursor`.
     private func pinShelfAtCurrentPosition() {
+        clearSystemDockAttachment()
         summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
             ?? NSScreen.main ?? NSScreen.screens.first
         revealMode = .free
@@ -1254,6 +1465,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// the position lock — the next free shelf starts movable.
     private func dismissFreeShelf() {
         dismissingFreeShelf = true
+        clearSystemDockAttachment()
         clearDockSnapPreview()
         revealMode = .edge
         freeShelfLocked = false
@@ -1388,9 +1600,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func contentHeight(for itemCount: Int) -> CGFloat {
         // This is the desired final height; live intermediate geometry comes from
         // `grabberRevealProgress` synchronized with the window animation.
-        let showsGrabber = hostView.isCardHovered && (revealMode == .free
-            ? !freeShelfLocked
-            : themeStore.showsGrabHandle)
+        let showsGrabber = hostView.isCardHovered
+            && themeStore.showsGrabHandle
+            && (revealMode != .free || !freeShelfLocked)
         let ghostCount = arrivals.suppressed ? 0 : arrivals.offers.count
         let rowCount = itemCount + ghostCount
         guard rowCount > 0 else {
@@ -1809,6 +2021,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
+        clearSystemDockAttachment()
 
         // Docking at an edge clears any leftover free-mode layout, including the lock.
         dismissingFreeShelfResetTask?.cancel()
