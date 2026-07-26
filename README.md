@@ -30,7 +30,7 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 - **Put something aside.** Start dragging and Perch can open automatically at the nearest enabled edge. Drop onto the shelf to keep the item there.
 - **Pick it up later.** Hover the edge to bring Perch back, then drag the item into Finder or another app. Dragging out can move the item off the shelf or leave a copy behind.
 - **Bring the shelf to you.** Shake the pointer to summon Perch near the cursor. If you'd rather keep it somewhere specific, enable dragging, pull it away from the edge, and optionally lock it in place.
-- **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Click one to bring it onto the shelf.
+- **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Downloads that finish together collapse into a session you can expand, inspect, or add all at once.
 - **Right-click for the useful stuff.** Quick Look, Delete, Return, History, Settings, and update checks are all close at hand.
 
 ## Make it yours

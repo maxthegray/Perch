@@ -23,6 +23,11 @@ let package = Package(
                 // The embedded Sparkle.framework lives in Perch.app/Contents/Frameworks.
                 .unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@executable_path/../Frameworks"])
             ]
+        ),
+        .testTarget(
+            name: "PerchTests",
+            dependencies: ["Perch"],
+            path: "Tests/PerchTests"
         )
     ]
 )

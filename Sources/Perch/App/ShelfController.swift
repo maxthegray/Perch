@@ -262,9 +262,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.settingsWindow.show()
         }
 
-        // Clicking a recent-arrival ghost brings the file aboard as a real item.
-        hostView.onAdoptArrival = { [weak self] offer in
+        // Recent downloads can be adopted individually or as one temporal session.
+        hostView.onAdoptArrival = { [weak self] offer, _ in
             self?.adoptArrival(offer)
+        }
+        hostView.onAdoptArrivalSession = { [weak self] session in
+            self?.adoptArrivalSession(session) ?? []
+        }
+        hostView.onExpandArrivalSession = { [weak self] session in
+            self?.arrivals.expand(session)
+        }
+        hostView.onDismissArrival = { [weak self] ghost in
+            self?.dismissArrival(ghost)
         }
 
         // A file put back where it came from must not bounce straight back as an offer.
@@ -476,7 +485,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         // Ghost rows appearing/leaving change the card's height (and, when empty, its
         // width). Same willSet/next-pass dance as the toggles above.
-        arrivalsCancellable = arrivals.$offers
+        arrivalsCancellable = arrivals.$visibleGhosts
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -502,9 +511,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             try? await Task.sleep(for: .milliseconds(700))
             guard let self, !Task.isCancelled else { return }
 
-            let previousIDs = Set(self.arrivals.offers.map(\.id))
+            let previousIDs = Set(
+                self.arrivals.sessions.flatMap(\.offers).map(\.id)
+            )
             self.refreshArrivals()
-            let newIDs = Set(self.arrivals.offers.map(\.id)).subtracting(previousIDs)
+            let newIDs = Set(
+                self.arrivals.sessions.flatMap(\.offers).map(\.id)
+            ).subtracting(previousIDs)
             guard !newIDs.isEmpty else { return }
 
             if self.panel.isVisible {
@@ -515,7 +528,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
 
             self.refreshArrivals(markRevealed: true)
-            guard !self.arrivals.offers.isEmpty else { return }
+            guard !self.arrivals.visibleGhosts.isEmpty else { return }
             self.revealAtPreferredEdge()
             self.scheduleArrivalAutoHide()
         }
@@ -557,7 +570,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// semantics — ownership moves, origin recorded so ✕ can put it back; copy fallback
     /// if the move is refused) and insert the item at the front.
     @discardableResult
-    private func adoptArrival(_ offer: ArrivalOffer) -> StoredItem? {
+    private func adoptArrival(
+        _ offer: ArrivalOffer,
+        refreshAfterAdoption: Bool = true
+    ) -> StoredItem? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
@@ -604,9 +620,30 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         store.insert(item, at: nil)
         // The copy-fallback case leaves the original in the folder; the origin-path
         // exclusion keeps it from being re-offered.
-        refreshArrivals()
+        if refreshAfterAdoption {
+            refreshArrivals()
+        }
         NSLog("Perch adopted arrival \(offer.name)")
         return item
+    }
+
+    private func adoptArrivalSession(_ session: ArrivalSession) -> [StoredItem] {
+        // Each individual insert goes to the front, so process oldest-first to leave
+        // the session's newest-first presentation order intact on the shelf.
+        let adopted = session.offers.reversed().compactMap { offer in
+            adoptArrival(offer, refreshAfterAdoption: false)
+        }
+        refreshArrivals()
+        return adopted
+    }
+
+    private func dismissArrival(_ ghost: ArrivalGhost) {
+        switch ghost {
+        case let .offer(offer, _):
+            arrivals.dismiss(offer)
+        case let .summary(session, _):
+            arrivals.dismiss(session)
+        }
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -1624,7 +1661,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let showsGrabber = hostView.isCardHovered
             && themeStore.showsGrabHandle
             && (revealMode != .free || !freeShelfLocked)
-        let ghostCount = arrivals.suppressed ? 0 : arrivals.offers.count
+        let ghostCount = arrivals.suppressed ? 0 : arrivals.visibleGhosts.count
         let rowCount = itemCount + ghostCount
         guard rowCount > 0 else {
             return (dragActive ? Self.dropTargetHeight : Self.emptyStateHeight)
@@ -1688,7 +1725,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// a comfortable list width.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
         // An empty shelf showing ghost rows needs the full list width for their names.
-        let showsGhosts = !arrivals.suppressed && !arrivals.offers.isEmpty
+        let showsGhosts = !arrivals.suppressed && !arrivals.visibleGhosts.isEmpty
         if store.items.isEmpty && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }

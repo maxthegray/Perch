@@ -20,9 +20,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var activeDragSource: ItemDragSource?
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
-    /// The temporary arrival offer under the right-click, dismissed without touching
-    /// the file that remains in its original folder.
-    private var menuTargetArrival: ArrivalOffer?
+    /// The temporary arrival row under the right-click, acted on without touching
+    /// unrelated files in the watched folder.
+    private var menuTargetArrival: ArrivalGhost?
     /// True while the right-click context menu (or one of its submenus) is open. The
     /// controller checks this so an empty shelf doesn't retract out from under the menu
     /// when the pointer moves into a submenu outside the card.
@@ -32,7 +32,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var pendingDeleteItem: StoredItem?
     /// Set on mouse-down over a recent-arrival ghost row. A click adopts it in place;
     /// crossing the drag threshold adopts it and immediately begins a normal vend.
-    private var pendingArrival: ArrivalOffer?
+    private var pendingArrival: ArrivalGhost?
     /// The row pressed at mouse-down — a pending drag that becomes either an in-shelf
     /// reorder (pointer stays inside) or a vend-out (pointer leaves the shelf).
     private var dragItem: StoredItem?
@@ -105,9 +105,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
-    /// Called when the user clicks a recent-arrival ghost row; the controller moves the
-    /// file onto the shelf as a real item.
-    var onAdoptArrival: ((ArrivalOffer) -> StoredItem?)?
+    /// Recent-arrival actions are performed by the controller because they mutate the
+    /// holding directory and the shelf's item list.
+    var onAdoptArrival: ((ArrivalOffer, ArrivalSession) -> StoredItem?)?
+    var onAdoptArrivalSession: ((ArrivalSession) -> [StoredItem])?
+    var onExpandArrivalSession: ((ArrivalSession) -> Void)?
+    var onDismissArrival: ((ArrivalGhost) -> Void)?
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
@@ -299,7 +302,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         setCardHovered(true)
         let point = convert(event.locationInWindow, from: nil)
         interaction.hoveredItemID = item(at: point)?.id
-        interaction.hoveredArrivalID = arrivalIndex(at: point).map { ghostOffers[$0].id }
+        interaction.hoveredArrivalID = arrivalIndex(at: point).map { ghostRows[$0].id }
         updateGrabberHover(at: point)
     }
 
@@ -390,7 +393,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // A press on a ghost row arms either a click-to-adopt or drag-to-vend. It must
         // not fall through to the empty-tile dismissal or whole-card drag.
         if let ghostIndex = arrivalIndex(at: point) {
-            pendingArrival = ghostOffers[ghostIndex]
+            pendingArrival = ghostRows[ghostIndex]
             dragStartPoint = point
             return
         }
@@ -426,14 +429,25 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // from that incomplete sequence reuses stale anchors and makes the shelf jump.
         guard hasActiveLeftPress else { return }
 
-        if let offer = pendingArrival {
+        if let ghost = pendingArrival {
             let point = convert(event.locationInWindow, from: nil)
             let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
             guard moved >= 4 else { return }
             pendingArrival = nil
-            guard let item = onAdoptArrival?(offer) else {
+
+            let adoptedItems: [StoredItem]
+            switch ghost {
+            case let .offer(offer, session):
+                adoptedItems = onAdoptArrival?(offer, session).map { [$0] } ?? []
+            case let .summary(session, _):
+                adoptedItems = onAdoptArrivalSession?(session) ?? []
+            }
+            guard let item = adoptedItems.first else {
                 resetDragState()
                 return
+            }
+            if adoptedItems.count > 1 {
+                interaction.selectedItemIDs = Set(adoptedItems.map(\.id))
             }
             dragItem = item
             startVend(item, event: event)
@@ -484,14 +498,21 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     override func mouseUp(with event: NSEvent) {
         guard hasActiveLeftPress else { return }
 
-        if let offer = pendingArrival {
+        if let ghost = pendingArrival {
             pendingArrival = nil
             let point = convert(event.locationInWindow, from: nil)
             if hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y) < 6,
                let index = arrivalIndex(at: point),
-               ghostOffers[index].id == offer.id {
+               ghostRows[index].id == ghost.id {
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-                _ = onAdoptArrival?(offer)
+                switch ghost {
+                case let .offer(offer, session):
+                    _ = onAdoptArrival?(offer, session)
+                case let .summary(session, .expand):
+                    _ = onAdoptArrivalSession?(session)
+                case let .summary(session, .addAll):
+                    _ = onAdoptArrivalSession?(session)
+                }
             }
             resetDragState()
             return
@@ -722,7 +743,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let grabber = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         return RowMetrics.stackedRowPitch(
             availableHeight: max(0, bounds.height - grabber),
-            rowCount: visibleItems.count + ghostOffers.count,
+            rowCount: visibleItems.count + ghostRows.count,
             rowHeight: stackedPreviewSide,
             rowSpacing: theme.rowSpacing,
             contentPadding: theme.contentPadding
@@ -734,7 +755,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func stackedGlobalRowIndex(at point: NSPoint) -> Int? {
         guard stackedPreviewContains(x: point.x) else { return nil }
         let theme = themeStore.theme
-        let count = visibleItems.count + ghostOffers.count
+        let count = visibleItems.count + ghostRows.count
         guard count > 0 else { return nil }
         let contentY = point.y - contentTopOffset + contentScrollOffsetY()
             - theme.contentPadding
@@ -821,8 +842,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     // MARK: Recent-arrival ghosts (hit math mirrors ShelfContentView's placements)
 
     /// The ghost rows as currently rendered (hidden while a system drag is in flight).
-    private var ghostOffers: [ArrivalOffer] {
-        arrivals.suppressed ? [] : arrivals.offers
+    private var ghostRows: [ArrivalGhost] {
+        arrivals.suppressed ? [] : arrivals.visibleGhosts
     }
 
     /// The top edge (pre-scroll, view coords) of ghost row `index`. On a populated
@@ -843,7 +864,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     /// The index of the ghost row under `point`, or nil.
     private func arrivalIndex(at point: NSPoint) -> Int? {
-        let ghosts = ghostOffers
+        let ghosts = ghostRows
         guard !ghosts.isEmpty else { return nil }
         if usesStackedRows {
             guard let index = stackedGlobalRowIndex(at: point) else { return nil }
@@ -966,12 +987,28 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.delegate = self
 
         if let ghostIndex = arrivalIndex(at: point) {
+            let ghost = ghostRows[ghostIndex]
+            if case let .summary(session, .expand) = ghost {
+                // A grouped row's primary click is Add All. Right-click is the quiet
+                // alternate gesture for revealing its individual files.
+                onExpandArrivalSession?(session)
+                return nil
+            }
+
             menuTargetItem = nil
-            menuTargetArrival = ghostOffers[ghostIndex]
+            menuTargetArrival = ghost
             interaction.selectedItemIDs.removeAll()
 
+            let adopt = NSMenuItem(
+                title: arrivalAdoptMenuTitle(for: ghost),
+                action: #selector(adoptArrivalMenuAction(_:)),
+                keyEquivalent: ""
+            )
+            adopt.target = self
+            menu.addItem(adopt)
+
             let dismiss = NSMenuItem(
-                title: "Dismiss",
+                title: arrivalDismissMenuTitle(for: ghostRows[ghostIndex]),
                 action: #selector(dismissArrivalMenuAction(_:)),
                 keyEquivalent: ""
             )
@@ -1082,6 +1119,26 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return menu
     }
 
+    private func arrivalAdoptMenuTitle(for ghost: ArrivalGhost) -> String {
+        switch ghost {
+        case .summary(_, .expand):
+            return "Add All Downloads"
+        case let .summary(session, .addAll):
+            return "Add All \(session.offers.count) Downloads"
+        case .offer:
+            return "Add to Perch"
+        }
+    }
+
+    private func arrivalDismissMenuTitle(for ghost: ArrivalGhost) -> String {
+        switch ghost {
+        case let .summary(session, _):
+            return "Dismiss \(session.offers.count) Downloads"
+        case .offer:
+            return "Dismiss"
+        }
+    }
+
     // MARK: NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
@@ -1129,9 +1186,22 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menuTargetItem = nil
     }
 
+    @objc private func adoptArrivalMenuAction(_ sender: NSMenuItem) {
+        guard let ghost = menuTargetArrival else { return }
+        switch ghost {
+        case let .offer(offer, session):
+            _ = onAdoptArrival?(offer, session)
+        case let .summary(session, .expand):
+            onExpandArrivalSession?(session)
+        case let .summary(session, .addAll):
+            _ = onAdoptArrivalSession?(session)
+        }
+        menuTargetArrival = nil
+    }
+
     @objc private func dismissArrivalMenuAction(_ sender: NSMenuItem) {
-        guard let offer = menuTargetArrival else { return }
-        arrivals.dismiss(offer)
+        guard let ghost = menuTargetArrival else { return }
+        onDismissArrival?(ghost)
         menuTargetArrival = nil
     }
 

@@ -205,7 +205,7 @@ struct ShelfContentView: View {
                 .clipped()
             if store.items.isEmpty {
                 Group {
-                    if ghostOffers.isEmpty {
+                    if ghostRows.isEmpty {
                         emptyState
                             .background(heightReader(addingGrabberStrip: grabberHeight))
                     } else if themeStore.stacksItems {
@@ -230,7 +230,7 @@ struct ShelfContentView: View {
                         .background(heightReader(addingGrabberStrip: grabberHeight))
                     }
                 }
-                .animation(.easeOut(duration: 0.18), value: ghostOffers)
+                .animation(.easeOut(duration: 0.18), value: ghostRows)
                 .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
@@ -287,19 +287,19 @@ struct ShelfContentView: View {
 
     /// Recent-arrival ghosts, hidden while a drag is in flight (`suppressed`) so they
     /// never shift the drop geometry under the cursor.
-    private var ghostOffers: [ArrivalOffer] {
-        arrivals.suppressed ? [] : arrivals.offers
+    private var ghostRows: [ArrivalGhost] {
+        arrivals.suppressed ? [] : arrivals.visibleGhosts
     }
 
     /// The dimmed recent-arrival rows. They follow real rows on a populated shelf and
     /// replace the drop tile when empty; AppKit hit-testing mirrors both placements.
     private var ghostStack: some View {
         VStack(alignment: .leading, spacing: theme.rowSpacing) {
-            ForEach(ghostOffers) { offer in
+            ForEach(ghostRows) { ghost in
                 ArrivalGhostRowView(
-                    offer: offer,
+                    ghost: ghost,
                     theme: theme,
-                    isHovered: interaction.hoveredArrivalID == offer.id,
+                    isHovered: interaction.hoveredArrivalID == ghost.id,
                     showsLabels: themeStore.showsLabels
                 )
                 .transition(.opacity)
@@ -315,11 +315,11 @@ struct ShelfContentView: View {
                     showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
                 )
             }
-            if !ghostOffers.isEmpty {
+            if !ghostRows.isEmpty {
                 ghostStack
             }
         }
-        .animation(.easeOut(duration: 0.18), value: ghostOffers)
+        .animation(.easeOut(duration: 0.18), value: ghostRows)
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         // One transaction drives both the row fade and the layout: a spring while a
@@ -343,7 +343,7 @@ struct ShelfContentView: View {
         availableHeight: CGFloat
     ) -> some View {
         let itemCount = displayedItems.count
-        let rowCount = itemCount + ghostOffers.count
+        let rowCount = itemCount + ghostRows.count
         let previewSide = RowMetrics.stackedPreviewSide(
             availableWidth: availableWidth,
             widthScale: themeStore.widthScale,
@@ -371,8 +371,8 @@ struct ShelfContentView: View {
                     .zIndex(stackZIndex(for: item, index: index, rowCount: rowCount))
             }
 
-            ForEach(Array(ghostOffers.enumerated()), id: \.element.id) { index, offer in
-                stackedArrivalPreview(offer, side: previewSide)
+            ForEach(Array(ghostRows.enumerated()), id: \.element.id) { index, ghost in
+                stackedArrivalPreview(ghost, side: previewSide)
                     .offset(y: CGFloat(itemCount + index) * pitch)
                     .zIndex(Double(itemCount + index))
                     .transition(.opacity)
@@ -381,7 +381,7 @@ struct ShelfContentView: View {
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: contentHeight, alignment: .top)
-        .animation(.easeOut(duration: 0.18), value: ghostOffers)
+        .animation(.easeOut(duration: 0.18), value: ghostRows)
         .animation(
             interaction.previewOrder != nil
                 ? .spring(response: 0.34, dampingFraction: 0.86)
@@ -429,18 +429,25 @@ struct ShelfContentView: View {
 
     /// Arrival suggestions use the same chrome-free sample treatment, remaining dimmer
     /// than real perched items until adopted.
-    private func stackedArrivalPreview(_ offer: ArrivalOffer, side: CGFloat) -> some View {
-        Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
-            .resizable()
-            .interpolation(.high)
-            .aspectRatio(contentMode: .fit)
+    private func stackedArrivalPreview(_ ghost: ArrivalGhost, side: CGFloat) -> some View {
+        Group {
+            switch ghost {
+            case let .summary(session, _):
+                ArrivalSessionStackIcon(session: session)
+            case let .offer(offer, _):
+                Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+            }
+        }
             .frame(width: side * 0.78, height: side * 0.78)
             .frame(width: side, height: side)
             .contentShape(Rectangle())
-            .scaleEffect(interaction.hoveredArrivalID == offer.id ? 1.02 : 1)
-            .opacity(interaction.hoveredArrivalID == offer.id ? 0.8 : 0.48)
+            .scaleEffect(interaction.hoveredArrivalID == ghost.id ? 1.02 : 1)
+            .opacity(interaction.hoveredArrivalID == ghost.id ? 0.8 : 0.48)
             .frame(maxWidth: .infinity, alignment: .center)
-            .animation(.easeOut(duration: 0.14), value: interaction.hoveredArrivalID == offer.id)
+            .animation(.easeOut(duration: 0.14), value: interaction.hoveredArrivalID == ghost.id)
     }
 
     private func itemRow(_ item: StoredItem, showsSeparator: Bool) -> some View {
@@ -519,26 +526,85 @@ struct ShelfContentView: View {
     }
 }
 
+/// A compact fan made from the batch's real file icons. Limiting the fan to three
+/// keeps it legible at row size while the title communicates the complete count.
+private struct ArrivalSessionStackIcon: View {
+    let session: ArrivalSession
+
+    private var displayedOffers: [ArrivalOffer] {
+        Array(session.offers.prefix(3))
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            let side = min(proxy.size.width, proxy.size.height)
+            let iconSide = side * 0.60
+            let center = CGPoint(x: proxy.size.width / 2, y: proxy.size.height / 2)
+
+            ZStack {
+                ForEach(Array(displayedOffers.enumerated()), id: \.element.id) { index, offer in
+                    let spread = normalizedPosition(at: index)
+                    Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
+                        .resizable()
+                        .interpolation(.high)
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: iconSide, height: iconSide)
+                        // An adaptive halo separates pale document icons without
+                        // drawing a visible card or badge around each one.
+                        .shadow(
+                            color: Color(nsColor: .windowBackgroundColor).opacity(0.95),
+                            radius: max(0.8, side * 0.04)
+                        )
+                        .rotationEffect(.degrees(spread * 24))
+                        .offset(
+                            x: spread * side * 0.40,
+                            y: abs(spread) * side * 0.08
+                        )
+                        .shadow(
+                            color: .black.opacity(0.24),
+                            radius: max(0.5, side * 0.022),
+                            y: max(0.5, side * 0.02)
+                        )
+                        .zIndex(layerDepth(at: index))
+                }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .position(center)
+        }
+        .aspectRatio(1, contentMode: .fit)
+    }
+
+    /// -0.5...0.5, centered for odd counts and evenly fanned for two.
+    private func normalizedPosition(at index: Int) -> Double {
+        guard displayedOffers.count > 1 else { return 0 }
+        return Double(index) / Double(displayedOffers.count - 1) - 0.5
+    }
+
+    /// The centered file sits clearly on top; the two outer files remain visible
+    /// behind it instead of one side washing over the middle.
+    private func layerDepth(at index: Int) -> Double {
+        let center = Double(displayedOffers.count - 1) / 2
+        return Double(displayedOffers.count) - abs(Double(index) - center)
+    }
+}
+
 /// A dimmed, dash-outlined row for a file that just landed in a watched folder: not
 /// yet aboard, one tap away. Hover/click and context-menu plumbing is AppKit's
 /// (`ShelfHostView`), same as the real rows.
 struct ArrivalGhostRowView: View {
-    let offer: ArrivalOffer
+    let ghost: ArrivalGhost
     let theme: ShelfTheme
     let isHovered: Bool
     let showsLabels: Bool
 
     var body: some View {
         HStack(spacing: showsLabels ? 10 : 0) {
-            Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
+            icon
                 .frame(width: theme.iconSize, height: theme.iconSize)
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(offer.name)
+                    Text(title)
                         .font(.system(size: theme.titleSize, weight: theme.titleWeight))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -575,15 +641,51 @@ struct ArrivalGhostRowView: View {
                 )
         )
         .contentShape(Rectangle())
-        .opacity(isHovered ? 0.95 : 0.55)
+        .opacity(isHovered ? 0.95 : (isSessionSummary ? 0.76 : 0.55))
         .animation(.easeOut(duration: 0.13), value: isHovered)
     }
 
-    /// "2m ago · Downloads" — where it landed and how fresh it is.
+    @ViewBuilder
+    private var icon: some View {
+        switch ghost {
+        case let .summary(session, _):
+            ArrivalSessionStackIcon(session: session)
+        case let .offer(offer, _):
+            Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+        }
+    }
+
+    private var title: String {
+        switch ghost {
+        case let .summary(session, .expand):
+            return "\(session.offers.count) new downloads"
+        case let .summary(session, .addAll):
+            return "Add all \(session.offers.count) downloads"
+        case let .offer(offer, _):
+            return offer.name
+        }
+    }
+
+    private var isSessionSummary: Bool {
+        if case .summary = ghost { return true }
+        return false
+    }
+
     private var subtitle: String {
-        let minutes = Int(-offer.addedAt.timeIntervalSinceNow / 60)
+        let session = ghost.session
+        let minutes = Int(-session.addedAt.timeIntervalSinceNow / 60)
         let age = minutes < 1 ? "Just now" : "\(minutes)m ago"
-        return "\(age) · \(offer.locationName)"
+        switch ghost {
+        case .summary(_, .expand):
+            return "\(age) · \(session.locationName) · Click to add all"
+        case .summary(_, .addAll):
+            return "\(age) · \(session.locationName)"
+        case let .offer(offer, _):
+            return "\(age) · \(offer.locationName)"
+        }
     }
 
 }
