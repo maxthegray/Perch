@@ -137,6 +137,8 @@ final class ThemeStore: ObservableObject {
     private static let shadowKey = "Perch.ShowsShadow"
     private static let widthScaleKey = "Perch.WidthScale"
     private static let heightFractionKey = "Perch.HeightFraction"
+    private static let stacksItemsKey = "Perch.StacksItems"
+    private static let squarePresetKey = "Perch.SquarePresetSelected"
 
     /// Bounds of the width slider (75%–200% of the design width).
     static let widthScaleRange: ClosedRange<CGFloat> = 0.75...2
@@ -201,6 +203,26 @@ final class ThemeStore: ObservableObject {
         }
     }
 
+    /// Whether multiple entries overlap like a deck instead of making the shelf grow
+    /// vertically. Intended for square cards, but kept independent of the size sliders
+    /// so custom square dimensions work just as well as the preset.
+    @Published var stacksItems: Bool {
+        didSet {
+            guard stacksItems != oldValue else { return }
+            UserDefaults.standard.set(stacksItems, forKey: Self.stacksItemsKey)
+        }
+    }
+
+    /// Tracks the semantic Square preset separately from its slider values. The card's
+    /// width depends on whether it currently contains labeled rows, so fixed width and
+    /// height slider values alone cannot keep every populated state truly square.
+    @Published var squarePresetSelected: Bool {
+        didSet {
+            guard squarePresetSelected != oldValue else { return }
+            UserDefaults.standard.set(squarePresetSelected, forKey: Self.squarePresetKey)
+        }
+    }
+
     var theme: ShelfTheme { ShelfTheme.resolve(style) }
 
     init() {
@@ -216,10 +238,22 @@ final class ThemeStore: ObservableObject {
         let clamp: (Double, ClosedRange<CGFloat>) -> CGFloat = {
             min(max(CGFloat($0), $1.lowerBound), $1.upperBound)
         }
-        widthScale = (UserDefaults.standard.object(forKey: Self.widthScaleKey) as? Double)
+        let loadedWidthScale = (UserDefaults.standard.object(forKey: Self.widthScaleKey) as? Double)
             .map { clamp($0, Self.widthScaleRange) } ?? 1
-        heightFraction = (UserDefaults.standard.object(forKey: Self.heightFractionKey) as? Double)
+        let loadedHeightFraction = (UserDefaults.standard.object(forKey: Self.heightFractionKey) as? Double)
             .map { clamp($0, Self.heightFractionRange) } ?? 0
+        widthScale = loadedWidthScale
+        heightFraction = loadedHeightFraction
+        stacksItems = UserDefaults.standard.bool(forKey: Self.stacksItemsKey)
+        if UserDefaults.standard.object(forKey: Self.squarePresetKey) != nil {
+            squarePresetSelected = UserDefaults.standard.bool(forKey: Self.squarePresetKey)
+        } else {
+            // Migrate an existing Square selection from releases that stored only the
+            // preset's slider values (150% width plus a small nonzero height floor).
+            squarePresetSelected = abs(loadedWidthScale - 1.5) < 0.001
+                && loadedHeightFraction > 0
+                && loadedHeightFraction < 0.3
+        }
     }
 
     func toggle(to style: ShelfStyle) {

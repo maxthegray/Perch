@@ -9,6 +9,53 @@ struct ContentHeightKey: PreferenceKey {
     }
 }
 
+/// Centers one row stack in a lane that retains its 100%-size width when the card is
+/// widened. The layout still occupies the card's full width, so the card background and
+/// drop target keep their configured size while the entries gain breathing room.
+private struct CenteredRowLaneLayout: Layout {
+    let widthScale: CGFloat
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard let subview = subviews.first else { return .zero }
+        guard let availableWidth = proposal.width else {
+            return subview.sizeThatFits(proposal)
+        }
+        let laneWidth = RowMetrics.rowLaneWidth(
+            availableWidth: availableWidth,
+            widthScale: widthScale
+        )
+        let contentSize = subview.sizeThatFits(
+            ProposedViewSize(width: laneWidth, height: nil)
+        )
+        return CGSize(width: availableWidth, height: contentSize.height)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let subview = subviews.first else { return }
+        let laneWidth = RowMetrics.rowLaneWidth(
+            availableWidth: bounds.width,
+            widthScale: widthScale
+        )
+        let contentSize = subview.sizeThatFits(
+            ProposedViewSize(width: laneWidth, height: nil)
+        )
+        subview.place(
+            at: CGPoint(x: bounds.midX, y: bounds.minY),
+            anchor: .top,
+            proposal: ProposedViewSize(width: laneWidth, height: contentSize.height)
+        )
+    }
+}
+
 /// SwiftUI list of stored items, hosted in the panel via `NSHostingView`. Rendered
 /// as a translucent, rounded "card" whose look follows the active `ShelfStyle`. The
 /// content is laid out at its intrinsic height and measured; `onContentHeight` lets the
@@ -160,21 +207,44 @@ struct ShelfContentView: View {
                 Group {
                     if ghostOffers.isEmpty {
                         emptyState
+                            .background(heightReader(addingGrabberStrip: grabberHeight))
+                    } else if themeStore.stacksItems {
+                        GeometryReader { proxy in
+                            centeredRowLane {
+                                stackedRowStack(
+                                    availableWidth: proxy.size.width,
+                                    availableHeight: proxy.size.height
+                                )
+                            }
+                            .background(heightReader(addingGrabberStrip: grabberHeight))
+                            .frame(maxHeight: .infinity)
+                        }
                     } else {
                         // On an otherwise-empty shelf the offer *is* the shelf. Starting
                         // any system drag suppresses offers, swapping this straight back
                         // to the ordinary empty drop target before the drag reaches us.
-                        ghostStack
-                            .padding(theme.contentPadding)
+                        centeredRowLane {
+                            ghostStack
+                                .padding(theme.contentPadding)
+                        }
+                        .background(heightReader(addingGrabberStrip: grabberHeight))
                     }
                 }
                 .animation(.easeOut(duration: 0.18), value: ghostOffers)
-                .background(heightReader(addingGrabberStrip: grabberHeight))
                 .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
                     ScrollView {
-                        rowStack
+                        centeredRowLane {
+                            if themeStore.stacksItems {
+                                stackedRowStack(
+                                    availableWidth: proxy.size.width,
+                                    availableHeight: proxy.size.height
+                                )
+                            } else {
+                                rowStack
+                            }
+                        }
                             .background(heightReader(addingGrabberStrip: grabberHeight))
                             .frame(minHeight: proxy.size.height)
                             .animation(.easeOut(duration: 0.18), value: displayedItems.map(\.id))
@@ -240,22 +310,10 @@ struct ShelfContentView: View {
     private var rowStack: some View {
         VStack(alignment: .leading, spacing: theme.rowSpacing) {
             ForEach(displayedItems) { item in
-                ItemRowView(
-                    item: item,
-                    theme: theme,
-                    isHovered: interaction.hoveredItemID == item.id,
-                    isSelected: interaction.selectedItemIDs.contains(item.id),
-                    isDragging: interaction.draggingItemID == item.id,
-                    isDeleting: interaction.deletingItemIDs.contains(item.id),
-                    thumbnail: thumbnails.thumbnail(for: item),
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
-                    showsLabels: themeStore.showsLabels,
-                    breadcrumb: breadcrumb(for: item)
+                itemRow(
+                    item,
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
                 )
-                .transition(.asymmetric(
-                    insertion: .opacity,
-                    removal: .opacity.combined(with: .scale(scale: 0.8))
-                ))
             }
             if !ghostOffers.isEmpty {
                 ghostStack
@@ -275,6 +333,153 @@ struct ShelfContentView: View {
                 : .easeOut(duration: 0.18),
             value: displayedItems.map(\.id)
         )
+    }
+
+    /// A fanned deck that consumes the card's existing height. Later entries sit above
+    /// earlier ones, leaving the leading edge of each card exposed so every item remains
+    /// individually reachable without increasing the window height.
+    private func stackedRowStack(
+        availableWidth: CGFloat,
+        availableHeight: CGFloat
+    ) -> some View {
+        let itemCount = displayedItems.count
+        let rowCount = itemCount + ghostOffers.count
+        let previewSide = RowMetrics.stackedPreviewSide(
+            availableWidth: availableWidth,
+            widthScale: themeStore.widthScale,
+            availableHeight: availableHeight,
+            contentPadding: theme.contentPadding
+        )
+        let pitch = RowMetrics.stackedRowPitch(
+            availableHeight: availableHeight,
+            rowCount: rowCount,
+            rowHeight: previewSide,
+            rowSpacing: theme.rowSpacing,
+            contentPadding: theme.contentPadding
+        )
+        let contentHeight = RowMetrics.stackedContentHeight(
+            rowCount: rowCount,
+            rowHeight: previewSide,
+            pitch: pitch,
+            contentPadding: theme.contentPadding
+        )
+
+        return ZStack(alignment: .topLeading) {
+            ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
+                stackedItemPreview(item, side: previewSide)
+                    .offset(y: CGFloat(index) * pitch)
+                    .zIndex(stackZIndex(for: item, index: index, rowCount: rowCount))
+            }
+
+            ForEach(Array(ghostOffers.enumerated()), id: \.element.id) { index, offer in
+                stackedArrivalPreview(offer, side: previewSide)
+                    .offset(y: CGFloat(itemCount + index) * pitch)
+                    .zIndex(Double(itemCount + index))
+                    .transition(.opacity)
+            }
+        }
+        .padding(theme.contentPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: contentHeight, alignment: .top)
+        .animation(.easeOut(duration: 0.18), value: ghostOffers)
+        .animation(
+            interaction.previewOrder != nil
+                ? .spring(response: 0.34, dampingFraction: 0.86)
+                : .easeOut(duration: 0.18),
+            value: displayedItems.map(\.id)
+        )
+    }
+
+    /// Deck mode is intentionally just the item's sample—no row material, border,
+    /// separator, or label. The invisible square frame remains the interaction surface
+    /// and keeps every preview aligned without adding visual chrome.
+    private func stackedItemPreview(_ item: StoredItem, side: CGFloat) -> some View {
+        let thumbnail = thumbnails.thumbnail(for: item, pointSize: side)
+        return ZStack {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: side, height: side)
+            } else {
+                Image(nsImage: item.iconImage())
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: side * 0.78, height: side * 0.78)
+            }
+        }
+        .frame(width: side, height: side)
+        .contentShape(Rectangle())
+        .scaleEffect(
+            interaction.deletingItemIDs.contains(item.id) ? 1.06
+                : (interaction.draggingItemID == item.id ? 1.035
+                    : (interaction.hoveredItemID == item.id ? 1.02 : 1))
+        )
+        .opacity(interaction.draggingItemID == item.id ? 0.94 : 1)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .animation(.easeOut(duration: 0.14), value: interaction.hoveredItemID == item.id)
+        .animation(.easeOut(duration: 0.18), value: thumbnail != nil)
+        .transition(.asymmetric(
+            insertion: .opacity,
+            removal: .opacity.combined(with: .scale(scale: 0.8))
+        ))
+    }
+
+    /// Arrival suggestions use the same chrome-free sample treatment, remaining dimmer
+    /// than real perched items until adopted.
+    private func stackedArrivalPreview(_ offer: ArrivalOffer, side: CGFloat) -> some View {
+        Image(nsImage: NSWorkspace.shared.icon(forFile: offer.url.path))
+            .resizable()
+            .interpolation(.high)
+            .aspectRatio(contentMode: .fit)
+            .frame(width: side * 0.78, height: side * 0.78)
+            .frame(width: side, height: side)
+            .contentShape(Rectangle())
+            .scaleEffect(interaction.hoveredArrivalID == offer.id ? 1.02 : 1)
+            .opacity(interaction.hoveredArrivalID == offer.id ? 0.8 : 0.48)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .animation(.easeOut(duration: 0.14), value: interaction.hoveredArrivalID == offer.id)
+    }
+
+    private func itemRow(_ item: StoredItem, showsSeparator: Bool) -> some View {
+        ItemRowView(
+            item: item,
+            theme: theme,
+            isHovered: interaction.hoveredItemID == item.id,
+            isSelected: interaction.selectedItemIDs.contains(item.id),
+            isDragging: interaction.draggingItemID == item.id,
+            isDeleting: interaction.deletingItemIDs.contains(item.id),
+            thumbnail: thumbnails.thumbnail(for: item),
+            showsSeparator: showsSeparator,
+            showsLabels: themeStore.showsLabels,
+            breadcrumb: breadcrumb(for: item)
+        )
+        .transition(.asymmetric(
+            insertion: .opacity,
+            removal: .opacity.combined(with: .scale(scale: 0.8))
+        ))
+    }
+
+    /// Keep the card being manipulated above the rest of the deck even when it was
+    /// originally near the back.
+    private func stackZIndex(for item: StoredItem, index: Int, rowCount: Int) -> Double {
+        if interaction.draggingItemID == item.id || interaction.deletingItemIDs.contains(item.id) {
+            return Double(rowCount + 1)
+        }
+        return Double(index)
+    }
+
+    /// Rows use the whole lane at 100% width. When the shelf is made wider (including
+    /// the Square preset), the lane stays at that natural width and is centered so the
+    /// added card area becomes an even margin on both sides.
+    private func centeredRowLane<Content: View>(
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        CenteredRowLaneLayout(widthScale: themeStore.widthScale) {
+            content()
+        }
     }
 
     /// A sheet-style grab handle pinned to the very top of the card, however tall it

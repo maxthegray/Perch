@@ -102,9 +102,10 @@ struct AppearanceSettingsPane: View {
                 }
 
                 LabeledContent("Height") {
-                    Slider(value: $themeStore.heightFraction, in: ThemeStore.heightFractionRange)
+                    Slider(value: heightFractionBinding, in: ThemeStore.heightFractionRange)
                 }
 
+                Toggle("Stack items instead of growing", isOn: $themeStore.stacksItems)
             }
         }
         .formStyle(.grouped)
@@ -116,6 +117,7 @@ struct AppearanceSettingsPane: View {
             let values = values(for: preset)
             themeStore.widthScale = values.width
             themeStore.heightFraction = values.height
+            themeStore.squarePresetSelected = preset == .square
         } label: {
             VStack(spacing: 5) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
@@ -149,6 +151,7 @@ struct AppearanceSettingsPane: View {
         let values = values(for: preset)
         return abs(themeStore.widthScale - values.width) < 0.001
             && abs(themeStore.heightFraction - values.height) < 0.001
+            && themeStore.squarePresetSelected == (preset == .square)
     }
 
     private func values(for preset: SizePreset) -> (width: CGFloat, height: CGFloat) {
@@ -170,7 +173,20 @@ struct AppearanceSettingsPane: View {
     private var widthScaleBinding: Binding<CGFloat> {
         Binding(
             get: { themeStore.widthScale },
-            set: { themeStore.widthScale = abs($0 - 1) < 0.04 ? 1 : $0 }
+            set: {
+                themeStore.squarePresetSelected = false
+                themeStore.widthScale = abs($0 - 1) < 0.04 ? 1 : $0
+            }
+        )
+    }
+
+    private var heightFractionBinding: Binding<CGFloat> {
+        Binding(
+            get: { themeStore.heightFraction },
+            set: {
+                themeStore.squarePresetSelected = false
+                themeStore.heightFraction = $0
+            }
         )
     }
 }

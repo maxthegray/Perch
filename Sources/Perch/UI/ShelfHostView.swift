@@ -380,7 +380,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
 
-        if themeStore.theme.showsDeleteButton, themeStore.showsLabels,
+        if !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels,
            let index = rowIndex(at: point),
            deleteHitRect(forRow: index).contains(point) {
             pendingDeleteItem = visibleItems[index]
@@ -545,7 +545,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let count = reorderBaseOrder.count
         guard count > 1 else { return }
         let theme = themeStore.theme
-        let pitch = theme.rowHeight + theme.rowSpacing
+        let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
+        guard pitch > 0.001 else { return }
         let raw = Int((point.y - contentTopOffset + contentScrollOffsetY() - rowsTopInset) / pitch)
         let target = max(0, min(count - 1, raw))
 
@@ -658,6 +659,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         store.items.filter { !interaction.vendingItemIDs.contains($0.id) }
     }
 
+    private var usesStackedRows: Bool {
+        themeStore.stacksItems
+    }
+
     private func item(at point: NSPoint) -> StoredItem? {
         rowIndex(at: point).map { visibleItems[$0] }
     }
@@ -675,6 +680,76 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// (The grab handle is no longer part of the stack — it pins to the window top.)
     private var rowsTopInset: CGFloat {
         themeStore.theme.contentPadding
+    }
+
+    /// Extra card width is rendered as equal side margins around a standard-width row
+    /// lane. This must mirror `CenteredRowLaneLayout` so hover, clicks, and menus do not
+    /// treat those margins as part of an entry.
+    private var rowLaneInset: CGFloat {
+        RowMetrics.rowLaneInset(
+            availableWidth: bounds.width,
+            widthScale: themeStore.widthScale
+        )
+    }
+
+    private func rowLaneContains(x: CGFloat) -> Bool {
+        let padding = themeStore.theme.contentPadding
+        let minX = rowLaneInset + padding
+        let maxX = bounds.width - rowLaneInset - padding
+        return minX <= maxX && x >= minX && x <= maxX
+    }
+
+    private var stackedPreviewSide: CGFloat {
+        let theme = themeStore.theme
+        let grabber = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
+        return RowMetrics.stackedPreviewSide(
+            availableWidth: bounds.width,
+            widthScale: themeStore.widthScale,
+            availableHeight: max(0, bounds.height - grabber),
+            contentPadding: theme.contentPadding
+        )
+    }
+
+    private func stackedPreviewContains(x: CGFloat) -> Bool {
+        let halfWidth = stackedPreviewSide / 2
+        return x >= bounds.midX - halfWidth && x <= bounds.midX + halfWidth
+    }
+
+    /// Leading-edge pitch shared with the SwiftUI deck. The grabber consumes its own
+    /// strip above the body; the deck distributes itself through the remaining height.
+    private var stackedRowPitch: CGFloat {
+        let theme = themeStore.theme
+        let grabber = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
+        return RowMetrics.stackedRowPitch(
+            availableHeight: max(0, bounds.height - grabber),
+            rowCount: visibleItems.count + ghostOffers.count,
+            rowHeight: stackedPreviewSide,
+            rowSpacing: theme.rowSpacing,
+            contentPadding: theme.contentPadding
+        )
+    }
+
+    /// The topmost deck card at a point. Because later cards draw above earlier cards,
+    /// an overlap belongs to the latest row whose leading edge has been crossed.
+    private func stackedGlobalRowIndex(at point: NSPoint) -> Int? {
+        guard stackedPreviewContains(x: point.x) else { return nil }
+        let theme = themeStore.theme
+        let count = visibleItems.count + ghostOffers.count
+        guard count > 0 else { return nil }
+        let contentY = point.y - contentTopOffset + contentScrollOffsetY()
+            - theme.contentPadding
+        guard contentY >= 0 else { return nil }
+
+        let pitch = stackedRowPitch
+        let index: Int
+        if pitch > 0.001 {
+            index = min(count - 1, Int(contentY / pitch))
+        } else {
+            index = count - 1
+        }
+        let lastBottom = CGFloat(count - 1) * pitch + stackedPreviewSide
+        guard contentY <= lastBottom else { return nil }
+        return index
     }
 
     /// Distance from the view's top to the row stack's top. The grab-handle strip pins
@@ -703,10 +778,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// each row is `RowMetrics.height` tall, laid out with theme-driven spacing + outer
     /// padding. Accounts for scroll offset in the rare overflow (scrolling) case.
     private func rowIndex(at point: NSPoint) -> Int? {
+        if usesStackedRows {
+            guard let index = stackedGlobalRowIndex(at: point),
+                  index < visibleItems.count else { return nil }
+            return index
+        }
         let theme = themeStore.theme
         let rowHeight = theme.rowHeight + theme.rowSpacing
         let topInset = rowsTopInset
         let contentY = point.y - contentTopOffset + contentScrollOffsetY()
+        guard rowLaneContains(x: point.x) else { return nil }
         // Points above the first row (the grab handle / top padding) are not a row.
         // `Int()` truncates toward zero, so without this guard the small negative
         // fractions up there would all collapse onto row 0.
@@ -721,7 +802,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// easier target. Shifted by the scroll offset so it tracks the visible row.
     private func deleteHitRect(forRow index: Int) -> NSRect {
         let theme = themeStore.theme
-        let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * (theme.rowHeight + theme.rowSpacing)
+        let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
+        let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
         return trailingButtonHitRect(rowTop: rowTop)
     }
 
@@ -730,7 +812,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func trailingButtonHitRect(rowTop: CGFloat) -> NSRect {
         let theme = themeStore.theme
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
-        let centerX = bounds.width - theme.contentPadding
+        let centerX = bounds.width - rowLaneInset - theme.contentPadding
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
         let hit = RowMetrics.deleteDiameter + 10
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
@@ -748,6 +830,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// the drop tile and use the same outer padding as a normal row stack.
     private func ghostRowTop(_ index: Int) -> CGFloat {
         let theme = themeStore.theme
+        if usesStackedRows {
+            return contentTopOffset + theme.contentPadding
+                + CGFloat(visibleItems.count + index) * stackedRowPitch
+        }
         let pitch = theme.rowHeight + theme.rowSpacing
         if store.items.isEmpty {
             return contentTopOffset + theme.contentPadding + CGFloat(index) * pitch
@@ -759,6 +845,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func arrivalIndex(at point: NSPoint) -> Int? {
         let ghosts = ghostOffers
         guard !ghosts.isEmpty else { return nil }
+        if usesStackedRows {
+            guard let index = stackedGlobalRowIndex(at: point) else { return nil }
+            let ghostIndex = index - visibleItems.count
+            return ghosts.indices.contains(ghostIndex) ? ghostIndex : nil
+        }
+        guard rowLaneContains(x: point.x) else { return nil }
         let theme = themeStore.theme
         let pitch = theme.rowHeight + theme.rowSpacing
         let y = point.y + contentScrollOffsetY() - ghostRowTop(0)

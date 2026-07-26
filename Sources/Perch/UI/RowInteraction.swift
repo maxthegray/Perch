@@ -79,4 +79,66 @@ enum RowMetrics {
     /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
     /// window-size estimate.
     static let emptyTileHeight: CGFloat = 64
+
+    /// Keep rows at the width they have at the standard (100%) card size when the
+    /// card itself is widened. The extra width belongs to the card as breathing room,
+    /// rather than stretching every entry into a long bar. Cards narrower than the
+    /// standard size still give rows all available room so content never clips.
+    static func rowLaneWidth(availableWidth: CGFloat, widthScale: CGFloat) -> CGFloat {
+        availableWidth / max(widthScale, 1)
+    }
+
+    /// Horizontal inset that centers the standard-width row lane in a widened card.
+    /// Shared by SwiftUI layout and AppKit row/delete/arrival hit-testing.
+    static func rowLaneInset(availableWidth: CGFloat, widthScale: CGFloat) -> CGFloat {
+        max(0, (availableWidth - rowLaneWidth(
+            availableWidth: availableWidth,
+            widthScale: widthScale
+        )) / 2)
+    }
+
+    /// Square preview size in deck mode. It fills the standard-width row lane while
+    /// staying inside the card's existing body height, leaving the outer shelf frame
+    /// untouched.
+    static func stackedPreviewSide(
+        availableWidth: CGFloat,
+        widthScale: CGFloat,
+        availableHeight: CGFloat,
+        contentPadding: CGFloat
+    ) -> CGFloat {
+        min(
+            rowLaneWidth(availableWidth: availableWidth, widthScale: widthScale),
+            max(0, availableHeight - contentPadding * 2)
+        )
+    }
+
+    /// Vertical distance between the leading edges of cards in deck mode. A fraction
+    /// of each card remains exposed even when there is ample room, preserving the deck
+    /// appearance; when space is tight, cards overlap further instead of growing the
+    /// window.
+    static func stackedRowPitch(
+        availableHeight: CGFloat,
+        rowCount: Int,
+        rowHeight: CGFloat,
+        rowSpacing: CGFloat,
+        contentPadding: CGFloat
+    ) -> CGFloat {
+        guard rowCount > 1 else { return 0 }
+        let usableHeight = max(rowHeight, availableHeight - contentPadding * 2)
+        let deckPitch = min(rowHeight + rowSpacing, max(8, rowHeight * 0.32))
+        return min(
+            deckPitch,
+            max(0, (usableHeight - rowHeight) / CGFloat(rowCount - 1))
+        )
+    }
+
+    static func stackedContentHeight(
+        rowCount: Int,
+        rowHeight: CGFloat,
+        pitch: CGFloat,
+        contentPadding: CGFloat
+    ) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+        return contentPadding * 2 + rowHeight + CGFloat(rowCount - 1) * pitch
+    }
 }

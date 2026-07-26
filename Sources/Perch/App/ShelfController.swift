@@ -101,6 +101,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var styleCancellable: AnyCancellable?
     private var heightCancellable: AnyCancellable?
     private var widthCancellable: AnyCancellable?
+    private var stacksItemsCancellable: AnyCancellable?
+    private var squarePresetCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
@@ -420,6 +422,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.resizeToFitVisible(animated: false)
+            }
+        stacksItemsCancellable = themeStore.$stacksItems
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                // The natural height switches between a full list and a one-row deck.
+                // Drop the old measurement so the matching estimate drives the resize
+                // until SwiftUI reports the new layout.
+                self?.measuredContentHeight = nil
+                self?.resizeToFitVisible()
+            }
+        squarePresetCancellable = themeStore.$squarePresetSelected
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
             }
 
         // Toggling names on/off changes the card's width — re-fit the open window.
@@ -987,7 +1005,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let visible = screen?.visibleFrame ?? NSRect(x: 0, y: 0, width: 800, height: 600)
         let width = min(cardWidth(for: freeSourceEdge), visible.width - 16)
         let usable = visible.height - 24
-        let height = min(max(fittedContentHeight(), themeStore.heightFraction * usable), usable)
+        let height = min(
+            usesSquareStack ? width : max(fittedContentHeight(), themeStore.heightFraction * usable),
+            usable
+        )
         let size = NSSize(width: width, height: height)
 
         if let dockAttachment,
@@ -1611,6 +1632,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         let theme = themeStore.theme
         let grabber = showsGrabber ? RowMetrics.grabberZoneHeight : 0
+        if themeStore.stacksItems {
+            return theme.contentPadding * 2 + grabber + theme.rowHeight
+        }
         let rows = CGFloat(rowCount) * theme.rowHeight
             + CGFloat(rowCount - 1) * theme.rowSpacing
         return theme.contentPadding * 2 + grabber + rows
@@ -1619,13 +1643,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// The content-hugging card frame on a screen + edge. Prefers the actual measured
     /// SwiftUI height; falls back to a per-item estimate before the first measurement.
     private func panelFrame(for screen: NSScreen, edge: ShelfEdge) -> NSRect {
-        Self.panelFrame(
+        let width = cardWidth(for: edge)
+        return Self.panelFrame(
             for: screen,
             edge: edge,
-            contentHeight: flooredContentHeight(on: screen, edge: edge),
-            width: cardWidth(for: edge),
+            contentHeight: usesSquareStack ? width : flooredContentHeight(on: screen, edge: edge),
+            width: width,
             centerY: nil
         )
+    }
+
+    /// The Square preset becomes a true square deck when stacking is enabled. Custom
+    /// slider dimensions still stack without being forced to a preset aspect ratio.
+    private var usesSquareStack: Bool {
+        themeStore.stacksItems && themeStore.squarePresetSelected
     }
 
     /// The content height with the user's Height slider applied: a floor at that
