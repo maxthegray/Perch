@@ -58,6 +58,47 @@ final class RowMetricsTests: XCTestCase {
         XCTAssertLessThan(hoveredWidth, maximumWidth)
     }
 
+    func testLearnedRouteReservesASecondTrailingSlot() {
+        let theme = ShelfTheme.resolve(.glass)
+        let maximumWidth: CGFloat = 400
+        let deleteOnlyWidth = RowMetrics.itemRowWidth(
+            title: "invoice-april.pdf",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            maximumWidth: maximumWidth
+        )
+        let withRouteWidth = RowMetrics.itemRowWidth(
+            title: "invoice-april.pdf",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            showsRouteAction: true,
+            maximumWidth: maximumWidth
+        )
+
+        XCTAssertEqual(
+            withRouteWidth - deleteOnlyWidth,
+            RowMetrics.deleteDiameter + RowMetrics.trailingActionSpacing
+        )
+    }
+
+    func testATrailingActionSlotHoldsEachButtonClearOfItsNeighbor() {
+        let outer = RowMetrics.trailingActionCenterInset(index: 0)
+        let inner = RowMetrics.trailingActionCenterInset(index: 1)
+
+        XCTAssertEqual(
+            outer,
+            RowMetrics.deleteTrailingInset + RowMetrics.deleteDiameter / 2
+        )
+        // Centers are one pitch apart, which is also the enlarged hit width used when
+        // two buttons sit side by side — so neighbouring rects touch without overlapping.
+        XCTAssertEqual(
+            inner - outer,
+            RowMetrics.deleteDiameter + RowMetrics.trailingActionSpacing
+        )
+    }
+
     func testIconOnlyRowsRetainTheWholeInteractionLane() {
         XCTAssertEqual(
             RowMetrics.itemRowWidth(
@@ -76,8 +117,8 @@ final class RowMetricsTests: XCTestCase {
         let maximumWidth: CGFloat = 600
         let cardWidth = RowMetrics.contentHuggingCardWidth(
             rows: [
-                ("Gmail", true),
-                ("Terminal — Perch", true)
+                ("Gmail", true, false),
+                ("Terminal — Perch", true, false)
             ],
             theme: theme,
             maximumWidth: maximumWidth
@@ -101,9 +142,9 @@ final class RowMetricsTests: XCTestCase {
         let theme = ShelfTheme.resolve(.glass)
         let cardWidth = RowMetrics.contentHuggingCardWidth(
             rows: [
-                ("Gmail", true),
-                ("Terminal — Perch", true),
-                ("Activity Monitor", true)
+                ("Gmail", true, false),
+                ("Terminal — Perch", true, false),
+                ("Activity Monitor", true, false)
             ],
             theme: theme,
             maximumWidth: 600
@@ -123,7 +164,7 @@ final class RowMetricsTests: XCTestCase {
     func testGhostOnlyCardMatchesTheStableAdoptedRowWidth() {
         let theme = ShelfTheme.resolve(.glass)
         let cardWidth = RowMetrics.contentHuggingCardWidth(
-            rows: [("Messages — Lachlan Wession", true)],
+            rows: [("Messages — Lachlan Wession", true, false)],
             theme: theme,
             maximumWidth: 600
         )

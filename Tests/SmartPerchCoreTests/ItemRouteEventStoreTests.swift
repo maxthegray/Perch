@@ -117,15 +117,18 @@ final class ItemRouteEventStoreTests: XCTestCase {
             )
         }
 
-        // Recreate the exact state immediately before the route migration shipped:
-        // all prior migrations are marked complete and the new table is absent.
+        // Recreate the exact state immediately before the route migrations shipped: all
+        // prior migrations are marked complete and the new table is absent. Every route
+        // migration must be unmarked, not just the first — leaving a later one recorded
+        // would let the table be rebuilt without the columns that migration adds, which
+        // is a state no real database is ever in.
         let rawDatabase = try DatabaseQueue(path: fixture.databaseURL.path)
         try rawDatabase.write { database in
             try database.drop(table: ItemRouteEvent.databaseTableName)
             try database.execute(
                 sql: """
                     DELETE FROM grdb_migrations
-                    WHERE identifier = 'createItemRouteEvents'
+                    WHERE identifier IN ('createItemRouteEvents', 'addItemRouteEventOrigin')
                     """
             )
         }
@@ -150,6 +153,107 @@ final class ItemRouteEventStoreTests: XCTestCase {
 
         XCTAssertEqual(patterns.count, 1)
         XCTAssertEqual(patterns[0].occurrenceCount, 3)
+    }
+
+    /// The upgrade a real user actually performs: routes recorded by the previous
+    /// release, opened by a build that adds the origin column. Their history is all
+    /// genuine drags, so it must keep counting as evidence.
+    func testRoutesRecordedBeforeTheOriginColumnReadBackAsManualDrags() throws {
+        let fixture = try RouteDatabaseFixture()
+        defer { fixture.remove() }
+        let itemID = UUID()
+
+        do {
+            let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+            try recordOriginalDrop(for: itemID, in: store, category: .document)
+            try store.record(routes: [route(itemID: itemID)])
+        }
+
+        // Roll the schema back to the state that release left behind.
+        let rawDatabase = try DatabaseQueue(path: fixture.databaseURL.path)
+        try rawDatabase.write { database in
+            try database.alter(table: ItemRouteEvent.databaseTableName) { table in
+                table.drop(column: "origin")
+            }
+            try database.execute(
+                sql: """
+                    DELETE FROM grdb_migrations
+                    WHERE identifier = 'addItemRouteEventOrigin'
+                    """
+            )
+        }
+
+        let migrated = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+        let routes = try migrated.fetchAllRoutes()
+
+        XCTAssertEqual(routes.count, 1)
+        XCTAssertEqual(routes[0].origin, .manualDrag)
+    }
+
+    func testOriginSurvivesAReopen() throws {
+        let fixture = try RouteDatabaseFixture()
+        defer { fixture.remove() }
+        let filedItem = UUID()
+
+        do {
+            let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+            try recordOriginalDrop(for: filedItem, in: store, category: .document)
+            try store.record(routes: [
+                route(itemID: filedItem, origin: .acceptedSuggestion)
+            ])
+        }
+
+        let routes = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+            .fetchAllRoutes()
+
+        XCTAssertEqual(routes.count, 1)
+        XCTAssertEqual(routes[0].origin, .acceptedSuggestion)
+        XCTAssertEqual(routes[0].captureMethod, .perchFiling)
+    }
+
+    func testShelfItemsAreOfferedTheRouteLearnedForTheirOwnDropContext() throws {
+        let fixture = try RouteDatabaseFixture()
+        defer { fixture.remove() }
+        let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+
+        // Three separate Safari documents, all dragged to the same folder.
+        for _ in 0..<3 {
+            let routedItem = UUID()
+            try recordOriginalDrop(for: routedItem, in: store, category: .document)
+            try store.record(routes: [route(itemID: routedItem)])
+        }
+
+        // A fourth Safari document is still sitting on the shelf, alongside an image
+        // whose category has never established a route.
+        let waitingDocument = UUID()
+        let waitingImage = UUID()
+        try recordOriginalDrop(for: waitingDocument, in: store, category: .document)
+        try recordOriginalDrop(for: waitingImage, in: store, category: .image)
+
+        let suggestions = try store.fetchRouteSuggestions(
+            for: [waitingDocument, waitingImage]
+        )
+
+        XCTAssertEqual(suggestions.count, 1)
+        XCTAssertEqual(
+            suggestions[waitingDocument]?.destination,
+            .folder(path: "/Users/test/Documents")
+        )
+        XCTAssertNil(suggestions[waitingImage])
+    }
+
+    func testAnItemWithNoDropRecordIsSimplyAbsentFromTheSuggestions() throws {
+        let fixture = try RouteDatabaseFixture()
+        defer { fixture.remove() }
+        let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+        for _ in 0..<3 {
+            let routedItem = UUID()
+            try recordOriginalDrop(for: routedItem, in: store, category: .document)
+            try store.record(routes: [route(itemID: routedItem)])
+        }
+
+        XCTAssertTrue(try store.fetchRouteSuggestions(for: [UUID()]).isEmpty)
+        XCTAssertTrue(try store.fetchRouteSuggestions(for: []).isEmpty)
     }
 
     @discardableResult
@@ -204,7 +308,8 @@ final class ItemRouteEventStoreTests: XCTestCase {
 
     private func route(
         sessionID: UUID = UUID(),
-        itemID: UUID = UUID()
+        itemID: UUID = UUID(),
+        origin: RouteEventOrigin = .manualDrag
     ) -> ItemRouteEvent {
         ItemRouteEvent(
             routeSessionID: sessionID,
@@ -212,11 +317,12 @@ final class ItemRouteEventStoreTests: XCTestCase {
             successfulDropAtMilliseconds: 1_700_000_010_000,
             dwellTimeMilliseconds: 10_000,
             destination: .folder(path: "/Users/test/Documents"),
-            captureMethod: .filePromiseWrite,
+            captureMethod: origin == .acceptedSuggestion ? .perchFiling : .filePromiseWrite,
             transferMode: .move,
             sourceAppBundleIdentifier: "com.apple.Safari",
             sourceAppName: "Safari",
-            category: .document
+            category: .document,
+            origin: origin
         )
     }
 }

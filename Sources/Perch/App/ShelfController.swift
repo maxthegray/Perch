@@ -22,6 +22,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// from launching and handling files.
     private let smartDropRecorder: SmartPerchDropRecorder?
     private let smartNames = SmartNameStore()
+    private let routeSuggestions = RouteSuggestionStore()
     private let screenshotOCRWorker = ScreenshotOCRWorker()
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
@@ -134,6 +135,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var squarePresetCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
     private var smartNamesCancellable: AnyCancellable?
+    private var routeSuggestionsCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
@@ -214,7 +216,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             themeStore: themeStore,
             ledger: ledger,
             arrivals: arrivals,
-            smartNames: smartNames
+            smartNames: smartNames,
+            routeSuggestions: routeSuggestions
         )
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
@@ -235,14 +238,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onRecordSuccessfulRoutes = { [weak self] routes in
             guard let recorder = self?.smartDropRecorder else { return }
-            Task {
+            Task { @MainActor [weak self] in
                 do {
                     try await recorder.recordSuccessfulRoutes(routes)
                 } catch {
                     NSLog(
                         "Perch could not record route session \(routes.first?.routeSessionID.uuidString ?? "unknown"): \(error)"
                     )
+                    return
                 }
+                // A drag just added evidence; the run it completes may be the one that
+                // makes a route confident enough to offer for the items left behind.
+                self?.refreshRouteSuggestions()
             }
         }
 
@@ -321,6 +328,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onDismissFilenameSuggestion = { [weak self] item in
             self?.dismissFilenameSuggestion(for: item)
         }
+        hostView.onFileItemAtSuggestedRoute = { [weak self] item in
+            self?.fileItemAtSuggestedRoute(item)
+        }
 
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
@@ -389,6 +399,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch failed to load stored items: \(error)")
         }
         loadFilenameSuggestions()
+        refreshRouteSuggestions()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -535,6 +546,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // projection changes so the panel follows the generated name instead of keeping
         // the width of the temporary screenshot filename.
         smartNamesCancellable = smartNames.$suggestionsByItemID
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.scheduleAsynchronousNameResize()
+            }
+
+        // A learned route reserves a second trailing slot, so the card's width follows
+        // suggestions appearing and being resolved. Same deferred re-fit as Smart Names.
+        routeSuggestionsCancellable = routeSuggestions.$suggestionsByItemID
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -994,6 +1014,90 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    /// Re-match the shelf against the learned routes. Cheap enough to run on every
+    /// shelf change: it is one SQLite read plus a pure grouping pass, and it must react
+    /// to items arriving, leaving, and to new evidence landing in the log.
+    /// `items` must be supplied when called from a `store.$items` observer: `@Published`
+    /// emits before `store.items` is replaced, so reading the property there would match
+    /// against the shelf as it was a moment ago.
+    private func refreshRouteSuggestions(items: [StoredItem]? = nil) {
+        guard let smartDropRecorder else { return }
+        let shelfItems = items ?? store.items
+        let shelfItemIDs = shelfItems.map(\.id)
+        guard !shelfItemIDs.isEmpty else {
+            routeSuggestions.replace(with: [:])
+            return
+        }
+
+        Task(priority: .utility) { [weak self] in
+            do {
+                let suggestions = try await smartDropRecorder.fetchRouteSuggestions(
+                    for: shelfItemIDs
+                )
+                guard let self else { return }
+                // Items can leave while the read is in flight; never offer a route for
+                // a row that is no longer there. By now the store has caught up, so its
+                // own list is the authority.
+                let liveItemIDs = Set(self.store.items.map(\.id))
+                self.routeSuggestions.replace(
+                    with: suggestions.filter { liveItemIDs.contains($0.key) }
+                )
+            } catch {
+                NSLog("Perch could not load learned route suggestions: \(error)")
+            }
+        }
+    }
+
+    /// Carry out a learned route: move the item's files into the folder it has always
+    /// gone to, then record the trip as an accepted suggestion so it enriches the
+    /// history without feeding back into the pattern that produced it.
+    private func fileItemAtSuggestedRoute(_ item: StoredItem) {
+        guard let suggestion = routeSuggestions.suggestion(for: item.id),
+              let folder = RouteDestinationPresentation.folderURL(for: suggestion.destination)
+        else {
+            return
+        }
+
+        routeSuggestions.beginFiling(item.id)
+        let addedToPerchAt = item.metadata.createdAt
+        let moved = store.fileItems([item], into: folder)
+        guard !moved.isEmpty else {
+            // Nothing left the shelf — put the offer back rather than silently dropping it.
+            routeSuggestions.endFiling(item.id)
+            refreshRouteSuggestions()
+            return
+        }
+
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+
+        guard let smartDropRecorder else { return }
+        let occurredAt = Date()
+        let route = ItemRouteEvent(
+            routeSessionID: UUID(),
+            shelfItemID: item.id,
+            successfulDropAtMilliseconds: Int64(
+                (occurredAt.timeIntervalSince1970 * 1_000).rounded()
+            ),
+            dwellTimeMilliseconds: max(
+                0,
+                Int64((occurredAt.timeIntervalSince(addedToPerchAt) * 1_000).rounded())
+            ),
+            destination: suggestion.destination,
+            captureMethod: .perchFiling,
+            transferMode: .move,
+            origin: .acceptedSuggestion
+        )
+
+        Task(priority: .utility) { [weak self] in
+            do {
+                try await smartDropRecorder.recordSuccessfulRoutes([route])
+            } catch {
+                NSLog("Perch could not record filed route for \(item.id): \(error)")
+            }
+            await MainActor.run { self?.routeSuggestions.endFiling(item.id) }
+        }
+    }
+
     /// React to the item list changing: shrink smoothly on removals, and run the
     /// open/retract logic when the empty↔non-empty state actually flips. (Growth on
     /// insertions is driven separately by the SwiftUI content's measured height — see
@@ -1002,6 +1106,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let previousCount = lastItemCount
         sizingItems = items
         smartNames.retainPresentations(for: Set(items.map(\.id)))
+        routeSuggestions.retainSuggestions(for: Set(items.map(\.id)))
+        if items.count != previousCount {
+            refreshRouteSuggestions(items: items)
+        }
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
@@ -2214,7 +2322,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let theme = themeStore.theme
         var usesStabilizedNameWidth = false
         let itemRows = sizingItems.compactMap { item
-            -> (title: String, showsAction: Bool)? in
+            -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
             let name = smartNames.presentation(
                 for: item.id,
                 originalTitle: item.metadata.title
@@ -2225,11 +2333,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             return (
                 title: name.title,
-                showsAction: theme.showsDeleteButton
+                showsAction: theme.showsDeleteButton,
+                showsRouteAction: routeSuggestions.suggestion(for: item.id) != nil
             )
         }
         let ghostRows = showsGhosts ? arrivals.visibleGhosts.compactMap {
-            ghost -> (title: String, showsAction: Bool)? in
+            ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
             if ghost.offer?.usesStableScreenshotName == true {
                 usesStabilizedNameWidth = true
                 return nil
@@ -2243,7 +2352,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 // Match an adopted row's stable trailing slot. The ghost does not draw
                 // the arrow yet, but reserving its room prevents title truncation and
                 // keeps the card from changing width when clicked.
-                showsAction: theme.showsDeleteButton
+                showsAction: theme.showsDeleteButton,
+                // A ghost has no drop record yet, so it can never carry a learned route.
+                showsRouteAction: false
             )
         } : []
         let contentWidth = RowMetrics.contentHuggingCardWidth(
@@ -2963,6 +3074,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     fileURLs: fileURLs,
                     screenshotCaptureContexts: capturedContexts
                 )
+                // The item's source app and category only become known to the log here,
+                // so this is the first moment a learned route can be matched to it.
+                self.refreshRouteSuggestions()
                 await runPendingOCR(
                     in: recordedDrop,
                     fileURLs: fileURLs,

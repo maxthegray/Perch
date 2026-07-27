@@ -74,6 +74,17 @@ enum RowMetrics {
     static let deleteDiameter: CGFloat = 20
     /// Trailing inset of the delete button from the row's right edge.
     static let deleteTrailingInset: CGFloat = 7
+    /// Gap between the two trailing buttons when a row also offers a learned route.
+    static let trailingActionSpacing: CGFloat = 4
+
+    /// Distance from the row's trailing edge to the center of trailing button
+    /// `index` (0 is the outermost — the delete button). Shared by the SwiftUI
+    /// rendering and the AppKit hit math.
+    static func trailingActionCenterInset(index: Int) -> CGFloat {
+        deleteTrailingInset
+            + deleteDiameter / 2
+            + CGFloat(index) * (deleteDiameter + trailingActionSpacing)
+    }
     /// Total height of the grab-handle strip drawn above the rows when the shelf holds
     /// items. Part of the row-geometry contract: the SwiftUI layout, the AppKit hit
     /// math, and the controller's height estimate all include it.
@@ -101,6 +112,7 @@ enum RowMetrics {
         theme: ShelfTheme,
         showsLabels: Bool,
         showsAction: Bool,
+        showsRouteAction: Bool = false,
         maximumWidth: CGFloat
     ) -> CGFloat {
         let boundedMaximum = max(0, maximumWidth)
@@ -111,9 +123,16 @@ enum RowMetrics {
         let titleWidth = ceil(
             (title as NSString).size(withAttributes: [.font: font]).width
         )
-        let actionWidth = showsAction
-            ? deleteDiameter + deleteTrailingInset
-            : 0
+        // The route button is only drawn on hover, but its room is reserved the whole
+        // time: a card that widened under the pointer would shift every other row. A
+        // theme with no trailing actions at all keeps none of this space.
+        var actionWidth: CGFloat = 0
+        if showsAction {
+            actionWidth = deleteDiameter + deleteTrailingInset
+            if showsRouteAction {
+                actionWidth += deleteDiameter + trailingActionSpacing
+            }
+        }
         let desiredWidth =
             labeledRowHorizontalPadding * 2
             + theme.iconSize
@@ -126,7 +145,7 @@ enum RowMetrics {
     /// Width of a populated card whose rows hug their titles. The user's Width setting
     /// supplies `maximumWidth`; it is a truncation ceiling, not forced empty space.
     static func contentHuggingCardWidth(
-        rows: [(title: String, showsAction: Bool)],
+        rows: [(title: String, showsAction: Bool, showsRouteAction: Bool)],
         theme: ShelfTheme,
         maximumWidth: CGFloat
     ) -> CGFloat {
@@ -141,6 +160,7 @@ enum RowMetrics {
                 theme: theme,
                 showsLabels: true,
                 showsAction: $0.showsAction,
+                showsRouteAction: $0.showsRouteAction,
                 maximumWidth: maximumRowWidth
             )
         }.max() ?? 0

@@ -31,6 +31,11 @@ public struct LearnedRoutePattern: Equatable, Sendable {
 }
 
 /// Conservative, deterministic route learning with no database or AppKit dependency.
+///
+/// Only routes the user performed by hand establish patterns. A route created by
+/// accepting Perch's own suggestion is still recorded — it belongs in the history —
+/// but counting it here would let a pattern confirm itself, so confidence would climb
+/// on Perch's own output rather than on evidence.
 public struct RoutePatternDetector: Sendable {
     public let minimumSessionCount: Int
     public let minimumDestinationShare: Double
@@ -51,7 +56,8 @@ public struct RoutePatternDetector: Sendable {
             return []
         }
 
-        let contexts = Dictionary(grouping: routes, by: LearningContextKey.init(route:))
+        let evidence = routes.filter { $0.origin == .manualDrag }
+        let contexts = Dictionary(grouping: evidence, by: LearningContextKey.init(route:))
         var patterns: [LearnedRoutePattern] = []
 
         for (context, contextRoutes) in contexts {
@@ -106,25 +112,5 @@ public struct RoutePatternDetector: Sendable {
             return lhs.successfulDropAtMilliseconds < rhs.successfulDropAtMilliseconds
         }
         return lhs.id.uuidString < rhs.id.uuidString
-    }
-}
-
-private struct LearningContextKey: Hashable {
-    let sourceApplication: String
-    let category: FileCategory?
-
-    init(route: ItemRouteEvent) {
-        if let bundleIdentifier = route.sourceAppBundleIdentifier?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           !bundleIdentifier.isEmpty {
-            sourceApplication = "bundle:\(bundleIdentifier.lowercased())"
-        } else if let name = route.sourceAppName?
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-                  !name.isEmpty {
-            sourceApplication = "name:\(name.lowercased())"
-        } else {
-            sourceApplication = "unknown"
-        }
-        category = route.category
     }
 }

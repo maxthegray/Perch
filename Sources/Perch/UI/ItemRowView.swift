@@ -31,6 +31,9 @@ struct ItemRowView: View {
     /// generic label and later crossfade to the generated name in the same geometry.
     let displayTitle: String
     let isNameAnalysisPending: Bool
+    /// Short name of the folder this item has repeatedly been dragged to, if Perch has
+    /// learned one. Its presence adds the file-it button and the destination subtitle.
+    let learnedDestinationName: String?
 
     var body: some View {
         HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
@@ -78,7 +81,7 @@ struct ItemRowView: View {
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? theme.rowHoverFill : theme.rowFill))
         )
         .overlay(alignment: .bottom) { separator }
-        .overlay(alignment: .trailing) { rowActionButton }
+        .overlay(alignment: .trailing) { trailingActions }
         .contentShape(Rectangle())
         .scaleEffect(isDeleting ? 1.06 : (isDragging ? 1.03 : 1))
         .shadow(color: .black.opacity(isDragging ? 0.25 : 0), radius: 6, y: 3)
@@ -88,6 +91,7 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.13), value: isSelected)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
         .animation(.easeOut(duration: 0.18), value: displayTitle)
+        .animation(.easeOut(duration: 0.18), value: learnedDestinationName)
         .animation(.easeOut(duration: 0.18), value: isNameAnalysisPending)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
@@ -135,21 +139,32 @@ struct ItemRowView: View {
         }
     }
 
+    /// The file-it button sits inboard of the delete button, so the destructive action
+    /// keeps the corner position muscle memory already points at.
     @ViewBuilder
-    private var rowActionButton: some View {
+    private var trailingActions: some View {
         if theme.showsDeleteButton && showsLabels && isHovered {
-            ZStack {
-                Circle().fill(.thinMaterial)
-                Circle().stroke(.white.opacity(0.18), lineWidth: 0.5)
-                Image(systemName: rowActionSymbol)
-                    .font(.system(size: 8.5, weight: .semibold))
-                    .foregroundStyle(.secondary)
+            HStack(spacing: RowMetrics.trailingActionSpacing) {
+                if learnedDestinationName != nil {
+                    circularAction(symbol: "folder", isProminent: true)
+                }
+                circularAction(symbol: rowActionSymbol, isProminent: false)
             }
-            .frame(width: RowMetrics.deleteDiameter, height: RowMetrics.deleteDiameter)
-            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
             .padding(.trailing, RowMetrics.deleteTrailingInset)
             .transition(.opacity.combined(with: .scale(scale: 0.6)))
         }
+    }
+
+    private func circularAction(symbol: String, isProminent: Bool) -> some View {
+        ZStack {
+            Circle().fill(.thinMaterial)
+            Circle().stroke(.white.opacity(0.18), lineWidth: 0.5)
+            Image(systemName: symbol)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(isProminent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+        }
+        .frame(width: RowMetrics.deleteDiameter, height: RowMetrics.deleteDiameter)
+        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
     }
 
     /// Files whose origin is known really go back when clicked, so show a return
@@ -174,7 +189,15 @@ struct ItemRowView: View {
         return "Clipping"
     }
 
+    /// The learned destination replaces the file-type line: where this is going is more
+    /// useful than what it is, and the row has room for exactly one of them.
     private var displayedSubtitle: String {
-        isNameAnalysisPending ? "Finding a useful name…" : subtitle
+        if isNameAnalysisPending {
+            return "Finding a useful name…"
+        }
+        if let learnedDestinationName {
+            return "→ \(learnedDestinationName)"
+        }
+        return subtitle
     }
 }

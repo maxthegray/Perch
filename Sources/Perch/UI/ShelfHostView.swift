@@ -15,6 +15,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let ledger: ProvenanceLedger
     private let arrivals: RecentArrivals
     private let smartNames: SmartNameStore
+    private let routeSuggestions: RouteSuggestionStore
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let hostingView: NSHostingView<ShelfContentView>
@@ -38,6 +39,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
+    /// The same arrangement for the file-it button: a press arms it, a release still
+    /// over it files the item at its learned route.
+    private var pendingRouteActionItem: StoredItem?
     /// Set on mouse-down over a recent-arrival ghost row. A click adopts it in place;
     /// crossing the drag threshold adopts it and immediately begins a normal vend.
     private var pendingArrival: ArrivalGhost?
@@ -129,6 +133,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onAcceptFilenameSuggestion: ((StoredItem, String) -> Void)?
     var onDismissFilenameSuggestion: ((StoredItem) -> Void)?
 
+    /// Accepting a learned route moves files and appends to the event log, so the
+    /// controller performs it for the same reason.
+    var onFileItemAtSuggestedRoute: ((StoredItem) -> Void)?
+
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
 
@@ -180,13 +188,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         themeStore: ThemeStore,
         ledger: ProvenanceLedger,
         arrivals: RecentArrivals,
-        smartNames: SmartNameStore
+        smartNames: SmartNameStore,
+        routeSuggestions: RouteSuggestionStore
     ) {
         self.store = store
         self.themeStore = themeStore
         self.ledger = ledger
         self.arrivals = arrivals
         self.smartNames = smartNames
+        self.routeSuggestions = routeSuggestions
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
@@ -194,7 +204,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 interaction: interaction,
                 thumbnails: thumbnails,
                 arrivals: arrivals,
-                smartNames: smartNames
+                smartNames: smartNames,
+                routeSuggestions: routeSuggestions
             )
         )
         super.init(frame: .zero)
@@ -228,6 +239,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             thumbnails: thumbnails,
             arrivals: arrivals,
             smartNames: smartNames,
+            routeSuggestions: routeSuggestions,
             onContentHeight: { [weak self] height in
                 self?.measuredContentHeight = height
                 self?.onContentHeight?(height)
@@ -408,10 +420,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         if !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels,
-           let index = rowIndex(at: point),
-           deleteHitRect(forRow: index).contains(point) {
-            pendingDeleteItem = visibleItems[index]
-            return
+           let index = rowIndex(at: point) {
+            if deleteHitRect(forRow: index).contains(point) {
+                pendingDeleteItem = visibleItems[index]
+                return
+            }
+            if routeActionHitRect(forRow: index).contains(point) {
+                pendingRouteActionItem = visibleItems[index]
+                return
+            }
         }
 
         // A press on a ghost row arms either a click-to-adopt or drag-to-vend. It must
@@ -478,8 +495,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
 
-        // A press that started on a delete button must not turn into a drag.
-        guard pendingDeleteItem == nil, !vendStarted else { return }
+        // A press that started on a trailing button must not turn into a drag.
+        guard pendingDeleteItem == nil, pendingRouteActionItem == nil, !vendStarted else {
+            return
+        }
         if shelfDragArmed {
             trackShelfDrag()
             return
@@ -551,6 +570,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
                 removeWithBounce(actionItems(for: item), returnToOrigin: true)
+            }
+        } else if let item = pendingRouteActionItem {
+            pendingRouteActionItem = nil
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = rowIndex(at: point),
+               index < visibleItems.count,
+               visibleItems[index].id == item.id,
+               routeActionHitRect(forRow: index).contains(point) {
+                onFileItemAtSuggestedRoute?(item)
             }
         } else if reorderActive {
             commitReorder()
@@ -738,6 +766,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         hasActiveLeftPress = false
         dragItem = nil
         pendingArrival = nil
+        pendingRouteActionItem = nil
         preservesSelectionForDrag = false
         reorderActive = false
         vendStarted = false
@@ -928,20 +957,47 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// (trailing-aligned, vertically centered in the row), enlarged slightly for an
     /// easier target. Shifted by the scroll offset so it tracks the visible row.
     private func deleteHitRect(forRow index: Int) -> NSRect {
+        trailingButtonHitRect(forRow: index, actionIndex: 0)
+    }
+
+    /// The clickable rect of a row's "file it at the learned route" button, drawn just
+    /// inboard of the delete button. Empty for rows with no learned route, so a click
+    /// there falls through to the ordinary row gesture.
+    private func routeActionHitRect(forRow index: Int) -> NSRect {
+        guard index < visibleItems.count,
+              routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        else {
+            return .zero
+        }
+        return trailingButtonHitRect(forRow: index, actionIndex: 1)
+    }
+
+    private func trailingButtonHitRect(forRow index: Int, actionIndex: Int) -> NSRect {
         let theme = themeStore.theme
         let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
         let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
         let rowMaxX = usesStackedRows
             ? bounds.midX + stackedPreviewSide / 2
             : itemRowRect(forRow: index).maxX
-        return trailingButtonHitRect(rowTop: rowTop, rowMaxX: rowMaxX)
+        let hasNeighbor = index < visibleItems.count
+            && routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        return trailingButtonHitRect(
+            rowTop: rowTop,
+            rowMaxX: rowMaxX,
+            actionIndex: actionIndex,
+            hasAdjacentAction: hasNeighbor
+        )
     }
 
-    /// A trailing ✕ button's enlarged hit rect for a row whose top edge (pre-scroll)
-    /// is `rowTop` — shared by the item rows' delete and the ghosts' dismiss.
+    /// A trailing button's enlarged hit rect for a row whose top edge (pre-scroll) is
+    /// `rowTop`. `actionIndex` counts inward from the trailing edge, matching the order
+    /// `ItemRowView` lays the buttons out in: 0 is the ✕ / return arrow, 1 the file-it
+    /// button. Shared by the item rows and the ghosts' dismiss.
     private func trailingButtonHitRect(
         rowTop: CGFloat,
-        rowMaxX: CGFloat? = nil
+        rowMaxX: CGFloat? = nil,
+        actionIndex: Int = 0,
+        hasAdjacentAction: Bool = false
     ) -> NSRect {
         let theme = themeStore.theme
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
@@ -949,8 +1005,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             rowMaxX
                 ?? bounds.width - rowLaneInset - theme.contentPadding
         )
-            - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
-        let hit = RowMetrics.deleteDiameter + 10
+            - RowMetrics.trailingActionCenterInset(index: actionIndex)
+        // A lone button is enlarged for an easier target. Two side by side are held to
+        // their pitch instead, so their rects cannot overlap: a near-miss on "file it"
+        // must not land on delete.
+        let hit = hasAdjacentAction
+            ? RowMetrics.deleteDiameter + RowMetrics.trailingActionSpacing
+            : RowMetrics.deleteDiameter + 10
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
     }
 
@@ -1180,6 +1241,31 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menuTargetFilenameSuggestion = nil
             }
 
+            // The deck layout draws no trailing buttons, so the menu is the only way to
+            // accept a learned route there.
+            if targets.count == 1,
+               let suggestion = routeSuggestions.suggestion(for: item.id) {
+                let destinationName = RouteDestinationPresentation.shortName(
+                    for: suggestion.destination
+                )
+                let fileItem = NSMenuItem(
+                    title: "Send to “\(destinationName)”",
+                    action: #selector(fileItemAtSuggestedRouteAction(_:)),
+                    keyEquivalent: ""
+                )
+                fileItem.target = self
+                menu.addItem(fileItem)
+
+                let dismissRoute = NSMenuItem(
+                    title: "Don't Suggest for This Item",
+                    action: #selector(dismissRouteSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                dismissRoute.target = self
+                menu.addItem(dismissRoute)
+                menu.addItem(.separator())
+            }
+
             let quickLook = NSMenuItem(
                 title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
                 action: #selector(quickLookMenuAction(_:)),
@@ -1352,6 +1438,20 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         onAcceptFilenameSuggestion?(item, suggestion)
         menuTargetItem = nil
         menuTargetFilenameSuggestion = nil
+    }
+
+    @objc private func fileItemAtSuggestedRouteAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        onFileItemAtSuggestedRoute?(item)
+        menuTargetItem = nil
+    }
+
+    /// Waving off a route is a local presentation decision — no file moves, nothing to
+    /// append to the log — so it is applied straight to the projection.
+    @objc private func dismissRouteSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        routeSuggestions.dismiss(item.id)
+        menuTargetItem = nil
     }
 
     @objc private func dismissFilenameSuggestionAction(_ sender: NSMenuItem) {

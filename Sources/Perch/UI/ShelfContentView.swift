@@ -67,6 +67,7 @@ struct ShelfContentView: View {
     @ObservedObject var thumbnails: ThumbnailStore
     @ObservedObject var arrivals: RecentArrivals
     @ObservedObject var smartNames: SmartNameStore
+    @ObservedObject var routeSuggestions: RouteSuggestionStore
     var onContentHeight: (CGFloat) -> Void = { _ in }
 
     private var theme: ShelfTheme { themeStore.theme }
@@ -461,7 +462,10 @@ struct ShelfContentView: View {
             showsLabels: themeStore.showsLabels,
             maximumWidth: maximumWidth,
             displayTitle: name.title,
-            isNameAnalysisPending: name.isAnalyzing
+            isNameAnalysisPending: name.isAnalyzing,
+            learnedDestinationName: routeSuggestions.suggestion(for: item.id).map {
+                RouteDestinationPresentation.shortName(for: $0.destination)
+            }
         )
         .transition(.asymmetric(
             insertion: .opacity,

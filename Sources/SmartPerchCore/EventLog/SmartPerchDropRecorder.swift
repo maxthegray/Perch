@@ -240,6 +240,18 @@ public actor SmartPerchDropRecorder {
         try eventStore.fetchLearnedRoutePatterns(detector: detector)
     }
 
+    public func fetchRouteSuggestions(
+        for shelfItemIDs: [UUID],
+        detector: RoutePatternDetector = RoutePatternDetector(),
+        matcher: RouteSuggestionMatcher = RouteSuggestionMatcher()
+    ) throws -> [UUID: SuggestedRoute] {
+        try eventStore.fetchRouteSuggestions(
+            for: shelfItemIDs,
+            detector: detector,
+            matcher: matcher
+        )
+    }
+
     private static func currentMilliseconds() -> Int64 {
         Int64((Date().timeIntervalSince1970 * 1_000).rounded())
     }

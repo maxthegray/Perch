@@ -56,11 +56,25 @@ public enum RouteDestination: Codable, Equatable, Hashable, Sendable {
 public enum RouteCaptureMethod: String, Codable, CaseIterable, DatabaseValueConvertible, Sendable {
     case filePromiseWrite = "file_promise_write"
     case applicationWindow = "application_window"
+    /// Perch performed the move itself, so the destination is known exactly rather
+    /// than observed.
+    case perchFiling = "perch_filing"
 }
 
 public enum RouteTransferMode: String, Codable, CaseIterable, DatabaseValueConvertible, Sendable {
     case copy
     case move
+}
+
+/// What caused an item to travel to its destination.
+///
+/// Only `manualDrag` is evidence of where the user wants things to go. A route the
+/// user merely confirmed by clicking Perch's own suggestion would otherwise reinforce
+/// the pattern that produced it, so `RoutePatternDetector` ignores those — see
+/// `RoutePatternDetector.detectPatterns`.
+public enum RouteEventOrigin: String, Codable, CaseIterable, DatabaseValueConvertible, Sendable {
+    case manualDrag = "manual_drag"
+    case acceptedSuggestion = "accepted_suggestion"
 }
 
 /// One successful item's trip out of Perch. A multi-item drag creates one row for
@@ -80,6 +94,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
     public let sourceAppBundleIdentifier: String?
     public let sourceAppName: String?
     public let category: FileCategory?
+    public let origin: RouteEventOrigin
     public let schemaVersion: Int
 
     public init(
@@ -94,6 +109,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
         sourceAppBundleIdentifier: String? = nil,
         sourceAppName: String? = nil,
         category: FileCategory? = nil,
+        origin: RouteEventOrigin = .manualDrag,
         schemaVersion: Int = currentSchemaVersion
     ) {
         self.id = id
@@ -107,6 +123,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
         self.sourceAppBundleIdentifier = sourceAppBundleIdentifier
         self.sourceAppName = sourceAppName
         self.category = category
+        self.origin = origin
         self.schemaVersion = schemaVersion
     }
 
@@ -152,6 +169,9 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
         )
         sourceAppName = try container.decodeIfPresent(String.self, forKey: .sourceAppName)
         category = try container.decodeIfPresent(FileCategory.self, forKey: .category)
+        // Rows written before the origin column existed are all real user drags.
+        origin = try container.decodeIfPresent(RouteEventOrigin.self, forKey: .origin)
+            ?? .manualDrag
         schemaVersion = try container.decode(Int.self, forKey: .schemaVersion)
     }
 
@@ -186,6 +206,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
         )
         try container.encodeIfPresent(sourceAppName, forKey: .sourceAppName)
         try container.encodeIfPresent(category, forKey: .category)
+        try container.encode(origin, forKey: .origin)
         try container.encode(schemaVersion, forKey: .schemaVersion)
     }
 
@@ -207,6 +228,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
                 ?? sourceAppBundleIdentifier,
             sourceAppName: self.sourceAppName ?? sourceAppName,
             category: self.category ?? category,
+            origin: origin,
             schemaVersion: schemaVersion
         )
     }
@@ -226,6 +248,7 @@ public struct ItemRouteEvent: Codable, Equatable, FetchableRecord, PersistableRe
         case sourceAppBundleIdentifier = "source_app_bundle_identifier"
         case sourceAppName = "source_app_name"
         case category
+        case origin
         case schemaVersion = "schema_version"
     }
 }

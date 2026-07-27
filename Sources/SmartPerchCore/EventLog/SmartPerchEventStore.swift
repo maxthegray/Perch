@@ -139,6 +139,43 @@ public final class SmartPerchEventStore: @unchecked Sendable {
         detector.detectPatterns(in: try fetchAllRoutes())
     }
 
+    /// The learning context of each requested shelf item that has a drop record.
+    /// Items with no record (or none carrying usable context) are simply absent.
+    public func fetchLearningContexts(
+        for shelfItemIDs: [UUID]
+    ) throws -> [UUID: RouteLearningContext] {
+        guard !shelfItemIDs.isEmpty else { return [:] }
+        return try database.read { database in
+            var contexts: [UUID: RouteLearningContext] = [:]
+            for shelfItemID in Set(shelfItemIDs) {
+                guard let context = try Self.learningContext(
+                    for: shelfItemID,
+                    in: database
+                ) else {
+                    continue
+                }
+                contexts[shelfItemID] = context
+            }
+            return contexts
+        }
+    }
+
+    /// One read for the whole shelf: resolve each item's context, detect patterns from
+    /// the route history, and pair them up.
+    public func fetchRouteSuggestions(
+        for shelfItemIDs: [UUID],
+        detector: RoutePatternDetector = RoutePatternDetector(),
+        matcher: RouteSuggestionMatcher = RouteSuggestionMatcher()
+    ) throws -> [UUID: SuggestedRoute] {
+        guard !shelfItemIDs.isEmpty else { return [:] }
+        let patterns = try fetchLearnedRoutePatterns(detector: detector)
+        guard !patterns.isEmpty else { return [:] }
+        return matcher.suggestions(
+            forItemContexts: try fetchLearningContexts(for: shelfItemIDs),
+            patterns: patterns
+        )
+    }
+
     public func finishOCR(
         fileID: UUID,
         state: OCRProcessingState,
@@ -462,6 +499,14 @@ public final class SmartPerchEventStore: @unchecked Sendable {
             )
         }
 
+        migrator.registerMigration("addItemRouteEventOrigin") { database in
+            try database.alter(table: ItemRouteEvent.databaseTableName) { table in
+                table.add(column: "origin", .text)
+                    .notNull()
+                    .defaults(to: RouteEventOrigin.manualDrag.rawValue)
+            }
+        }
+
         return migrator
     }
 
@@ -473,11 +518,14 @@ public final class SmartPerchEventStore: @unchecked Sendable {
         }
 
         switch (route.destination, route.captureMethod) {
-        case let (.folder(path), .filePromiseWrite):
+        case let (.folder(path), .filePromiseWrite),
+             let (.folder(path), .perchFiling):
             return !path.isEmpty && (path as NSString).isAbsolutePath
         case let (.application(bundleIdentifier, name), .applicationWindow):
             return bundleIdentifier?.isEmpty == false || !name.isEmpty
-        case (.folder, .applicationWindow), (.application, .filePromiseWrite):
+        case (.folder, .applicationWindow),
+             (.application, .filePromiseWrite),
+             (.application, .perchFiling):
             return false
         }
     }
@@ -525,10 +573,4 @@ public final class SmartPerchEventStore: @unchecked Sendable {
             category: category
         )
     }
-}
-
-private struct RouteLearningContext {
-    let sourceAppBundleIdentifier: String?
-    let sourceAppName: String?
-    let category: FileCategory?
 }

@@ -285,6 +285,67 @@ final class ItemStore: ObservableObject {
         return restored
     }
 
+    /// Move a selection's backing files into `folder` and take the filed items off the
+    /// shelf. Never overwrites: a name clash at the destination is uniquified.
+    ///
+    /// Unlike `returnToOrigin`, an item is only removed once every one of its files
+    /// arrived. A file Perch could not move stays in the holding directory with its row
+    /// still on the shelf, rather than being deleted along with the item.
+    @discardableResult
+    func fileItems(_ items: [StoredItem], into folder: URL) -> [URL] {
+        let fileManager = FileManager.default
+        do {
+            try fileManager.createDirectory(at: folder, withIntermediateDirectories: true)
+        } catch {
+            NSLog("Perch could not open \(folder.path) to file items: \(error)")
+            return []
+        }
+
+        var moved: [URL] = []
+        var filedItems: [StoredItem] = []
+
+        for item in items {
+            let sources = item.backingFileURLs().filter {
+                fileManager.fileExists(atPath: $0.path)
+            }
+            guard !sources.isEmpty else { continue }
+
+            var movedEverySource = true
+            for source in sources {
+                let destination = nonClobberingURL(
+                    for: folder.appendingPathComponent(
+                        source.lastPathComponent,
+                        isDirectory: false
+                    ),
+                    fileManager: fileManager
+                )
+                do {
+                    try fileManager.moveItem(at: source, to: destination)
+                    moved.append(destination)
+                } catch {
+                    NSLog(
+                        "Perch could not file \(source.lastPathComponent) into \(folder.path): \(error)"
+                    )
+                    movedEverySource = false
+                    break
+                }
+            }
+            if movedEverySource {
+                filedItems.append(item)
+            }
+        }
+
+        if !filedItems.isEmpty {
+            remove(filedItems)
+        }
+        if !moved.isEmpty {
+            // Filing into a watched folder (Downloads, Desktop) must not bounce the file
+            // straight back onto the shelf as a fresh arrival ghost.
+            onFilesRestored?(moved)
+        }
+        return moved
+    }
+
     private func restoreBackingFiles(of item: StoredItem) -> [URL] {
         guard let origins = item.metadata.originPaths, !origins.isEmpty else { return [] }
         let fileManager = FileManager.default
