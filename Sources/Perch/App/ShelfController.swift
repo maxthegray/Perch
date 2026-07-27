@@ -31,6 +31,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let edgeSettings = EdgeSettings()
     /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
     private let arrivals = RecentArrivals()
+    private struct ArrivalNameAnalysis: Sendable {
+        let ocrResult: ScreenshotOCRResult
+        let suggestion: ScreenshotNameSuggestion?
+    }
+    /// Ghost analysis is transient: it improves the preview without creating a drop
+    /// event. If adopted, the cached OCR result is transferred into the real log.
+    private var arrivalNameAnalysisByPath: [String: ArrivalNameAnalysis] = [:]
+    private var arrivalNameTasksByPath: [String: Task<Void, Never>] = [:]
+    private var attemptedArrivalNamePaths: Set<String> = []
     private var edgeStrips: [EdgeStripWindow] = []
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
@@ -119,6 +128,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
+    private var arrivalNamesCancellable: AnyCancellable?
     /// Coalesces the several writes/renames produced by one browser download.
     private var arrivalRefreshTask: Task<Void, Never>?
     /// A shelf opened only to advertise a new arrival goes away again after a short
@@ -534,6 +544,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] _ in
                 self?.resizeToFitVisible()
             }
+        arrivalNamesCancellable = arrivals.$smartNamesByPath
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
+            }
 
     }
 
@@ -544,6 +560,95 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// mutations that change what should be offered.
     private func refreshArrivals(markRevealed: Bool = false) {
         arrivals.refresh(excluding: arrivalExclusions(), markRevealed: markRevealed)
+        prepareArrivalSmartNames()
+    }
+
+    /// Precompute names only for screenshot offer rows the user can currently see.
+    /// Vision remains on its serial utility queue; ordinary files and collapsed batch
+    /// members never pay this cost.
+    private func prepareArrivalSmartNames() {
+        let activePaths = Set(arrivals.sessions.flatMap(\.offers).map(\.id))
+        let staleTaskPaths = arrivalNameTasksByPath.keys.filter {
+            !activePaths.contains($0)
+        }
+        for path in staleTaskPaths {
+            arrivalNameTasksByPath.removeValue(forKey: path)?.cancel()
+        }
+        arrivalNameAnalysisByPath = arrivalNameAnalysisByPath.filter {
+            activePaths.contains($0.key)
+        }
+        attemptedArrivalNamePaths.formIntersection(activePaths)
+
+        guard !arrivals.suppressed else { return }
+        let visibleOffers = arrivals.visibleGhosts.compactMap(\.offer)
+        for offer in visibleOffers
+        where !attemptedArrivalNamePaths.contains(offer.id) {
+            attemptedArrivalNamePaths.insert(offer.id)
+            startArrivalNameAnalysis(for: offer)
+        }
+    }
+
+    private func startArrivalNameAnalysis(for offer: ArrivalOffer) {
+        let path = offer.id
+        let url = offer.url
+        let captureContext = offer.screenshotCaptureContext
+        let worker = screenshotOCRWorker
+
+        arrivalNameTasksByPath[path] = Task.detached(priority: .utility) { [weak self] in
+            let analysis: ArrivalNameAnalysis?
+            do {
+                let metadata = try DroppedFileMetadata.capture(from: url)
+                let category = ExtensionHeuristicsClassifier().classify(metadata)
+                guard ScreenshotOCRGate().isEligible(metadata, category: category),
+                      !Task.isCancelled
+                else {
+                    await MainActor.run { [weak self] in
+                        self?.arrivalNameTasksByPath[path] = nil
+                    }
+                    return
+                }
+
+                let result = try await worker.recognizeText(at: url)
+                guard !Task.isCancelled else { return }
+                let suggestion = ScreenshotFilenameSuggester().suggestName(
+                    from: result.text ?? "",
+                    recognizedLines: result.lines,
+                    originalFilename: url.lastPathComponent,
+                    screenshotCaptureContext: captureContext
+                )
+                analysis = ArrivalNameAnalysis(
+                    ocrResult: result,
+                    suggestion: suggestion
+                )
+            } catch {
+                analysis = nil
+            }
+
+            await MainActor.run { [weak self] in
+                guard let self else { return }
+                self.arrivalNameTasksByPath[path] = nil
+                guard self.arrivals.sessions.contains(where: { session in
+                    session.offers.contains(where: { $0.id == path })
+                }), let analysis
+                else {
+                    return
+                }
+                self.arrivalNameAnalysisByPath[path] = analysis
+                if let suggestion = analysis.suggestion {
+                    self.arrivals.setSmartName(
+                        suggestion.displayName,
+                        forPath: path
+                    )
+                }
+                if analysis.ocrResult.durationMilliseconds > 2_000 {
+                    NSLog(
+                        "Perch screenshot ghost OCR took "
+                            + "\(analysis.ocrResult.durationMilliseconds) ms for "
+                            + "\(url.lastPathComponent)"
+                    )
+                }
+            }
+        }
     }
 
     /// A watched folder changed. Wait for Chrome's temporary download + rename burst
@@ -620,6 +725,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
+        let prefetchedOCRResult = arrivalNameAnalysisByPath[offer.id]?.ocrResult
+        arrivalNameTasksByPath.removeValue(forKey: offer.id)?.cancel()
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
             return nil
@@ -671,7 +778,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 sourceApplication: nil
             ),
             payloadKind: .recentArrival,
-            screenshotCaptureContexts: [offer.screenshotCaptureContext]
+            screenshotCaptureContexts: [offer.screenshotCaptureContext],
+            prefetchedOCRResults: [prefetchedOCRResult]
         )
         if recordsInteraction {
             recordArrivalSessionInteraction(
@@ -712,6 +820,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func expandArrivalSession(_ session: ArrivalSession) {
         arrivals.expand(session)
+        prepareArrivalSmartNames()
         recordArrivalSessionInteraction(
             session,
             action: .expanded,
@@ -1943,17 +2052,30 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let maximumListWidth = (edge == .notch ? 360 : 300)
             * themeStore.widthScale
-        // Arrival rows still present session metadata and controls across the ordinary
-        // list lane. Keep that temporary surface at the configured list width.
-        guard !showsGhosts else { return maximumListWidth }
-
-        let titles = sizingItems.map {
-            smartNames.suggestion(for: $0.id)?.displayName
-                ?? $0.metadata.title
+        let theme = themeStore.theme
+        let itemRows = sizingItems.map {
+            (
+                title: smartNames.suggestion(for: $0.id)?.displayName
+                    ?? $0.metadata.title,
+                showsAction: theme.showsDeleteButton
+            )
         }
+        let ghostRows = showsGhosts ? arrivals.visibleGhosts.map { ghost in
+            (
+                title: ghost.displayTitle(
+                    smartName: ghost.offer.flatMap {
+                        arrivals.smartName(for: $0)
+                    }
+                ),
+                // Match an adopted row's stable trailing slot. The ghost does not draw
+                // the arrow yet, but reserving its room prevents title truncation and
+                // keeps the card from changing width when clicked.
+                showsAction: theme.showsDeleteButton
+            )
+        } : []
         return RowMetrics.contentHuggingCardWidth(
-            titles: titles,
-            theme: themeStore.theme,
+            rows: itemRows + ghostRows,
+            theme: theme,
             maximumWidth: maximumListWidth
         )
     }
@@ -2535,7 +2657,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         _ item: StoredItem,
         context: DropRecordingContext,
         payloadKind: DropPayloadKind,
-        screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil
+        screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil,
+        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
     ) {
         guard let smartDropRecorder else { return }
         let shelfItemID = item.id
@@ -2556,7 +2679,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 await runPendingOCR(
                     in: recordedDrop,
                     fileURLs: fileURLs,
-                    recorder: smartDropRecorder
+                    recorder: smartDropRecorder,
+                    prefetchedOCRResults: prefetchedOCRResults
                 )
             } catch {
                 NSLog("Perch could not record Smart Perch drop \(context.eventID): \(error)")
@@ -2567,7 +2691,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func runPendingOCR(
         in drop: RecordedDrop,
         fileURLs: [URL],
-        recorder: SmartPerchDropRecorder
+        recorder: SmartPerchDropRecorder,
+        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
     ) async {
         for file in drop.files where file.ocrState == .pending {
             guard fileURLs.indices.contains(file.ordinal) else {
@@ -2576,9 +2701,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
 
             do {
-                let result = try await screenshotOCRWorker.recognizeText(
-                    at: fileURLs[file.ordinal]
-                )
+                let result: ScreenshotOCRResult
+                if let prefetchedOCRResults,
+                   prefetchedOCRResults.indices.contains(file.ordinal),
+                   let prefetched = prefetchedOCRResults[file.ordinal] {
+                    result = prefetched
+                } else {
+                    result = try await screenshotOCRWorker.recognizeText(
+                        at: fileURLs[file.ordinal]
+                    )
+                }
                 let nameSuggestion = try await recorder.completeOCR(
                     fileID: file.fileID,
                     text: result.text,

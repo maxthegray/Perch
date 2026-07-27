@@ -301,7 +301,10 @@ struct ShelfContentView: View {
                     ghost: ghost,
                     theme: theme,
                     isHovered: interaction.hoveredArrivalID == ghost.id,
-                    showsLabels: themeStore.showsLabels
+                    showsLabels: themeStore.showsLabels,
+                    smartName: ghost.offer.flatMap {
+                        arrivals.smartName(for: $0)
+                    }
                 )
                 .transition(.opacity)
             }
@@ -510,7 +513,7 @@ struct ShelfContentView: View {
     private var rowLaneWidthScale: CGFloat {
         !themeStore.stacksItems
             && themeStore.showsLabels
-            && !store.items.isEmpty
+            && (!store.items.isEmpty || !ghostRows.isEmpty)
             ? 1
             : themeStore.widthScale
     }
@@ -622,9 +625,10 @@ struct ArrivalGhostRowView: View {
     let theme: ShelfTheme
     let isHovered: Bool
     let showsLabels: Bool
+    let smartName: String?
 
     var body: some View {
-        HStack(spacing: showsLabels ? 10 : 0) {
+        HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
             icon
                 .frame(width: theme.iconSize, height: theme.iconSize)
 
@@ -641,14 +645,15 @@ struct ArrivalGhostRowView: View {
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                        .lineLimit(1)
                     }
                 }
-
-                Spacer(minLength: 0)
             }
         }
-        .padding(.horizontal, showsLabels ? 10 : 0)
+        .padding(
+            .horizontal,
+            showsLabels ? RowMetrics.labeledRowHorizontalPadding : 0
+        )
         .frame(
             maxWidth: .infinity,
             minHeight: theme.rowHeight,
@@ -685,14 +690,7 @@ struct ArrivalGhostRowView: View {
     }
 
     private var title: String {
-        switch ghost {
-        case let .summary(session, .expand):
-            return "\(session.offers.count) new downloads"
-        case let .summary(session, .addAll):
-            return "Add all \(session.offers.count) downloads"
-        case let .offer(offer, _):
-            return offer.name
-        }
+        ghost.displayTitle(smartName: smartName)
     }
 
     private var isSessionSummary: Bool {

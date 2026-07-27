@@ -63,6 +63,36 @@ final class DownloadSessionGrouperTests: XCTestCase {
         ])
     }
 
+    func testOfferGhostUsesSmartNameBeforeAdoption() {
+        let arrival = offer("Screenshot 2026-07-26.png", secondsBefore: 0, now: Date())
+        let session = ArrivalSession(id: UUID(), offers: [arrival])
+        let ghost = ArrivalGhost.offer(arrival, session: session)
+
+        XCTAssertEqual(
+            ghost.displayTitle(smartName: "Terminal — Perch"),
+            "Terminal — Perch"
+        )
+        XCTAssertEqual(
+            ghost.displayTitle(smartName: nil),
+            "Screenshot 2026-07-26.png"
+        )
+    }
+
+    func testSessionSummaryKeepsItsBatchActionTitle() {
+        let now = Date()
+        let arrivals = [
+            offer("one.png", secondsBefore: 0, now: now),
+            offer("two.png", secondsBefore: 1, now: now)
+        ]
+        let session = ArrivalSession(id: UUID(), offers: arrivals)
+
+        XCTAssertEqual(
+            ArrivalGhost.summary(session, action: .expand)
+                .displayTitle(smartName: "Ignored"),
+            "2 new downloads"
+        )
+    }
+
     private func offer(
         _ name: String,
         secondsBefore: TimeInterval,

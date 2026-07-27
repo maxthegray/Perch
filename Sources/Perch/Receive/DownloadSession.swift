@@ -95,6 +95,24 @@ enum ArrivalGhost: Identifiable, Equatable {
             return session
         }
     }
+
+    var offer: ArrivalOffer? {
+        if case let .offer(offer, _) = self {
+            return offer
+        }
+        return nil
+    }
+
+    func displayTitle(smartName: String?) -> String {
+        switch self {
+        case let .summary(session, .expand):
+            return "\(session.offers.count) new downloads"
+        case let .summary(session, .addAll):
+            return "Add all \(session.offers.count) downloads"
+        case let .offer(offer, _):
+            return smartName ?? offer.name
+        }
+    }
 }
 
 /// Pure temporal grouping used by the folder watcher. Desktop arrivals deliberately

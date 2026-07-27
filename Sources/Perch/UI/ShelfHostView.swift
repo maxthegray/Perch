@@ -731,7 +731,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private var usesContentHuggingRows: Bool {
-        !usesStackedRows && themeStore.showsLabels && !visibleItems.isEmpty
+        !usesStackedRows
+            && themeStore.showsLabels
+            && (!visibleItems.isEmpty || !ghostRows.isEmpty)
     }
 
     private func rowLaneContains(x: CGFloat) -> Bool {

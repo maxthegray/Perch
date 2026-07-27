@@ -34,6 +34,9 @@ final class RecentArrivals: ObservableObject {
 
     private(set) var sessions: [ArrivalSession] = []
     @Published private(set) var visibleGhosts: [ArrivalGhost] = []
+    /// Temporary presentation names for files that have not been adopted. The SQLite
+    /// event log remains untouched until an actual drop/adoption occurs.
+    @Published private(set) var smartNamesByPath: [String: String] = [:]
     /// True while a system drag is in flight: ghosts hide so they never shift the
     /// drop target under the cursor.
     @Published var suppressed = false
@@ -105,6 +108,7 @@ final class RecentArrivals: ObservableObject {
         guard enabled else {
             sessions = []
             expandedSessionIDs = []
+            smartNamesByPath = [:]
             publishVisibleGhosts()
             return
         }
@@ -183,6 +187,10 @@ final class RecentArrivals: ObservableObject {
         }
 
         sessions = fresh
+        let freshPaths = Set(fresh.flatMap(\.offers).map(\.id))
+        smartNamesByPath = smartNamesByPath.filter {
+            freshPaths.contains($0.key)
+        }
         expandedSessionIDs.formIntersection(
             Set(fresh.filter(\.isBatch).map(\.id))
         )
@@ -210,6 +218,19 @@ final class RecentArrivals: ObservableObject {
         guard session.isBatch else { return }
         expandedSessionIDs.insert(session.id)
         publishVisibleGhosts()
+    }
+
+    func smartName(for offer: ArrivalOffer) -> String? {
+        smartNamesByPath[offer.id]
+    }
+
+    func setSmartName(_ name: String, forPath path: String) {
+        guard sessions.contains(where: { session in
+            session.offers.contains(where: { $0.id == path })
+        }) else {
+            return
+        }
+        smartNamesByPath[path] = name
     }
 
     /// Silence paths Perch itself just placed (vended files, returns-to-origin) so the
@@ -265,6 +286,9 @@ final class RecentArrivals: ObservableObject {
     }
 
     private func removeVisibleOffers(withIDs removedIDs: Set<String>) {
+        smartNamesByPath = smartNamesByPath.filter {
+            !removedIDs.contains($0.key)
+        }
         sessions = sessions.compactMap { session in
             let remaining = session.offers.filter { !removedIDs.contains($0.id) }
             guard !remaining.isEmpty else {
@@ -320,6 +344,9 @@ final class RecentArrivals: ObservableObject {
             activePaths.contains(path)
                 || revealCounts[path] != nil
                 || dismissedPaths[path] != nil
+        }
+        smartNamesByPath = smartNamesByPath.filter {
+            activePaths.contains($0.key)
         }
         let retainedSessionIDs = Set(sessionIDByPath.values)
         sessionTotalCountByID = sessionTotalCountByID.filter {

@@ -75,7 +75,10 @@ final class RowMetricsTests: XCTestCase {
         let theme = ShelfTheme.resolve(.glass)
         let maximumWidth: CGFloat = 600
         let cardWidth = RowMetrics.contentHuggingCardWidth(
-            titles: ["Gmail", "Terminal — Perch"],
+            rows: [
+                ("Gmail", true),
+                ("Terminal — Perch", true)
+            ],
             theme: theme,
             maximumWidth: maximumWidth
         )
@@ -97,7 +100,11 @@ final class RowMetricsTests: XCTestCase {
     func testWidestTitleDefinesOneSharedCompactRowWidth() {
         let theme = ShelfTheme.resolve(.glass)
         let cardWidth = RowMetrics.contentHuggingCardWidth(
-            titles: ["Gmail", "Terminal — Perch", "Activity Monitor"],
+            rows: [
+                ("Gmail", true),
+                ("Terminal — Perch", true),
+                ("Activity Monitor", true)
+            ],
             theme: theme,
             maximumWidth: 600
         )
@@ -111,5 +118,26 @@ final class RowMetricsTests: XCTestCase {
         )
 
         XCTAssertEqual(sharedRowWidth, widestTitleWidth)
+    }
+
+    func testGhostOnlyCardMatchesTheStableAdoptedRowWidth() {
+        let theme = ShelfTheme.resolve(.glass)
+        let cardWidth = RowMetrics.contentHuggingCardWidth(
+            rows: [("Messages — Lachlan Wession", true)],
+            theme: theme,
+            maximumWidth: 600
+        )
+        let ghostWidth = RowMetrics.itemRowWidth(
+            title: "Messages — Lachlan Wession",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            maximumWidth: 600
+        )
+
+        XCTAssertEqual(
+            cardWidth,
+            ghostWidth + theme.contentPadding * 2
+        )
     }
 }

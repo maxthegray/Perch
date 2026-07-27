@@ -118,7 +118,7 @@ enum RowMetrics {
     /// Width of a populated card whose rows hug their titles. The user's Width setting
     /// supplies `maximumWidth`; it is a truncation ceiling, not forced empty space.
     static func contentHuggingCardWidth(
-        titles: [String],
+        rows: [(title: String, showsAction: Bool)],
         theme: ShelfTheme,
         maximumWidth: CGFloat
     ) -> CGFloat {
@@ -127,12 +127,12 @@ enum RowMetrics {
             0,
             boundedMaximum - theme.contentPadding * 2
         )
-        let widestRow = titles.map {
+        let widestRow = rows.map {
             itemRowWidth(
-                title: $0,
+                title: $0.title,
                 theme: theme,
                 showsLabels: true,
-                showsAction: theme.showsDeleteButton,
+                showsAction: $0.showsAction,
                 maximumWidth: maximumRowWidth
             )
         }.max() ?? 0
