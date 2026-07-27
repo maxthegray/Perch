@@ -49,7 +49,7 @@ public struct ScreenshotNameSuggestion: Equatable, Sendable {
 /// tiny browser/app chrome. Older flat OCR records still get a conservative fallback.
 public struct ScreenshotFilenameSuggester: Sendable {
     public static let identifier = "screenshot-ocr-filename"
-    public static let version = 3
+    public static let version = 4
     public static let maximumBaseNameLength = 48
     public static let maximumWordCount = 4
 
@@ -62,6 +62,18 @@ public struct ScreenshotFilenameSuggester: Sendable {
     ) -> ScreenshotNameSuggestion? {
         let originalExtension = URL(fileURLWithPath: originalFilename).pathExtension
         guard !originalExtension.isEmpty else { return nil }
+
+        if let workspace = developerWorkspaceContext(
+            in: ocrText,
+            recognizedLines: recognizedLines
+        ) {
+            return makeSuggestion(
+                filenameWords: workspace.filenameWords,
+                displayName: workspace.displayName,
+                originalFilename: originalFilename,
+                originalExtension: originalExtension
+            )
+        }
 
         let context = detectedContext(in: ocrText)
         if context == .messages {
@@ -277,17 +289,108 @@ public struct ScreenshotFilenameSuggester: Sendable {
             return .messages
         }
 
-        let hasVideoMetrics = allWords.contains("views")
-            || allWords.contains("subscribers")
+        let videoMetricCount = actualVideoMetricCount(in: lowercased)
         let hasYouTubeChrome = allWords.contains("premium")
             || allWords.contains("shorts")
             || allWords.contains("subscribe")
             || allWords.contains("members")
-        if (hasVideoMetrics && hasYouTubeChrome)
-            || (allWords.contains("youtube") && hasVideoMetrics) {
+        if (videoMetricCount >= 1 && hasYouTubeChrome)
+            || (allWords.contains("youtube") && videoMetricCount >= 1)
+            || videoMetricCount >= 2 {
             return .youtube
         }
         return nil
+    }
+
+    /// A mention of "views" in prose is not YouTube evidence. Real screenshots expose
+    /// concrete metrics such as "17M views" or "240K subscribers".
+    private func actualVideoMetricCount(in lowercasedText: String) -> Int {
+        let pattern = #"\b\d+(?:\.\d+)?\s*[kmb]?\s+(?:views|subscribers?)\b"#
+        guard let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: []
+        ) else {
+            return 0
+        }
+        return expression.numberOfMatches(
+            in: lowercasedText,
+            range: NSRange(
+                lowercasedText.startIndex..<lowercasedText.endIndex,
+                in: lowercasedText
+            )
+        )
+    }
+
+    /// Dense Codex screens are workspaces, not documents: body text may discuss any
+    /// topic and must not classify the screenshot. Prefer the stable tool + project
+    /// identity from the status/title band.
+    private func developerWorkspaceContext(
+        in text: String,
+        recognizedLines: [RecognizedTextLine]
+    ) -> DeveloperWorkspaceContext? {
+        guard recognizedLines.count >= 12 else { return nil }
+
+        let lowercased = text.lowercased()
+        let allWords = Set(words(in: text))
+        guard allWords.contains("codex") else { return nil }
+
+        var corroboratingSignals = 0
+        if allWords.contains("gpt") { corroboratingSignals += 1 }
+        if lowercased.contains("auto mode on") { corroboratingSignals += 1 }
+        if lowercased.contains("worked for") || lowercased.contains("crunched for") {
+            corroboratingSignals += 1
+        }
+        if lowercased.contains(".codex") || lowercased.contains("/codex") {
+            corroboratingSignals += 1
+        }
+        guard corroboratingSignals >= 1 else { return nil }
+
+        if let projectWords = projectWordsFromTopBand(recognizedLines) {
+            return DeveloperWorkspaceContext(
+                displayName: "Codex · \(humanizedName(from: projectWords))",
+                filenameWords: ["codex"] + projectWords
+            )
+        }
+
+        return DeveloperWorkspaceContext(
+            displayName: "Codex workspace",
+            filenameWords: ["codex", "workspace"]
+        )
+    }
+
+    private func projectWordsFromTopBand(
+        _ recognizedLines: [RecognizedTextLine]
+    ) -> [String]? {
+        recognizedLines
+            .filter { $0.minY >= 0.94 }
+            .sorted { $0.minX < $1.minX }
+            .compactMap { line -> [String]? in
+                guard !line.text.contains("%"),
+                      !line.text.contains(":")
+                else {
+                    return nil
+                }
+
+                let candidateWords = words(in: line.text).filter {
+                    isMeaningful($0)
+                        && !Self.developerChromeWords.contains($0)
+                        && !$0.unicodeScalars.allSatisfy {
+                            CharacterSet.decimalDigits.contains($0)
+                        }
+                }
+                guard !candidateWords.isEmpty,
+                      candidateWords.count <= 2,
+                      candidateWords.contains(where: { word in
+                          word.unicodeScalars.filter {
+                              CharacterSet.letters.contains($0)
+                          }.count >= 3
+                      })
+                else {
+                    return nil
+                }
+                return candidateWords
+            }
+            .first
     }
 
     /// Messages puts the conversation title in a compact centered line above the
@@ -422,6 +525,11 @@ public struct ScreenshotFilenameSuggester: Sendable {
         let layout: RecognizedTextLine?
     }
 
+    private struct DeveloperWorkspaceContext {
+        let displayName: String
+        let filenameWords: [String]
+    }
+
     private enum ScreenshotContext: Equatable {
         case youtube
         case messages
@@ -442,13 +550,20 @@ public struct ScreenshotFilenameSuggester: Sendable {
     }
 
     private static let brandCapitalization: [String: String] = [
+        "codex": "Codex",
         "github": "GitHub",
         "ios": "iOS",
         "macos": "macOS",
+        "ocr": "OCR",
         "pdf": "PDF",
         "swiftui": "SwiftUI",
         "xcode": "Xcode",
         "youtube": "YouTube"
+    ]
+
+    private static let developerChromeWords: Set<String> = [
+        "aarch64", "arm64", "auto", "beta", "codex", "day", "days", "gpt",
+        "high", "low", "main", "master", "medium", "mode", "sol", "xhigh"
     ]
 
     private static let stopWords: Set<String> = [

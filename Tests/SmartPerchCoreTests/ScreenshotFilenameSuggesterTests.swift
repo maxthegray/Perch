@@ -183,6 +183,104 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         )
     }
 
+    func testYouTubeDiscussionDoesNotCountAsYouTubeInterface() {
+        let suggestion = suggester.suggestName(
+            from: """
+                OCR Classification Notes
+                YouTube detection requires views or subscribers
+                Premium Shorts Subscribe Members
+                """,
+            recognizedLines: [
+                line(
+                    "OCR Classification Notes",
+                    x: 0.24,
+                    y: 0.58,
+                    width: 0.40,
+                    height: 0.055
+                ),
+                line(
+                    "YouTube detection requires views or subscribers",
+                    x: 0.20,
+                    y: 0.48,
+                    width: 0.55,
+                    height: 0.025
+                ),
+                line(
+                    "Premium Shorts Subscribe Members",
+                    x: 0.20,
+                    y: 0.43,
+                    width: 0.42,
+                    height: 0.025
+                )
+            ],
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "OCR Classification Notes",
+                suggestedFilename: "ocr-classification-notes.png"
+            )
+        )
+    }
+
+    func testDenseCodexWorkspaceUsesToolAndProjectInsteadOfBodyText() {
+        let topLines = [
+            line("Perch", x: 0.029, y: 0.966, width: 0.029, height: 0.011),
+            line(
+                "codex-aarch64-a",
+                x: 0.071,
+                y: 0.964,
+                width: 0.081,
+                height: 0.014
+            ),
+            line("beta", x: 0.648, y: 0.963, width: 0.034, height: 0.017),
+            line(
+                "gpt-5.6-sol xhigh",
+                x: 0.695,
+                y: 0.961,
+                width: 0.093,
+                height: 0.018
+            )
+        ]
+        let bodyTexts = [
+            "Smart Names are capped at four words",
+            "How does it know if something is YouTube",
+            "views or subscribers plus Premium Shorts",
+            "auto mode on",
+            "Worked for 5m 44s",
+            "Building for production",
+            "Perch marks something as YouTube",
+            "Subscribe or Members",
+            "Changes remain uncommitted on beta"
+        ]
+        let bodyLines = bodyTexts.enumerated().map { index, text in
+            line(
+                text,
+                x: index.isMultiple(of: 2) ? 0.02 : 0.51,
+                y: 0.90 - Double(index) * 0.06,
+                width: 0.42,
+                height: 0.016
+            )
+        }
+        let lines = topLines + bodyLines
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Codex · Perch",
+                suggestedFilename: "codex-perch.png"
+            )
+        )
+    }
+
     func testLowInformationYouTubeScreenshotGetsHonestGenericLabel() {
         let suggestion = suggester.suggestName(
             from: "Premium\n1.2M views",
