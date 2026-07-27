@@ -156,6 +156,19 @@ final class ItemStore: ObservableObject {
         persistIndexOrLogFailure()
     }
 
+    /// Replace one visible item's immutable metadata snapshot without changing its
+    /// position or index identity. Used when a timed-out file promise arrives late.
+    @discardableResult
+    func replace(_ item: StoredItem) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else {
+            return false
+        }
+        var updatedItems = items
+        updatedItems[index] = item
+        items = updatedItems
+        return true
+    }
+
     /// Rename a one-file shelf item in place and atomically persist its updated
     /// metadata. Name collisions are uniquified instead of overwriting another file.
     @discardableResult

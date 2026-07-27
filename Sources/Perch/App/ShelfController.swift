@@ -382,9 +382,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Build the windows, load the store, and start observing drags.
     func start() {
         do {
-            try store.load()
+            try ShelfPersistenceLoader.load(store: store, ledger: ledger)
             registerStoredScreenshotPresentations()
-            ledger.load()
             NSLog("Perch loaded \(store.items.count) stored item(s)")
         } catch {
             NSLog("Perch failed to load stored items: \(error)")
@@ -2805,21 +2804,38 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         payloadKind: DropPayloadKind
     ) {
         let filesDir = item.directoryURL.appendingPathComponent("files", isDirectory: true)
+        let reconciliation = PromiseMaterializationReconciler()
 
-        promiseMaterializer.materialize(receivers, into: filesDir) { [weak self] materializedURLs in
+        promiseMaterializer.materialize(
+            receivers,
+            into: filesDir,
+            lateDelivery: { [weak self] fileURL in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          let reconciledURL = reconciliation.reconcileLate(fileURL)
+                    else { return }
+                    self.appendLateMaterializedFile(
+                        reconciledURL,
+                        toItemID: item.id,
+                        droppedAt: recordingContext.occurredAt
+                    )
+                }
+            }
+        ) { [weak self] materializedURLs in
             Task { @MainActor [weak self] in
+                let reconciledURLs = reconciliation.reconcileInitial(materializedURLs)
                 guard let self else { return }
 
                 let beforeInsertMainThread = pthread_main_np() == 1
                 do {
                     let finalItem = try self.itemByAppendingMaterializedFiles(
-                        materializedURLs,
+                        reconciledURLs,
                         to: item
                     )
                     self.beginDropLayoutMutation()
                     defer { self.endDropLayoutMutation() }
                     self.arrivals.excludeRecentlyMatchingCopies(
-                        of: materializedURLs,
+                        of: reconciledURLs,
                         droppedAt: recordingContext.occurredAt
                     )
                     self.registerScreenshotPresentationIfNeeded(for: finalItem)
@@ -2843,15 +2859,59 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    /// Append a promise that arrived after the timeout-created row was inserted. If
+    /// the user has already removed or vended the row, delete only the untracked late
+    /// file so it cannot become an orphan in the retained item directory.
+    private func appendLateMaterializedFile(
+        _ fileURL: URL,
+        toItemID itemID: UUID,
+        droppedAt: Date
+    ) {
+        guard let currentItem = store.items.first(where: { $0.id == itemID }) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return
+        }
+        guard !currentItem.metadata.backingFileNames.contains(fileURL.lastPathComponent)
+        else { return }
+
+        do {
+            let updatedItem = try itemByAppendingMaterializedFiles(
+                [fileURL],
+                to: currentItem
+            )
+            guard store.replace(updatedItem) else {
+                try? FileManager.default.removeItem(at: fileURL)
+                return
+            }
+            arrivals.excludeRecentlyMatchingCopies(
+                of: [fileURL],
+                droppedAt: droppedAt
+            )
+            registerScreenshotPresentationIfNeeded(for: updatedItem)
+            NSLog(
+                "Perch appended late promise delivery \(fileURL.lastPathComponent) to item \(itemID.uuidString)"
+            )
+        } catch {
+            NSLog(
+                "Perch could not append late promise delivery \(fileURL.path): \(error)"
+            )
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     private func itemByAppendingMaterializedFiles(
         _ materializedURLs: [URL],
         to item: StoredItem
     ) throws -> StoredItem {
         var metadata = item.metadata
-        let existingFileNames = Set(metadata.backingFileNames)
-        let newFileNames = materializedURLs
-            .map(\.lastPathComponent)
-            .filter { !$0.isEmpty && !existingFileNames.contains($0) }
+        var knownFileNames = Set(metadata.backingFileNames)
+        let newFileNames = materializedURLs.compactMap { url -> String? in
+            let fileName = url.lastPathComponent
+            guard !fileName.isEmpty, knownFileNames.insert(fileName).inserted else {
+                return nil
+            }
+            return fileName
+        }
 
         metadata.backingFileNames.append(contentsOf: newFileNames)
         if metadata.backingFileNames.count == newFileNames.count,
