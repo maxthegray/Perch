@@ -4,6 +4,8 @@ import GRDB
 public enum SmartPerchEventStoreError: Error, Equatable {
     case fileReferencesDifferentEvent
     case invalidArrivalSessionInteraction
+    case invalidItemRouteEvent
+    case duplicateItemInRouteSession
     case invalidOCRCompletion
     case invalidFilenameSuggestion
     case filenameSuggestionNotAvailable(UUID)
@@ -85,6 +87,56 @@ public final class SmartPerchEventStore: @unchecked Sendable {
                 .order(Column("occurred_at_ms"), Column("id"))
                 .fetchAll(database)
         }
+    }
+
+    /// Append a drag's successful item routes in one transaction. Source-app and
+    /// category context are copied from the item's original drop record at insertion
+    /// time, so later pattern queries remain pure and do not depend on shelf files
+    /// that may already have been retired.
+    public func record(routes: [ItemRouteEvent]) throws {
+        guard !routes.isEmpty else { return }
+
+        let itemSessionKeys = routes.map {
+            "\($0.routeSessionID.uuidString):\($0.shelfItemID.uuidString)"
+        }
+        guard Set(itemSessionKeys).count == itemSessionKeys.count else {
+            throw SmartPerchEventStoreError.duplicateItemInRouteSession
+        }
+        guard routes.allSatisfy(Self.isValidRoute) else {
+            throw SmartPerchEventStoreError.invalidItemRouteEvent
+        }
+
+        try database.write { database in
+            for route in routes {
+                let context = try Self.learningContext(
+                    for: route.shelfItemID,
+                    in: database
+                )
+                try route.addingLearningContext(
+                    sourceAppBundleIdentifier: context?.sourceAppBundleIdentifier,
+                    sourceAppName: context?.sourceAppName,
+                    category: context?.category
+                ).insert(database)
+            }
+        }
+    }
+
+    public func fetchAllRoutes() throws -> [ItemRouteEvent] {
+        try database.read { database in
+            try ItemRouteEvent
+                .order(
+                    Column("successful_drop_at_ms"),
+                    Column("route_session_id"),
+                    Column("shelf_item_id")
+                )
+                .fetchAll(database)
+        }
+    }
+
+    public func fetchLearnedRoutePatterns(
+        detector: RoutePatternDetector = RoutePatternDetector()
+    ) throws -> [LearnedRoutePattern] {
+        detector.detectPatterns(in: try fetchAllRoutes())
     }
 
     public func finishOCR(
@@ -370,6 +422,113 @@ public final class SmartPerchEventStore: @unchecked Sendable {
             }
         }
 
+        migrator.registerMigration("createItemRouteEvents") { database in
+            try database.create(table: ItemRouteEvent.databaseTableName) { table in
+                table.column("id", .text).primaryKey()
+                table.column("route_session_id", .text).notNull()
+                table.column("shelf_item_id", .text).notNull()
+                table.column("successful_drop_at_ms", .integer).notNull()
+                table.column("dwell_time_ms", .integer).notNull()
+                table.column("destination_kind", .text).notNull()
+                table.column("destination_folder_path", .text)
+                table.column("destination_app_bundle_identifier", .text)
+                table.column("destination_app_name", .text)
+                table.column("capture_method", .text).notNull()
+                table.column("transfer_mode", .text).notNull()
+                table.column("source_app_bundle_identifier", .text)
+                table.column("source_app_name", .text)
+                table.column("category", .text)
+                table.column("schema_version", .integer).notNull()
+                table.uniqueKey(["route_session_id", "shelf_item_id"])
+            }
+            try database.create(
+                index: "item_route_events_by_session",
+                on: ItemRouteEvent.databaseTableName,
+                columns: ["route_session_id"]
+            )
+            try database.create(
+                index: "item_route_events_by_item_and_time",
+                on: ItemRouteEvent.databaseTableName,
+                columns: ["shelf_item_id", "successful_drop_at_ms"]
+            )
+            try database.create(
+                index: "item_route_events_by_context",
+                on: ItemRouteEvent.databaseTableName,
+                columns: [
+                    "source_app_bundle_identifier",
+                    "category",
+                    "successful_drop_at_ms"
+                ]
+            )
+        }
+
         return migrator
     }
+
+    private static func isValidRoute(_ route: ItemRouteEvent) -> Bool {
+        guard route.successfulDropAtMilliseconds >= 0,
+              route.dwellTimeMilliseconds >= 0
+        else {
+            return false
+        }
+
+        switch (route.destination, route.captureMethod) {
+        case let (.folder(path), .filePromiseWrite):
+            return !path.isEmpty && (path as NSString).isAbsolutePath
+        case let (.application(bundleIdentifier, name), .applicationWindow):
+            return bundleIdentifier?.isEmpty == false || !name.isEmpty
+        case (.folder, .applicationWindow), (.application, .filePromiseWrite):
+            return false
+        }
+    }
+
+    private static func learningContext(
+        for shelfItemID: UUID,
+        in database: Database
+    ) throws -> RouteLearningContext? {
+        let rows = try Row.fetchAll(
+            database,
+            sql: """
+                SELECT d.source_app_bundle_identifier,
+                       d.source_app_name,
+                       f.category
+                FROM drop_events d
+                LEFT JOIN dropped_files f ON f.drop_event_id = d.id
+                WHERE d.id = (
+                    SELECT latest.id
+                    FROM drop_events latest
+                    WHERE latest.shelf_item_id = ?
+                    ORDER BY latest.occurred_at_ms DESC, latest.id DESC
+                    LIMIT 1
+                )
+                ORDER BY f.ordinal
+                """,
+            arguments: [shelfItemID]
+        )
+        guard let first = rows.first else { return nil }
+
+        let categories = Set(rows.compactMap {
+            FileCategory(rawValue: $0["category"] as String? ?? "")
+        })
+        let category: FileCategory?
+        if categories.count == 1 {
+            category = categories.first
+        } else if categories.count > 1 {
+            category = .other
+        } else {
+            category = nil
+        }
+
+        return RouteLearningContext(
+            sourceAppBundleIdentifier: first["source_app_bundle_identifier"],
+            sourceAppName: first["source_app_name"],
+            category: category
+        )
+    }
+}
+
+private struct RouteLearningContext {
+    let sourceAppBundleIdentifier: String?
+    let sourceAppName: String?
+    let category: FileCategory?
 }

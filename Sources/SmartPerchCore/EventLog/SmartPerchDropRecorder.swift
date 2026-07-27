@@ -223,6 +223,23 @@ public actor SmartPerchDropRecorder {
         try eventStore.fetchAllArrivalSessionInteractions()
     }
 
+    /// Persist only routes that the app-side drag coordinator has resolved as
+    /// successful and canonical. Actor isolation keeps the SQLite transaction off the
+    /// main actor even when the observation originated in AppKit callbacks.
+    public func recordSuccessfulRoutes(_ routes: [ItemRouteEvent]) throws {
+        try eventStore.record(routes: routes)
+    }
+
+    public func fetchAllRoutes() throws -> [ItemRouteEvent] {
+        try eventStore.fetchAllRoutes()
+    }
+
+    public func fetchLearnedRoutePatterns(
+        detector: RoutePatternDetector = RoutePatternDetector()
+    ) throws -> [LearnedRoutePattern] {
+        try eventStore.fetchLearnedRoutePatterns(detector: detector)
+    }
+
     private static func currentMilliseconds() -> Int64 {
         Int64((Date().timeIntervalSince1970 * 1_000).rounded())
     }

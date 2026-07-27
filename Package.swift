@@ -41,7 +41,10 @@ let package = Package(
         ),
         .testTarget(
             name: "SmartPerchCoreTests",
-            dependencies: ["SmartPerchCore"],
+            dependencies: [
+                "SmartPerchCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Tests/SmartPerchCoreTests"
         ),
         .testTarget(
