@@ -27,11 +27,10 @@ struct ItemRowView: View {
     /// The populated shelf hugs its widest title; every row then fills that compact
     /// width so the stack has clean, consistent left and right edges.
     let maximumWidth: CGFloat
-    /// An unresolved OCR-derived shelf label. This never changes the backing filename.
-    let smartName: String?
-    /// An origin → destination provenance breadcrumb, shown in place of the type
-    /// subtitle when the item's travel is known; nil falls back to the type label.
-    let breadcrumb: String?
+    /// Presentation title selected by SmartNameStore. Screenshot rows begin with a
+    /// generic label and later crossfade to the generated name in the same geometry.
+    let displayTitle: String
+    let isNameAnalysisPending: Bool
 
     var body: some View {
         HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
@@ -39,22 +38,24 @@ struct ItemRowView: View {
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(displayedTitle)
+                    Text(displayTitle)
                         .font(.system(size: theme.titleSize, weight: theme.titleWeight))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .contentTransition(.opacity)
 
-                    // A Smart Name is the complete shelf label. Keep its row quiet:
-                    // the original filename remains available through the context
-                    // menu and Finder, but does not compete with the useful name here.
-                    if theme.showsSubtitle && smartName == nil {
+                    // Keep this line present before and after analysis. Removing it when
+                    // the Smart Name arrived made the title jump vertically even when
+                    // the outer card width was held steady.
+                    if theme.showsSubtitle {
                         Text(displayedSubtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .contentTransition(.opacity)
                     }
                 }
             }
@@ -86,13 +87,10 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.13), value: isSelected)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
-        .animation(.easeOut(duration: 0.2), value: smartName)
+        .animation(.easeOut(duration: 0.18), value: displayTitle)
+        .animation(.easeOut(duration: 0.18), value: isNameAnalysisPending)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
-    }
-
-    private var displayedTitle: String {
-        smartName ?? item.metadata.title
     }
 
     private var rowWidth: CGFloat {
@@ -177,6 +175,6 @@ struct ItemRowView: View {
     }
 
     private var displayedSubtitle: String {
-        return breadcrumb ?? subtitle
+        isNameAnalysisPending ? "Finding a useful name…" : subtitle
     }
 }

@@ -74,7 +74,7 @@ final class DownloadSessionGrouperTests: XCTestCase {
         )
         XCTAssertEqual(
             ghost.displayTitle(smartName: nil),
-            "Screenshot 2026-07-26.png"
+            "Screenshot"
         )
     }
 
@@ -91,6 +91,84 @@ final class DownloadSessionGrouperTests: XCTestCase {
                 .displayTitle(smartName: "Ignored"),
             "2 new downloads"
         )
+    }
+
+    func testFreshUniquePromiseCopyMatchesItsArrivalSource() {
+        let now = Date()
+        let screenshot = ArrivalFileFingerprint(
+            name: "Screenshot 2026-07-27 at 10.00.00 AM.png",
+            byteCount: 42_000
+        )
+
+        let paths = ArrivalCopyMatcher.matchingPaths(
+            materializedFingerprints: [screenshot],
+            candidates: [
+                ArrivalCopyCandidate(
+                    path: "/Users/test/Desktop/\(screenshot.name)",
+                    fingerprint: screenshot,
+                    addedAt: now.addingTimeInterval(-4)
+                ),
+                ArrivalCopyCandidate(
+                    path: "/Users/test/Desktop/unrelated.png",
+                    fingerprint: ArrivalFileFingerprint(
+                        name: "unrelated.png",
+                        byteCount: 42_000
+                    ),
+                    addedAt: now.addingTimeInterval(-1)
+                )
+            ],
+            droppedAt: now
+        )
+
+        XCTAssertEqual(
+            paths,
+            ["/Users/test/Desktop/\(screenshot.name)"]
+        )
+    }
+
+    func testPromiseCopyDoesNotMatchAnOldArrival() {
+        let now = Date()
+        let fingerprint = ArrivalFileFingerprint(name: "image.png", byteCount: 99)
+
+        let paths = ArrivalCopyMatcher.matchingPaths(
+            materializedFingerprints: [fingerprint],
+            candidates: [
+                ArrivalCopyCandidate(
+                    path: "/Users/test/Desktop/image.png",
+                    fingerprint: fingerprint,
+                    addedAt: now.addingTimeInterval(
+                        -(ArrivalCopyMatcher.maximumAge + 1)
+                    )
+                )
+            ],
+            droppedAt: now
+        )
+
+        XCTAssertTrue(paths.isEmpty)
+    }
+
+    func testPromiseCopyLeavesAmbiguousArrivalsAlone() {
+        let now = Date()
+        let fingerprint = ArrivalFileFingerprint(name: "same.png", byteCount: 99)
+
+        let paths = ArrivalCopyMatcher.matchingPaths(
+            materializedFingerprints: [fingerprint],
+            candidates: [
+                ArrivalCopyCandidate(
+                    path: "/Users/test/Desktop/same.png",
+                    fingerprint: fingerprint,
+                    addedAt: now.addingTimeInterval(-1)
+                ),
+                ArrivalCopyCandidate(
+                    path: "/Users/test/Downloads/same.png",
+                    fingerprint: fingerprint,
+                    addedAt: now.addingTimeInterval(-2)
+                )
+            ],
+            droppedAt: now
+        )
+
+        XCTAssertTrue(paths.isEmpty)
     }
 
     private func offer(

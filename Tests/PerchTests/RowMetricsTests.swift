@@ -140,4 +140,15 @@ final class RowMetricsTests: XCTestCase {
             ghostWidth + theme.contentPadding * 2
         )
     }
+
+    func testSmartNameWidthIsStableAndRespectsNarrowMaximum() {
+        XCTAssertEqual(
+            RowMetrics.stabilizedSmartNameCardWidth(maximumWidth: 300),
+            240
+        )
+        XCTAssertEqual(
+            RowMetrics.stabilizedSmartNameCardWidth(maximumWidth: 180),
+            180
+        )
+    }
 }

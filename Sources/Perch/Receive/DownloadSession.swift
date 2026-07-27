@@ -41,6 +41,10 @@ struct ArrivalOffer: Identifiable, Equatable {
     var id: String { url.path }
     var name: String { url.lastPathComponent }
     var locationName: String { location.displayName }
+    var usesStableScreenshotName: Bool {
+        screenshotCaptureContext != nil
+            || ScreenshotNamePresentation.filenameLooksLikeScreenshot(name)
+    }
 }
 
 /// Files that completed in the same Downloads burst. The UUID remains stable while
@@ -72,6 +76,56 @@ struct ArrivalSession: Identifiable, Equatable {
 enum ArrivalSessionSummaryAction: Equatable {
     case expand
     case addAll
+}
+
+/// Cheap identity used to recognize the Desktop/Downloads original of a file promise
+/// that has just materialized inside Perch. A file promise does not expose its source
+/// path, so an exact filename + byte-count match is the strongest local evidence
+/// available without hashing files on the main actor.
+struct ArrivalFileFingerprint: Hashable {
+    let name: String
+    let byteCount: Int
+}
+
+struct ArrivalCopyCandidate: Equatable {
+    let path: String
+    let fingerprint: ArrivalFileFingerprint
+    let addedAt: Date
+}
+
+/// Conservatively identifies a freshly arrived source file represented by a newly
+/// materialized promise. Ambiguous matches are left alone: hiding no ghost is better
+/// than silencing an unrelated recent file.
+enum ArrivalCopyMatcher {
+    static let maximumAge: TimeInterval = 30
+    static let futureDateTolerance: TimeInterval = 2
+
+    static func matchingPaths(
+        materializedFingerprints: Set<ArrivalFileFingerprint>,
+        candidates: [ArrivalCopyCandidate],
+        droppedAt: Date
+    ) -> [String] {
+        guard !materializedFingerprints.isEmpty else { return [] }
+
+        let eligible = candidates.filter { candidate in
+            let age = droppedAt.timeIntervalSince(candidate.addedAt)
+            return materializedFingerprints.contains(candidate.fingerprint)
+                && age >= -futureDateTolerance
+                && age <= maximumAge
+        }
+        let candidatesByFingerprint = Dictionary(
+            grouping: eligible,
+            by: \.fingerprint
+        )
+
+        return materializedFingerprints.compactMap { fingerprint in
+            guard let matches = candidatesByFingerprint[fingerprint],
+                  matches.count == 1 else {
+                return nil
+            }
+            return matches[0].path
+        }
+    }
 }
 
 /// One rendered/hit-tested ghost row. A collapsed session contributes only its
@@ -110,7 +164,10 @@ enum ArrivalGhost: Identifiable, Equatable {
         case let .summary(session, .addAll):
             return "Add all \(session.offers.count) downloads"
         case let .offer(offer, _):
-            return smartName ?? offer.name
+            return smartName
+                ?? (offer.usesStableScreenshotName
+                    ? ScreenshotNamePresentation.placeholder
+                    : offer.name)
         }
     }
 }

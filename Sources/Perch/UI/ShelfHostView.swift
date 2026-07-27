@@ -1,5 +1,6 @@
 import AppKit
 import Quartz
+import SmartPerchCore
 import SwiftUI
 
 /// AppKit host (`NSView`) for the SwiftUI shelf content, hosting `ShelfContentView`
@@ -19,6 +20,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
+    /// Retained beyond AppKit's drag-ended callback while late file promises resolve.
+    /// More than one may be pending if the user starts another vend during the grace
+    /// period for the previous drag.
+    private var routeCoordinators: [UUID: RouteDragSessionCoordinator] = [:]
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
     /// Snapshot of the suggestion displayed by the current menu.
@@ -115,6 +120,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var onExpandArrivalSession: ((ArrivalSession) -> Void)?
     var onDismissArrival: ((ArrivalGhost) -> Void)?
 
+    /// Canonical successful routes are handed to the controller, which owns the
+    /// existing recorder actor and its off-main SQLite queue.
+    var onRecordSuccessfulRoutes: (([ItemRouteEvent]) -> Void)?
+
     /// Smart Name decisions are forwarded to the controller so filesystem and event
     /// log updates stay coordinated.
     var onAcceptFilenameSuggestion: ((StoredItem, String) -> Void)?
@@ -184,7 +193,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 themeStore: themeStore,
                 interaction: interaction,
                 thumbnails: thumbnails,
-                ledger: ledger,
                 arrivals: arrivals,
                 smartNames: smartNames
             )
@@ -218,7 +226,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             themeStore: themeStore,
             interaction: interaction,
             thumbnails: thumbnails,
-            ledger: ledger,
             arrivals: arrivals,
             smartNames: smartNames,
             onContentHeight: { [weak self] height in
@@ -622,6 +629,23 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction.vendingItemIDs = itemIDs
         }
         let dragSource = ItemDragSource(items: items)
+        let routeCoordinator = RouteDragSessionCoordinator(
+            items: items.map {
+                RouteDragItem(
+                    shelfItemID: $0.id,
+                    addedToPerchAt: $0.metadata.createdAt,
+                    expectsFilePromise: !$0.backingFileURLs().isEmpty
+                )
+            },
+            transferMode: isMove ? .move : .copy,
+            recordRoutes: { [weak self] routes in
+                self?.onRecordSuccessfulRoutes?(routes)
+            },
+            onTerminal: { [weak self] sessionID in
+                self?.routeCoordinators.removeValue(forKey: sessionID)
+            }
+        )
+        routeCoordinators[routeCoordinator.routeSessionID] = routeCoordinator
         let ledger = ledger
         dragSource.recordVend = { entry in
             Task { @MainActor in ledger.record(entry) }
@@ -632,9 +656,33 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 for item in items { self?.store.unretire(item) }
             }
         }
-        dragSource.onEnded = { [weak self] operation, returnedToPerch in
+        dragSource.onRouteWriteSucceeded = { [weak routeCoordinator] itemID, url in
+            Task { @MainActor in
+                routeCoordinator?.filePromiseDidWrite(
+                    itemID: itemID,
+                    destinationFileURL: url
+                )
+            }
+        }
+        dragSource.onRouteWriteFailed = { [weak routeCoordinator] itemID in
+            Task { @MainActor in
+                routeCoordinator?.filePromiseDidFail(itemID: itemID)
+            }
+        }
+        dragSource.onEnded = {
+            [weak self, weak routeCoordinator]
+            operation,
+            returnedToPerch,
+            screenPoint,
+            occurredAt in
             guard let self else { return }
             self.activeDragSource = nil
+            routeCoordinator?.draggingEnded(
+                operation: operation,
+                returnedToPerch: returnedToPerch,
+                at: screenPoint,
+                occurredAt: occurredAt
+            )
             guard isMove else { return }
             if returnedToPerch || operation.isEmpty {
                 // A canceled drag or a drop back onto Perch restores the original rows,

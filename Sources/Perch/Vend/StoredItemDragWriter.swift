@@ -17,12 +17,16 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
     convenience init(
         item: StoredItem,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
-        onWriteFailed: (@Sendable () -> Void)? = nil
+        onWriteFailed: (@Sendable () -> Void)? = nil,
+        onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
+        onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
         let delegate = StoredItemDragWriterDelegate(
             item: item,
             recordVend: recordVend,
-            onWriteFailed: onWriteFailed
+            onWriteFailed: onWriteFailed,
+            onRouteWriteSucceeded: onRouteWriteSucceeded,
+            onRouteWriteFailed: onRouteWriteFailed
         )
         self.init(fileType: delegate.promisedFileType, delegate: delegate)
         snapshot = delegate.snapshot
@@ -111,17 +115,23 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
     fileprivate let promisedFileType: String
     private let recordVend: (@Sendable (ProvenanceEntry) -> Void)?
     private let onWriteFailed: (@Sendable () -> Void)?
+    private let onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
+    private let onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
     init(
         item: StoredItem,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
-        onWriteFailed: (@Sendable () -> Void)? = nil
+        onWriteFailed: (@Sendable () -> Void)? = nil,
+        onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
+        onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
         snapshot = MainActor.assumeIsolated {
             StoredItemDragSnapshot(item: item)
         }
         self.recordVend = recordVend
         self.onWriteFailed = onWriteFailed
+        self.onRouteWriteSucceeded = onRouteWriteSucceeded
+        self.onRouteWriteFailed = onRouteWriteFailed
         operationQueue = OperationQueue()
         operationQueue.name = "Perch.StoredItemDragWriter"
         operationQueue.maxConcurrentOperationCount = 1
@@ -164,6 +174,7 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
             // name in that folder first — EPERM into e.g. Messages' container.
             try Data(contentsOf: sourceURL).write(to: destinationURL)
             NSLog("Perch promised file wrote \(sourceURL.lastPathComponent) to \(destinationURL.path)")
+            onRouteWriteSucceeded?(snapshot.itemID, destinationURL)
             recordVend?(ProvenanceEntry(
                 id: snapshot.itemID,
                 title: snapshot.title,
@@ -175,6 +186,7 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
             completionHandler(nil)
         } catch {
             NSLog("Perch promised file write failed for \(sourceURL.lastPathComponent) to \(destinationURL.path): \(error)")
+            onRouteWriteFailed?(snapshot.itemID)
             onWriteFailed?()
             completionHandler(error)
         }

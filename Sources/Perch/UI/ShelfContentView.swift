@@ -65,7 +65,6 @@ struct ShelfContentView: View {
     @ObservedObject var themeStore: ThemeStore
     @ObservedObject var interaction: RowInteractionState
     @ObservedObject var thumbnails: ThumbnailStore
-    @ObservedObject var ledger: ProvenanceLedger
     @ObservedObject var arrivals: RecentArrivals
     @ObservedObject var smartNames: SmartNameStore
     var onContentHeight: (CGFloat) -> Void = { _ in }
@@ -264,28 +263,6 @@ struct ShelfContentView: View {
             .filter { !interaction.vendingItemIDs.contains($0.id) }
     }
 
-    /// An `origin → destination` provenance breadcrumb, using each path's parent folder
-    /// name. Origin comes from the item's recorded source; destination from the latest
-    /// ledger entry for the item. Returns nil when neither is known (falls back to the
-    /// type subtitle).
-    private func breadcrumb(for item: StoredItem) -> String? {
-        let origin = item.metadata.originPaths?.values.first.map(locationLabel(forPath:))
-        let destination = ledger.latestEntry(for: item.id).map { locationLabel(forPath: $0.destination) }
-        switch (origin, destination) {
-        case let (origin?, destination?): return "\(origin) → \(destination)"
-        case let (origin?, nil): return "from \(origin)"
-        case let (nil, destination?): return "→ \(destination)"
-        case (nil, nil): return nil
-        }
-    }
-
-    /// The parent folder name of a file path, for compact display.
-    private func locationLabel(forPath path: String) -> String {
-        let parent = (path as NSString).deletingLastPathComponent
-        let name = (parent as NSString).lastPathComponent
-        return name.isEmpty ? "/" : name
-    }
-
     /// Recent-arrival ghosts, hidden while a drag is in flight (`suppressed`) so they
     /// never shift the drop geometry under the cursor.
     private var ghostRows: [ArrivalGhost] {
@@ -468,7 +445,11 @@ struct ShelfContentView: View {
         showsSeparator: Bool,
         maximumWidth: CGFloat
     ) -> some View {
-        ItemRowView(
+        let name = smartNames.presentation(
+            for: item.id,
+            originalTitle: item.metadata.title
+        )
+        return ItemRowView(
             item: item,
             theme: theme,
             isHovered: interaction.hoveredItemID == item.id,
@@ -479,8 +460,8 @@ struct ShelfContentView: View {
             showsSeparator: showsSeparator,
             showsLabels: themeStore.showsLabels,
             maximumWidth: maximumWidth,
-            smartName: smartNames.suggestion(for: item.id)?.displayName,
-            breadcrumb: breadcrumb(for: item)
+            displayTitle: name.title,
+            isNameAnalysisPending: name.isAnalyzing
         )
         .transition(.asymmetric(
             insertion: .opacity,
@@ -639,6 +620,7 @@ struct ArrivalGhostRowView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .contentTransition(.opacity)
 
                     if theme.showsSubtitle {
                         Text(subtitle)
@@ -674,6 +656,7 @@ struct ArrivalGhostRowView: View {
         .contentShape(Rectangle())
         .opacity(isHovered ? 0.95 : (isSessionSummary ? 0.76 : 0.55))
         .animation(.easeOut(duration: 0.13), value: isHovered)
+        .animation(.easeOut(duration: 0.18), value: title)
     }
 
     @ViewBuilder

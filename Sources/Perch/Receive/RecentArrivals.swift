@@ -245,6 +245,76 @@ final class RecentArrivals: ObservableObject {
         removeVisibleOffers(withIDs: Set(paths))
     }
 
+    /// A promise-backed drag (notably the floating screenshot thumbnail) gives Perch
+    /// only the file it wrote into the holding directory, not the original Desktop
+    /// path. Silence a unique, very recent filename + size match so the same screenshot
+    /// cannot reappear as a ghost row immediately after it lands as a stored item.
+    func excludeRecentlyMatchingCopies(
+        of materializedURLs: [URL],
+        droppedAt: Date
+    ) {
+        let fingerprints = Set(
+            materializedURLs.compactMap(Self.fileFingerprint)
+        )
+        guard !fingerprints.isEmpty else { return }
+
+        let keys: Set<URLResourceKey> = [
+            .addedToDirectoryDateKey, .creationDateKey, .isDirectoryKey, .fileSizeKey
+        ]
+        var candidates: [ArrivalCopyCandidate] = []
+        for (_, directory) in Self.watchedDirectories() {
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: Array(keys),
+                options: .skipsHiddenFiles
+            ) else {
+                continue
+            }
+
+            for url in entries {
+                guard let values = try? url.resourceValues(forKeys: keys),
+                      values.isDirectory != true,
+                      let byteCount = values.fileSize,
+                      byteCount > 0,
+                      let addedAt = values.addedToDirectoryDate ?? values.creationDate
+                else {
+                    continue
+                }
+                candidates.append(
+                    ArrivalCopyCandidate(
+                        path: url.path,
+                        fingerprint: ArrivalFileFingerprint(
+                            name: url.lastPathComponent,
+                            byteCount: byteCount
+                        ),
+                        addedAt: addedAt
+                    )
+                )
+            }
+        }
+
+        excludePermanently(
+            ArrivalCopyMatcher.matchingPaths(
+                materializedFingerprints: fingerprints,
+                candidates: candidates,
+                droppedAt: droppedAt
+            )
+        )
+    }
+
+    private static func fileFingerprint(for url: URL) -> ArrivalFileFingerprint? {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let byteCount = values.fileSize,
+              byteCount > 0,
+              !url.lastPathComponent.isEmpty else {
+            return nil
+        }
+        return ArrivalFileFingerprint(
+            name: url.lastPathComponent,
+            byteCount: byteCount
+        )
+    }
+
     private static func watchedDirectories() -> [(ArrivalLocation, URL)] {
         let fileManager = FileManager.default
         let kinds: [(ArrivalLocation, FileManager.SearchPathDirectory)] = [

@@ -12,7 +12,7 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// Called when the drag session ends, with the operation the destination
     /// performed (empty == no drop) and whether it landed back on this Perch.
     /// Used to apply move semantics only after a real external landing.
-    var onEnded: ((NSDragOperation, Bool) -> Void)?
+    var onEnded: ((NSDragOperation, Bool, NSPoint, Date) -> Void)?
 
     /// Set when this drag lands back on the same Perch shelf. The destination accepts
     /// the drop so AppKit can finish normally, but the host restores the original rows
@@ -27,6 +27,11 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// (e.g. the destination denied the write). The host puts the retired row back so
     /// the item isn't silently lost.
     var onWriteFailed: (@Sendable () -> Void)?
+
+    /// Successful/failed promise evidence is kept separate from the JSON provenance
+    /// hook so Smart Perch can coordinate it with the drag-ended observation.
+    var onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
+    var onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
     init(items: [StoredItem]) {
         precondition(!items.isEmpty)
@@ -53,7 +58,13 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// the selection as distinct files rather than one compound pasteboard item.
     func draggingItems() -> [NSDraggingItem] {
         activeWriters = items.map {
-            StoredItemDragWriter(item: $0, recordVend: recordVend, onWriteFailed: onWriteFailed)
+            StoredItemDragWriter(
+                item: $0,
+                recordVend: recordVend,
+                onWriteFailed: onWriteFailed,
+                onRouteWriteSucceeded: onRouteWriteSucceeded,
+                onRouteWriteFailed: onRouteWriteFailed
+            )
         }
         return zip(items, activeWriters).map { item, writer in
             let draggingItem = NSDraggingItem(pasteboardWriter: writer)
@@ -86,6 +97,6 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
-        onEnded?(operation, returnedToPerch)
+        onEnded?(operation, returnedToPerch, screenPoint, Date())
     }
 }
