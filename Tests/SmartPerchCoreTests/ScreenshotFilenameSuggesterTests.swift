@@ -225,6 +225,81 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         )
     }
 
+    func testGmailLoadingScreenUsesAnchoredAppIdentity() {
+        let lines = [
+            line("Gmail", x: 0.074, y: 0.959, width: 0.045, height: 0.019),
+            line(
+                "has:attachments",
+                x: 0.201,
+                y: 0.961,
+                width: 0.14,
+                height: 0.019
+            ),
+            line("Active", x: 0.79, y: 0.948, width: 0.08, height: 0.049),
+            line("Compose", x: 0.073, y: 0.894, width: 0.08, height: 0.017),
+            line("Mail", x: 0.007, y: 0.875, width: 0.04, height: 0.014),
+            line("Inbox", x: 0.073, y: 0.836, width: 0.05, height: 0.015),
+            line("Starred", x: 0.074, y: 0.805, width: 0.07, height: 0.014),
+            line("Snoozed", x: 0.074, y: 0.774, width: 0.08, height: 0.015),
+            line("Sent", x: 0.074, y: 0.743, width: 0.04, height: 0.012),
+            line("Labels", x: 0.051, y: 0.625, width: 0.06, height: 0.014)
+        ]
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Gmail",
+                suggestedFilename: "gmail.png"
+            )
+        )
+    }
+
+    func testGmailMentionInDocumentDoesNotImpersonateAppChrome() {
+        let lines = [
+            line(
+                "Gmail Productivity Guide",
+                x: 0.24,
+                y: 0.62,
+                width: 0.43,
+                height: 0.055
+            ),
+            line(
+                "Organize newsletters and receipts",
+                x: 0.20,
+                y: 0.50,
+                width: 0.50,
+                height: 0.022
+            ),
+            line(
+                "Create filters for recurring mail",
+                x: 0.20,
+                y: 0.44,
+                width: 0.48,
+                height: 0.022
+            )
+        ]
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Gmail Productivity Guide",
+                suggestedFilename: "gmail-productivity-guide.png"
+            )
+        )
+    }
+
     func testDenseTerminalWorkspaceUsesProjectPathInsteadOfBodyText() {
         let topLines = [
             line("Perch", x: 0.029, y: 0.966, width: 0.029, height: 0.011),

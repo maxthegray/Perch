@@ -49,7 +49,7 @@ public struct ScreenshotNameSuggestion: Equatable, Sendable {
 /// Older flat OCR records still get a conservative fallback.
 public struct ScreenshotFilenameSuggester: Sendable {
     public static let identifier = "screenshot-ocr-filename"
-    public static let version = 5
+    public static let version = 6
     public static let maximumBaseNameLength = 48
     public static let maximumWordCount = 4
 
@@ -70,6 +70,18 @@ public struct ScreenshotFilenameSuggester: Sendable {
             return makeSuggestion(
                 filenameWords: workspace.filenameWords,
                 displayName: workspace.displayName,
+                originalFilename: originalFilename,
+                originalExtension: originalExtension
+            )
+        }
+
+        if let appIdentity = detectedAppIdentity(
+            in: ocrText,
+            recognizedLines: recognizedLines
+        ) {
+            return makeSuggestion(
+                filenameWords: [appIdentity.filenameWord],
+                displayName: appIdentity.displayName,
                 originalFilename: originalFilename,
                 originalExtension: originalExtension
             )
@@ -319,6 +331,45 @@ public struct ScreenshotFilenameSuggester: Sendable {
                 in: lowercasedText
             )
         )
+    }
+
+    /// App chrome is more trustworthy than temporary page content such as a loading
+    /// indicator. A small brand label in the upper-left is stable across window sizes,
+    /// while flat legacy OCR requires corroborating navigation words.
+    private func detectedAppIdentity(
+        in text: String,
+        recognizedLines: [RecognizedTextLine]
+    ) -> AppIdentity? {
+        let allWords = Set(words(in: text))
+
+        for identity in Self.appIdentities {
+            guard !allWords.isDisjoint(with: identity.brandWords) else {
+                continue
+            }
+
+            if !recognizedLines.isEmpty {
+                let hasAnchoredBrand = recognizedLines.contains { line in
+                    line.minX <= 0.30
+                        && line.minY >= 0.82
+                        && line.height <= 0.05
+                        && !Set(words(in: line.text)).isDisjoint(
+                            with: identity.brandWords
+                        )
+                }
+                if hasAnchoredBrand {
+                    return identity
+                }
+            } else {
+                let chromeSignalCount = allWords
+                    .intersection(identity.chromeWords)
+                    .count
+                if chromeSignalCount >= 2 {
+                    return identity
+                }
+            }
+        }
+
+        return nil
     }
 
     /// Agent UIs, shells, build logs, and multiplexers all vary, but they share paths,
@@ -623,6 +674,13 @@ public struct ScreenshotFilenameSuggester: Sendable {
         let filenameWords: [String]
     }
 
+    private struct AppIdentity {
+        let displayName: String
+        let filenameWord: String
+        let brandWords: Set<String>
+        let chromeWords: Set<String>
+    }
+
     private enum ScreenshotContext: Equatable {
         case youtube
         case messages
@@ -653,6 +711,18 @@ public struct ScreenshotFilenameSuggester: Sendable {
         "terminal": "Terminal",
         "xcode": "Xcode",
         "youtube": "YouTube"
+    ]
+
+    private static let appIdentities = [
+        AppIdentity(
+            displayName: "Gmail",
+            filenameWord: "gmail",
+            brandWords: ["gmail"],
+            chromeWords: [
+                "compose", "drafts", "inbox", "labels", "mail", "sent",
+                "snoozed", "starred"
+            ]
+        )
     ]
 
     private static let terminalCommandWords: Set<String> = [
