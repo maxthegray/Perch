@@ -24,6 +24,9 @@ struct ItemRowView: View {
     let showsSeparator: Bool
     /// When false, the name/subtitle are hidden and the row shows just a centered icon.
     let showsLabels: Bool
+    /// The populated shelf hugs its widest title; every row then fills that compact
+    /// width so the stack has clean, consistent left and right edges.
+    let maximumWidth: CGFloat
     /// An unresolved OCR-derived shelf label. This never changes the backing filename.
     let smartName: String?
     /// An origin → destination provenance breadcrumb, shown in place of the type
@@ -31,12 +34,12 @@ struct ItemRowView: View {
     let breadcrumb: String?
 
     var body: some View {
-        HStack(spacing: showsLabels ? 10 : 0) {
+        HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
             icon
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(smartName ?? item.metadata.title)
+                    Text(displayedTitle)
                         .font(.system(size: theme.titleSize, weight: theme.titleWeight))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
@@ -54,13 +57,17 @@ struct ItemRowView: View {
                             .truncationMode(.middle)
                     }
                 }
-
-                Spacer(minLength: 0)
             }
         }
-        .padding(.horizontal, showsLabels ? 10 : 0)
+        .padding(
+            .horizontal,
+            showsLabels ? RowMetrics.labeledRowHorizontalPadding : 0
+        )
         .frame(
-            maxWidth: .infinity,
+            width: rowWidth,
+            alignment: showsLabels ? .leading : .center
+        )
+        .frame(
             minHeight: theme.rowHeight,
             maxHeight: theme.rowHeight,
             alignment: showsLabels ? .leading : .center
@@ -82,6 +89,14 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.2), value: smartName)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
+    }
+
+    private var displayedTitle: String {
+        smartName ?? item.metadata.title
+    }
+
+    private var rowWidth: CGFloat {
+        maximumWidth
     }
 
     /// A real preview is shown as a small rounded "photo" tile; a generic file icon is

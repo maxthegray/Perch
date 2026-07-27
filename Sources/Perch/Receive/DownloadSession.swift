@@ -1,4 +1,5 @@
 import Foundation
+import SmartPerchCore
 
 enum ArrivalLocation: String, Equatable, Sendable {
     case downloads
@@ -22,6 +23,20 @@ struct ArrivalOffer: Identifiable, Equatable {
     let url: URL
     let addedAt: Date
     let location: ArrivalLocation
+    /// Captured when the screenshot first appeared, before the desktop could change.
+    let screenshotCaptureContext: ScreenshotCaptureContext?
+
+    init(
+        url: URL,
+        addedAt: Date,
+        location: ArrivalLocation,
+        screenshotCaptureContext: ScreenshotCaptureContext? = nil
+    ) {
+        self.url = url
+        self.addedAt = addedAt
+        self.location = location
+        self.screenshotCaptureContext = screenshotCaptureContext
+    }
 
     var id: String { url.path }
     var name: String { url.lastPathComponent }

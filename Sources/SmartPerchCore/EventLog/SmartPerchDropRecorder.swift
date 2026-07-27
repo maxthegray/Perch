@@ -24,7 +24,8 @@ public actor SmartPerchDropRecorder {
         context: DropRecordingContext,
         shelfItemID: UUID,
         payloadKind: DropPayloadKind,
-        fileURLs: [URL]
+        fileURLs: [URL],
+        screenshotCaptureContexts: [ScreenshotCaptureContext?] = []
     ) throws -> RecordedDrop {
         let event = DropEvent(
             id: context.eventID,
@@ -46,6 +47,12 @@ public actor SmartPerchDropRecorder {
                 metadata,
                 category: category
             ) ? .pending : .notEligible
+            let screenshotContext = screenshotCaptureContexts.indices.contains(ordinal)
+                ? screenshotCaptureContexts[ordinal]
+                : nil
+            let screenshotContextJSON = screenshotContext
+                .flatMap { try? JSONEncoder().encode($0) }
+                .flatMap { String(data: $0, encoding: .utf8) }
 
             return DroppedFileEvent(
                 fileID: UUID(),
@@ -63,7 +70,8 @@ public actor SmartPerchDropRecorder {
                 ocrState: ocrState,
                 ocrText: nil,
                 ocrCompletedAtMilliseconds: nil,
-                ocrDurationMilliseconds: nil
+                ocrDurationMilliseconds: nil,
+                screenshotCaptureContextJSON: screenshotContextJSON
             )
         }
 
@@ -77,20 +85,20 @@ public actor SmartPerchDropRecorder {
         text: String?,
         recognizedLines: [RecognizedTextLine] = [],
         originalFilename: String,
-        durationMilliseconds: Int64
+        durationMilliseconds: Int64,
+        screenshotCaptureContext: ScreenshotCaptureContext? = nil
     ) throws -> ScreenshotNameSuggestion? {
         let normalizedText = text?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         let state: OCRProcessingState = normalizedText?.isEmpty == false
             ? .completed
             : .noText
-        let nameSuggestion = normalizedText.flatMap {
-            filenameSuggester.suggestName(
-                from: $0,
-                recognizedLines: recognizedLines,
-                originalFilename: originalFilename
-            )
-        }
+        let nameSuggestion = filenameSuggester.suggestName(
+            from: normalizedText ?? "",
+            recognizedLines: recognizedLines,
+            originalFilename: originalFilename,
+            screenshotCaptureContext: screenshotCaptureContext
+        )
         let ocrLayoutJSON = recognizedLines.isEmpty
             ? nil
             : try? String(
@@ -136,7 +144,9 @@ public actor SmartPerchDropRecorder {
 
         for drop in drops {
             for file in drop.files
-            where file.ocrState == .completed
+            where (file.ocrState == .completed
+                    || (file.ocrState == .noText
+                        && file.screenshotCaptureContext != nil))
                 && (file.filenameSuggestionState == .notEvaluated
                     || (file.filenameSuggestionState == .available
                         && (file.smartLabel == nil
@@ -150,13 +160,12 @@ public actor SmartPerchDropRecorder {
                             from: $0
                         )
                     } ?? []
-                let suggestion = file.ocrText.flatMap {
-                    filenameSuggester.suggestName(
-                        from: $0,
-                        recognizedLines: recognizedLines,
-                        originalFilename: file.displayName
-                    )
-                }
+                let suggestion = filenameSuggester.suggestName(
+                    from: file.ocrText ?? "",
+                    recognizedLines: recognizedLines,
+                    originalFilename: file.displayName,
+                    screenshotCaptureContext: file.screenshotCaptureContext
+                )
                 try eventStore.storeFilenameSuggestionEvaluation(
                     fileID: file.fileID,
                     smartLabel: suggestion?.displayName,

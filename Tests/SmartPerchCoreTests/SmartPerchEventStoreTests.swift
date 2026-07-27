@@ -155,12 +155,14 @@ final class SmartPerchEventStoreTests: XCTestCase {
             occurredAt: Date(),
             sourceApplication: nil
         )
+        let screenshotContext = makeScreenshotCaptureContext()
 
         try await recorder.recordFinalizedDrop(
             context: context,
             shelfItemID: UUID(),
             payloadKind: .recentArrival,
-            fileURLs: [fileURL]
+            fileURLs: [fileURL],
+            screenshotCaptureContexts: [screenshotContext]
         )
 
         let drops = try await recorder.fetchAllDrops()
@@ -169,6 +171,10 @@ final class SmartPerchEventStoreTests: XCTestCase {
         XCTAssertEqual(drop.files.first?.displayName, "Screenshot.png")
         XCTAssertEqual(drop.files.first?.category, .image)
         XCTAssertEqual(drop.files.first?.ocrState, .pending)
+        XCTAssertEqual(
+            drop.files.first?.screenshotCaptureContext,
+            screenshotContext
+        )
     }
 
     func testOCRCompletionIsPersisted() throws {
@@ -194,6 +200,42 @@ final class SmartPerchEventStoreTests: XCTestCase {
         XCTAssertEqual(updatedFile.ocrCompletedAtMilliseconds, 1_700_000_001_000)
         XCTAssertEqual(updatedFile.ocrDurationMilliseconds, 321)
         XCTAssertEqual(updatedFile.filenameSuggestionState, .unavailable)
+    }
+
+    func testWindowContextNamesScreenshotWhenOCRFindsNoText() async throws {
+        let fixture = try TemporaryDatabaseFixture()
+        defer { fixture.remove() }
+
+        let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+        let event = makeEvent()
+        let file = makeFile(
+            dropEventID: event.id,
+            displayName: "Screenshot.png",
+            ocrState: .pending
+        )
+        try store.record(event, files: [file])
+        let recorder = SmartPerchDropRecorder(eventStore: store)
+
+        let suggestion = try await recorder.completeOCR(
+            fileID: file.fileID,
+            text: nil,
+            originalFilename: file.displayName,
+            durationMilliseconds: 75,
+            screenshotCaptureContext: makeScreenshotCaptureContext()
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Activity Monitor",
+                suggestedFilename: "activity-monitor.png"
+            )
+        )
+        let drops = try await recorder.fetchAllDrops()
+        let updatedFile = try XCTUnwrap(drops.first?.files.first)
+        XCTAssertEqual(updatedFile.ocrState, .noText)
+        XCTAssertEqual(updatedFile.filenameSuggestionState, .available)
+        XCTAssertEqual(updatedFile.smartLabel, "Activity Monitor")
     }
 
     func testRecorderPersistsAndAcceptsFilenameSuggestion() async throws {
@@ -376,8 +418,8 @@ final class SmartPerchEventStoreTests: XCTestCase {
                     fileID: file.fileID,
                     shelfItemID: event.shelfItemID,
                     originalFilename: "Screenshot.png",
-                    displayName: "Lachlan Wession",
-                    suggestedFilename: "lachlan-wession.png"
+                    displayName: "Messages — Lachlan Wession",
+                    suggestedFilename: "messages-lachlan-wession.png"
                 )
             ]
         )
@@ -438,6 +480,29 @@ final class SmartPerchEventStoreTests: XCTestCase {
             sourceAppBundleIdentifier: "com.apple.finder",
             sourceAppName: "Finder",
             payloadKind: .file
+        )
+    }
+
+    private func makeScreenshotCaptureContext() -> ScreenshotCaptureContext {
+        ScreenshotCaptureContext(
+            capturedAtMilliseconds: 1_700_000_000_000,
+            captureRect: ScreenshotScreenRect(
+                x: 20,
+                y: 30,
+                width: 1_200,
+                height: 800
+            ),
+            ownerProcessIdentifier: 42,
+            ownerBundleIdentifier: "com.apple.ActivityMonitor",
+            ownerName: "Activity Monitor",
+            windowTitle: "Activity Monitor",
+            matchedWindowRect: ScreenshotScreenRect(
+                x: 0,
+                y: 0,
+                width: 1_280,
+                height: 900
+            ),
+            visibleCoverage: 0.94
         )
     }
 

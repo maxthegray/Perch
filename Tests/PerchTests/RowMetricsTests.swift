@@ -1,0 +1,115 @@
+import XCTest
+@testable import Perch
+
+final class RowMetricsTests: XCTestCase {
+    func testLabeledRowsHugTheirTitleAndStayInsideTheLane() {
+        let theme = ShelfTheme.resolve(.glass)
+        let maximumWidth: CGFloat = 400
+
+        let shortWidth = RowMetrics.itemRowWidth(
+            title: "Gmail",
+            theme: theme,
+            showsLabels: true,
+            showsAction: false,
+            maximumWidth: maximumWidth
+        )
+        let longerWidth = RowMetrics.itemRowWidth(
+            title: "Messages — Lachlan Wession",
+            theme: theme,
+            showsLabels: true,
+            showsAction: false,
+            maximumWidth: maximumWidth
+        )
+        let cappedWidth = RowMetrics.itemRowWidth(
+            title: String(repeating: "very long filename ", count: 20),
+            theme: theme,
+            showsLabels: true,
+            showsAction: false,
+            maximumWidth: maximumWidth
+        )
+
+        XCTAssertLessThan(shortWidth, longerWidth)
+        XCTAssertLessThan(longerWidth, maximumWidth)
+        XCTAssertEqual(cappedWidth, maximumWidth)
+    }
+
+    func testDedicatedActionSlotDoesNotForceTheWholeLaneWidth() {
+        let theme = ShelfTheme.resolve(.glass)
+        let maximumWidth: CGFloat = 400
+        let labelOnlyWidth = RowMetrics.itemRowWidth(
+            title: "Terminal — Perch",
+            theme: theme,
+            showsLabels: true,
+            showsAction: false,
+            maximumWidth: maximumWidth
+        )
+        let hoveredWidth = RowMetrics.itemRowWidth(
+            title: "Terminal — Perch",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            maximumWidth: maximumWidth
+        )
+
+        XCTAssertEqual(
+            hoveredWidth - labelOnlyWidth,
+            RowMetrics.deleteDiameter + RowMetrics.deleteTrailingInset
+        )
+        XCTAssertLessThan(hoveredWidth, maximumWidth)
+    }
+
+    func testIconOnlyRowsRetainTheWholeInteractionLane() {
+        XCTAssertEqual(
+            RowMetrics.itemRowWidth(
+                title: "Ignored",
+                theme: ShelfTheme.resolve(.minimal),
+                showsLabels: false,
+                showsAction: false,
+                maximumWidth: 180
+            ),
+            180
+        )
+    }
+
+    func testPopulatedCardUsesItsWidestTitleInsteadOfTheWholeMaximum() {
+        let theme = ShelfTheme.resolve(.glass)
+        let maximumWidth: CGFloat = 600
+        let cardWidth = RowMetrics.contentHuggingCardWidth(
+            titles: ["Gmail", "Terminal — Perch"],
+            theme: theme,
+            maximumWidth: maximumWidth
+        )
+        let expectedRowWidth = RowMetrics.itemRowWidth(
+            title: "Terminal — Perch",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            maximumWidth: maximumWidth - theme.contentPadding * 2
+        )
+
+        XCTAssertEqual(
+            cardWidth,
+            expectedRowWidth + theme.contentPadding * 2
+        )
+        XCTAssertLessThan(cardWidth, maximumWidth / 2)
+    }
+
+    func testWidestTitleDefinesOneSharedCompactRowWidth() {
+        let theme = ShelfTheme.resolve(.glass)
+        let cardWidth = RowMetrics.contentHuggingCardWidth(
+            titles: ["Gmail", "Terminal — Perch", "Activity Monitor"],
+            theme: theme,
+            maximumWidth: 600
+        )
+        let sharedRowWidth = cardWidth - theme.contentPadding * 2
+        let widestTitleWidth = RowMetrics.itemRowWidth(
+            title: "Terminal — Perch",
+            theme: theme,
+            showsLabels: true,
+            showsAction: true,
+            maximumWidth: 600
+        )
+
+        XCTAssertEqual(sharedRowWidth, widestTitleWidth)
+    }
+}

@@ -726,8 +726,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var rowLaneInset: CGFloat {
         RowMetrics.rowLaneInset(
             availableWidth: bounds.width,
-            widthScale: themeStore.widthScale
+            widthScale: usesContentHuggingRows ? 1 : themeStore.widthScale
         )
+    }
+
+    private var usesContentHuggingRows: Bool {
+        !usesStackedRows && themeStore.showsLabels && !visibleItems.isEmpty
     }
 
     private func rowLaneContains(x: CGFloat) -> Bool {
@@ -735,6 +739,28 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let minX = rowLaneInset + padding
         let maxX = bounds.width - rowLaneInset - padding
         return minX <= maxX && x >= minX && x <= maxX
+    }
+
+    /// The rendered bounds of one ordinary item chip. SwiftUI and AppKit share the
+    /// title-width calculation so hover, dragging, menus, and the return arrow follow
+    /// the compact visual surface instead of the old full-width invisible row.
+    private func itemRowRect(forRow index: Int) -> NSRect {
+        let theme = themeStore.theme
+        let padding = theme.contentPadding
+        let laneMinX = rowLaneInset + padding
+        let maximumWidth = max(
+            0,
+            bounds.width - (rowLaneInset + padding) * 2
+        )
+        let pitch = theme.rowHeight + theme.rowSpacing
+        let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
+            - contentScrollOffsetY()
+        return NSRect(
+            x: laneMinX,
+            y: rowTop,
+            width: maximumWidth,
+            height: theme.rowHeight
+        )
     }
 
     private var stackedPreviewSide: CGFloat {
@@ -832,6 +858,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard contentY >= topInset else { return nil }
         let index = Int((contentY - topInset) / rowHeight)
         guard index < visibleItems.count else { return nil }
+        let rowRect = itemRowRect(forRow: index)
+        guard point.x >= rowRect.minX, point.x <= rowRect.maxX else {
+            return nil
+        }
         return index
     }
 
@@ -842,15 +872,24 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let theme = themeStore.theme
         let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
         let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
-        return trailingButtonHitRect(rowTop: rowTop)
+        let rowMaxX = usesStackedRows
+            ? bounds.midX + stackedPreviewSide / 2
+            : itemRowRect(forRow: index).maxX
+        return trailingButtonHitRect(rowTop: rowTop, rowMaxX: rowMaxX)
     }
 
     /// A trailing ✕ button's enlarged hit rect for a row whose top edge (pre-scroll)
     /// is `rowTop` — shared by the item rows' delete and the ghosts' dismiss.
-    private func trailingButtonHitRect(rowTop: CGFloat) -> NSRect {
+    private func trailingButtonHitRect(
+        rowTop: CGFloat,
+        rowMaxX: CGFloat? = nil
+    ) -> NSRect {
         let theme = themeStore.theme
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
-        let centerX = bounds.width - rowLaneInset - theme.contentPadding
+        let centerX = (
+            rowMaxX
+                ?? bounds.width - rowLaneInset - theme.contentPadding
+        )
             - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
         let hit = RowMetrics.deleteDiameter + 10
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)

@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import SmartPerchCore
 import UniformTypeIdentifiers
 
 /// OFFER: surfaces files that just arrived in Downloads / Desktop as ghost rows.
@@ -45,6 +46,9 @@ final class RecentArrivals: ObservableObject {
     /// rest of its session into a new behavioral batch.
     private var sessionIDByPath: [String: UUID] = [:]
     private var sessionTotalCountByID: [UUID: Int] = [:]
+    /// A screenshot's desktop context is meaningful only at arrival time. Cache it by
+    /// path so later refreshes and a delayed ghost click reuse that original snapshot.
+    private var screenshotContextByPath: [String: ScreenshotCaptureContext] = [:]
     private var expandedSessionIDs: Set<UUID> = []
     /// Directory event sources stay alive for the lifetime of the app. Chrome writes a
     /// temporary `.crdownload` and then renames it, so directory-level events are the
@@ -136,7 +140,12 @@ final class RecentArrivals: ObservableObject {
                 candidates.append(ArrivalOffer(
                     url: url,
                     addedAt: added,
-                    location: location
+                    location: location,
+                    screenshotCaptureContext: screenshotContext(
+                        for: url,
+                        addedAt: added,
+                        now: now
+                    )
                 ))
             }
         }
@@ -226,6 +235,35 @@ final class RecentArrivals: ObservableObject {
         }
     }
 
+    private func screenshotContext(
+        for url: URL,
+        addedAt: Date,
+        now: Date
+    ) -> ScreenshotCaptureContext? {
+        if let cached = screenshotContextByPath[url.path] {
+            return cached
+        }
+
+        // Never match an older screenshot against whatever windows happen to be open
+        // now. Directory notifications reach this scan after a 700 ms settle delay.
+        guard now.timeIntervalSince(addedAt) >= -2,
+              now.timeIntervalSince(addedAt) <= 8,
+              let context = ScreenshotWindowContextCapture.captureContext(
+                for: url,
+                capturedAt: now
+              )
+        else {
+            return nil
+        }
+        screenshotContextByPath[url.path] = context
+        NSLog(
+            "Perch matched fresh screenshot \(url.lastPathComponent) to "
+                + "\(context.ownerName) at "
+                + "\(Int((context.visibleCoverage * 100).rounded()))% visible coverage"
+        )
+        return context
+    }
+
     private func removeVisibleOffers(withIDs removedIDs: Set<String>) {
         sessions = sessions.compactMap { session in
             let remaining = session.offers.filter { !removedIDs.contains($0.id) }
@@ -274,6 +312,11 @@ final class RecentArrivals: ObservableObject {
             return added > cutoff
         }
         sessionIDByPath = sessionIDByPath.filter { path, _ in
+            activePaths.contains(path)
+                || revealCounts[path] != nil
+                || dismissedPaths[path] != nil
+        }
+        screenshotContextByPath = screenshotContextByPath.filter { path, _ in
             activePaths.contains(path)
                 || revealCounts[path] != nil
                 || dismissedPaths[path] != nil

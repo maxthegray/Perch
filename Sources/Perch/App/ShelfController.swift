@@ -78,6 +78,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var measuredContentHeight: CGFloat?
     /// Item count at the last store change, to tell removals from insertions.
     private var lastItemCount = 0
+    /// The item snapshot emitted by `store.$items`. `@Published` emits before
+    /// `store.items` is replaced, so width calculations during that callback must use
+    /// this snapshot rather than the temporarily stale property.
+    private var sizingItems: [StoredItem] = []
     /// True while a row-removal animation is in flight. The rows animate their shrink,
     /// so the measured height streams a new value every frame; acting on each one would
     /// snap-resize (and re-center) the window per frame — the visible "clunk". Instead
@@ -111,6 +115,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var stacksItemsCancellable: AnyCancellable?
     private var squarePresetCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
+    private var smartNamesCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
@@ -487,6 +492,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.resizeToFitVisible()
             }
 
+        // OCR/window-context names arrive after the item itself. Re-fit once the label
+        // projection changes so the panel follows the generated name instead of keeping
+        // the width of the temporary screenshot filename.
+        smartNamesCancellable = smartNames.$suggestionsByItemID
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
+            }
+
         // Showing/hiding the grab handle changes the card's height by the handle strip —
         // same willSet/next-pass dance as the labels toggle. The stale measured height
         // (still including/excluding the old strip) is dropped so the estimate drives
@@ -655,7 +670,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 occurredAt: metadata.createdAt,
                 sourceApplication: nil
             ),
-            payloadKind: .recentArrival
+            payloadKind: .recentArrival,
+            screenshotCaptureContexts: [offer.screenshotCaptureContext]
         )
         if recordsInteraction {
             recordArrivalSessionInteraction(
@@ -842,6 +858,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// `contentHeightDidChange`.)
     private func shelfItemsDidChange(_ items: [StoredItem]) {
         let previousCount = lastItemCount
+        sizingItems = items
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
@@ -1914,17 +1931,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return max(measuredContentHeight ?? estimate, estimate)
     }
 
-    /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip
-    /// just wide enough for an icon; once it holds items *and* names are shown it grows to
-    /// a comfortable list width.
+    /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip.
+    /// Named item rows hug the widest visible title; the Width setting is their ceiling
+    /// rather than a fixed amount of empty card.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
-        // An empty shelf showing ghost rows needs the full list width for their names.
         let showsGhosts = !arrivals.suppressed && !arrivals.visibleGhosts.isEmpty
-        if store.items.isEmpty && !showsGhosts {
+        if sizingItems.isEmpty && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }
         guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
-        return (edge == .notch ? 360 : 300) * themeStore.widthScale
+
+        let maximumListWidth = (edge == .notch ? 360 : 300)
+            * themeStore.widthScale
+        // Arrival rows still present session metadata and controls across the ordinary
+        // list lane. Keep that temporary surface at the configured list width.
+        guard !showsGhosts else { return maximumListWidth }
+
+        let titles = sizingItems.map {
+            smartNames.suggestion(for: $0.id)?.displayName
+                ?? $0.metadata.title
+        }
+        return RowMetrics.contentHuggingCardWidth(
+            titles: titles,
+            theme: themeStore.theme,
+            maximumWidth: maximumListWidth
+        )
     }
 
     /// Width of the empty drop tile at 100% size. Style-independent — the tile's artwork
@@ -2503,11 +2534,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func recordSmartDrop(
         _ item: StoredItem,
         context: DropRecordingContext,
-        payloadKind: DropPayloadKind
+        payloadKind: DropPayloadKind,
+        screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil
     ) {
         guard let smartDropRecorder else { return }
         let shelfItemID = item.id
         let fileURLs = item.backingFileURLs()
+        let capturedContexts = screenshotCaptureContexts ?? fileURLs.map {
+            ScreenshotWindowContextCapture.captureFreshContext(for: $0)
+        }
 
         Task(priority: .utility) {
             do {
@@ -2515,7 +2550,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     context: context,
                     shelfItemID: shelfItemID,
                     payloadKind: payloadKind,
-                    fileURLs: fileURLs
+                    fileURLs: fileURLs,
+                    screenshotCaptureContexts: capturedContexts
                 )
                 await runPendingOCR(
                     in: recordedDrop,
@@ -2548,7 +2584,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     text: result.text,
                     recognizedLines: result.lines,
                     originalFilename: file.displayName,
-                    durationMilliseconds: result.durationMilliseconds
+                    durationMilliseconds: result.durationMilliseconds,
+                    screenshotCaptureContext: file.screenshotCaptureContext
                 )
                 if let nameSuggestion {
                     smartNames.set(

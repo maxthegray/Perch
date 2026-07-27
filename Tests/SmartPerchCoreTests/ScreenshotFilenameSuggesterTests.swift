@@ -81,7 +81,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "YouTube · Disturbing Case",
+                displayName: "YouTube — Disturbing Case",
                 suggestedFilename: "youtube-disturbing-case.png"
             )
         )
@@ -121,8 +121,8 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Lachlan Wession",
-                suggestedFilename: "lachlan-wession.png"
+                displayName: "Messages — Lachlan Wession",
+                suggestedFilename: "messages-lachlan-wession.png"
             )
         )
     }
@@ -225,7 +225,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         )
     }
 
-    func testGmailLoadingScreenUsesAnchoredAppIdentity() {
+    func testGmailLoadingScreenUsesGenericTopChromeIdentity() {
         let lines = [
             line("Gmail", x: 0.074, y: 0.959, width: 0.045, height: 0.019),
             line(
@@ -249,6 +249,125 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
             from: lines.map(\.text).joined(separator: "\n"),
             recognizedLines: lines,
             originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Gmail",
+                suggestedFilename: "gmail.png"
+            )
+        )
+    }
+
+    func testActivityMonitorTopChromeBeatsProcessTableRows() {
+        let lines = [
+            line(
+                "Activity Monitor",
+                x: 0.158,
+                y: 0.953,
+                width: 0.141,
+                height: 0.030
+            ),
+            line("CPU", x: 0.391, y: 0.942, width: 0.038, height: 0.026),
+            line("Memory", x: 0.478, y: 0.940, width: 0.068, height: 0.025),
+            line(
+                "All Processes",
+                x: 0.160,
+                y: 0.929,
+                width: 0.094,
+                height: 0.020
+            ),
+            line(
+                "Google Chrome Helper",
+                x: 0.088,
+                y: 0.823,
+                width: 0.22,
+                height: 0.024
+            ),
+            line("codex", x: 0.088, y: 0.775, width: 0.07, height: 0.024),
+            line("Messages", x: 0.088, y: 0.680, width: 0.10, height: 0.024),
+            line(
+                "Physical Memory",
+                x: 0.395,
+                y: 0.150,
+                width: 0.18,
+                height: 0.022
+            )
+        ]
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Activity Monitor",
+                suggestedFilename: "activity-monitor.png"
+            )
+        )
+    }
+
+    func testCapturedNativeWindowBeatsUnrelatedBodyText() {
+        let lines = [
+            line(
+                "Google Chrome Helper Renderer",
+                x: 0.12,
+                y: 0.70,
+                width: 0.35,
+                height: 0.035
+            ),
+            line(
+                "Physical Memory 16 GB",
+                x: 0.38,
+                y: 0.12,
+                width: 0.26,
+                height: 0.026
+            )
+        ]
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png",
+            screenshotCaptureContext: captureContext(
+                bundleIdentifier: "com.apple.ActivityMonitor",
+                ownerName: "Activity Monitor",
+                windowTitle: "Activity Monitor"
+            )
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Activity Monitor",
+                suggestedFilename: "activity-monitor.png"
+            )
+        )
+    }
+
+    func testCapturedBrowserUsesSiteFromGenericWindowTitle() {
+        let suggestion = suggester.suggestName(
+            from: "Active\nMost relevant",
+            recognizedLines: [
+                line("Active", x: 0.79, y: 0.948, width: 0.08, height: 0.049),
+                line(
+                    "Most relevant",
+                    x: 0.83,
+                    y: 0.85,
+                    width: 0.10,
+                    height: 0.014
+                )
+            ],
+            originalFilename: "Screenshot.png",
+            screenshotCaptureContext: captureContext(
+                bundleIdentifier: "com.google.Chrome",
+                ownerName: "Google Chrome",
+                windowTitle: "Inbox (4) - person@example.com - Gmail - Google Chrome"
+            )
         )
 
         XCTAssertEqual(
@@ -345,13 +464,18 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         let suggestion = suggester.suggestName(
             from: lines.map(\.text).joined(separator: "\n"),
             recognizedLines: lines,
-            originalFilename: "Screenshot.png"
+            originalFilename: "Screenshot.png",
+            screenshotCaptureContext: captureContext(
+                bundleIdentifier: "com.googlecode.iterm2",
+                ownerName: "iTerm2",
+                windowTitle: "Perch"
+            )
         )
 
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal · Perch",
+                displayName: "Terminal — Perch",
                 suggestedFilename: "terminal-perch.png"
             )
         )
@@ -391,7 +515,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal · Dotfiles",
+                displayName: "Terminal — Dotfiles",
                 suggestedFilename: "terminal-dotfiles.png"
             )
         )
@@ -431,7 +555,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal · Perch",
+                displayName: "Terminal — Perch",
                 suggestedFilename: "terminal-perch.png"
             )
         )
@@ -510,6 +634,33 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
             minY: y,
             width: width,
             height: height
+        )
+    }
+
+    private func captureContext(
+        bundleIdentifier: String,
+        ownerName: String,
+        windowTitle: String?
+    ) -> ScreenshotCaptureContext {
+        ScreenshotCaptureContext(
+            capturedAtMilliseconds: 123,
+            captureRect: ScreenshotScreenRect(
+                x: 0,
+                y: 0,
+                width: 1_200,
+                height: 800
+            ),
+            ownerProcessIdentifier: 42,
+            ownerBundleIdentifier: bundleIdentifier,
+            ownerName: ownerName,
+            windowTitle: windowTitle,
+            matchedWindowRect: ScreenshotScreenRect(
+                x: 20,
+                y: 20,
+                width: 1_160,
+                height: 760
+            ),
+            visibleCoverage: 0.9
         )
     }
 }

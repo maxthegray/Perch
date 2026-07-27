@@ -243,7 +243,7 @@ struct ShelfContentView: View {
                                     availableHeight: proxy.size.height
                                 )
                             } else {
-                                rowStack
+                                rowStack(availableWidth: proxy.size.width)
                             }
                         }
                             .background(heightReader(addingGrabberStrip: grabberHeight))
@@ -308,12 +308,21 @@ struct ShelfContentView: View {
         }
     }
 
-    private var rowStack: some View {
-        VStack(alignment: .leading, spacing: theme.rowSpacing) {
+    private func rowStack(availableWidth: CGFloat) -> some View {
+        let maximumRowWidth = max(
+            0,
+            RowMetrics.rowLaneWidth(
+                availableWidth: availableWidth,
+                widthScale: rowLaneWidthScale
+            ) - theme.contentPadding * 2
+        )
+
+        return VStack(alignment: .leading, spacing: theme.rowSpacing) {
             ForEach(displayedItems) { item in
                 itemRow(
                     item,
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
+                    maximumWidth: maximumRowWidth
                 )
             }
             if !ghostRows.isEmpty {
@@ -451,7 +460,11 @@ struct ShelfContentView: View {
             .animation(.easeOut(duration: 0.14), value: interaction.hoveredArrivalID == ghost.id)
     }
 
-    private func itemRow(_ item: StoredItem, showsSeparator: Bool) -> some View {
+    private func itemRow(
+        _ item: StoredItem,
+        showsSeparator: Bool,
+        maximumWidth: CGFloat
+    ) -> some View {
         ItemRowView(
             item: item,
             theme: theme,
@@ -462,6 +475,7 @@ struct ShelfContentView: View {
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,
             showsLabels: themeStore.showsLabels,
+            maximumWidth: maximumWidth,
             smartName: smartNames.suggestion(for: item.id)?.displayName,
             breadcrumb: breadcrumb(for: item)
         )
@@ -486,9 +500,19 @@ struct ShelfContentView: View {
     private func centeredRowLane<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        CenteredRowLaneLayout(widthScale: themeStore.widthScale) {
+        CenteredRowLaneLayout(widthScale: rowLaneWidthScale) {
             content()
         }
+    }
+
+    /// A named, non-deck shelf already has a content-hugging window, so dividing its
+    /// width by the Width slider again would recreate a narrow centered lane inside it.
+    private var rowLaneWidthScale: CGFloat {
+        !themeStore.stacksItems
+            && themeStore.showsLabels
+            && !store.items.isEmpty
+            ? 1
+            : themeStore.widthScale
     }
 
     /// A sheet-style grab handle pinned to the very top of the card, however tall it

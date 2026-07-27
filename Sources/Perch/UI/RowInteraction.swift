@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
@@ -65,6 +66,10 @@ final class RowInteractionState: ObservableObject {
 /// and the AppKit hit-testing (`ShelfHostView`) so the drawn button and its clickable
 /// rect line up. Row height/spacing/padding live on `ShelfTheme`.
 enum RowMetrics {
+    /// Horizontal breathing room inside a labeled item chip.
+    static let labeledRowHorizontalPadding: CGFloat = 10
+    /// Gap between the file preview and its label.
+    static let labeledRowSpacing: CGFloat = 10
     /// Delete button diameter.
     static let deleteDiameter: CGFloat = 20
     /// Trailing inset of the delete button from the row's right edge.
@@ -79,6 +84,63 @@ enum RowMetrics {
     /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
     /// window-size estimate.
     static let emptyTileHeight: CGFloat = 64
+
+    /// A labeled item is a compact chip instead of a bar spanning the row lane. The
+    /// width follows its visible title, remains capped by the available lane, and only
+    /// grows enough to hold the trailing action while that action is visible.
+    static func itemRowWidth(
+        title: String,
+        theme: ShelfTheme,
+        showsLabels: Bool,
+        showsAction: Bool,
+        maximumWidth: CGFloat
+    ) -> CGFloat {
+        let boundedMaximum = max(0, maximumWidth)
+        guard showsLabels else { return boundedMaximum }
+
+        let fontWeight: NSFont.Weight = theme.style == .glass ? .medium : .regular
+        let font = NSFont.systemFont(ofSize: theme.titleSize, weight: fontWeight)
+        let titleWidth = ceil(
+            (title as NSString).size(withAttributes: [.font: font]).width
+        )
+        let actionWidth = showsAction
+            ? deleteDiameter + deleteTrailingInset
+            : 0
+        let desiredWidth =
+            labeledRowHorizontalPadding * 2
+            + theme.iconSize
+            + labeledRowSpacing
+            + titleWidth
+            + actionWidth
+        return min(boundedMaximum, desiredWidth)
+    }
+
+    /// Width of a populated card whose rows hug their titles. The user's Width setting
+    /// supplies `maximumWidth`; it is a truncation ceiling, not forced empty space.
+    static func contentHuggingCardWidth(
+        titles: [String],
+        theme: ShelfTheme,
+        maximumWidth: CGFloat
+    ) -> CGFloat {
+        let boundedMaximum = max(0, maximumWidth)
+        let maximumRowWidth = max(
+            0,
+            boundedMaximum - theme.contentPadding * 2
+        )
+        let widestRow = titles.map {
+            itemRowWidth(
+                title: $0,
+                theme: theme,
+                showsLabels: true,
+                showsAction: theme.showsDeleteButton,
+                maximumWidth: maximumRowWidth
+            )
+        }.max() ?? 0
+        return min(
+            boundedMaximum,
+            widestRow + theme.contentPadding * 2
+        )
+    }
 
     /// Keep rows at the width they have at the standard (100%) card size when the
     /// card itself is widened. The extra width belongs to the card as breathing room,

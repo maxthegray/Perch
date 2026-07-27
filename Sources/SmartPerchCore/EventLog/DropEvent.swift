@@ -70,7 +70,7 @@ extension FileCategory: DatabaseValueConvertible {}
 /// several `DroppedFileEvent` children.
 public struct DropEvent: Codable, Equatable, FetchableRecord, PersistableRecord, TableRecord, Sendable {
     public static let databaseTableName = "drop_events"
-    public static let currentSchemaVersion = 4
+    public static let currentSchemaVersion = 5
 
     public let id: UUID
     public let batchID: UUID
@@ -134,6 +134,7 @@ public struct DroppedFileEvent: Codable, Equatable, FetchableRecord, Persistable
     public let ocrText: String?
     public let ocrCompletedAtMilliseconds: Int64?
     public let ocrDurationMilliseconds: Int64?
+    public let screenshotCaptureContextJSON: String?
     public let ocrLayoutJSON: String?
     public let smartLabel: String?
     public let filenameSuggestion: String?
@@ -160,6 +161,7 @@ public struct DroppedFileEvent: Codable, Equatable, FetchableRecord, Persistable
         ocrText: String?,
         ocrCompletedAtMilliseconds: Int64?,
         ocrDurationMilliseconds: Int64?,
+        screenshotCaptureContextJSON: String? = nil,
         ocrLayoutJSON: String? = nil,
         smartLabel: String? = nil,
         filenameSuggestion: String? = nil,
@@ -185,6 +187,7 @@ public struct DroppedFileEvent: Codable, Equatable, FetchableRecord, Persistable
         self.ocrText = ocrText
         self.ocrCompletedAtMilliseconds = ocrCompletedAtMilliseconds
         self.ocrDurationMilliseconds = ocrDurationMilliseconds
+        self.screenshotCaptureContextJSON = screenshotCaptureContextJSON
         self.ocrLayoutJSON = ocrLayoutJSON
         self.smartLabel = smartLabel
         self.filenameSuggestion = filenameSuggestion
@@ -212,6 +215,7 @@ public struct DroppedFileEvent: Codable, Equatable, FetchableRecord, Persistable
         case ocrText = "ocr_text"
         case ocrCompletedAtMilliseconds = "ocr_completed_at_ms"
         case ocrDurationMilliseconds = "ocr_duration_ms"
+        case screenshotCaptureContextJSON = "screenshot_capture_context_json"
         case ocrLayoutJSON = "ocr_layout_json"
         case smartLabel = "smart_label"
         case filenameSuggestion = "filename_suggestion"
@@ -220,6 +224,17 @@ public struct DroppedFileEvent: Codable, Equatable, FetchableRecord, Persistable
         case filenameSuggesterVersion = "filename_suggester_version"
         case filenameSuggestionDecidedAtMilliseconds = "filename_suggestion_decided_at_ms"
         case acceptedFilename = "accepted_filename"
+    }
+
+    public var screenshotCaptureContext: ScreenshotCaptureContext? {
+        screenshotCaptureContextJSON
+            .flatMap { $0.data(using: .utf8) }
+            .flatMap {
+                try? JSONDecoder().decode(
+                    ScreenshotCaptureContext.self,
+                    from: $0
+                )
+            }
     }
 }
 

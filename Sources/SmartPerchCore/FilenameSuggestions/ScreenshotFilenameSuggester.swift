@@ -49,7 +49,7 @@ public struct ScreenshotNameSuggestion: Equatable, Sendable {
 /// Older flat OCR records still get a conservative fallback.
 public struct ScreenshotFilenameSuggester: Sendable {
     public static let identifier = "screenshot-ocr-filename"
-    public static let version = 6
+    public static let version = 8
     public static let maximumBaseNameLength = 48
     public static let maximumWordCount = 4
 
@@ -58,7 +58,8 @@ public struct ScreenshotFilenameSuggester: Sendable {
     public func suggestName(
         from ocrText: String,
         recognizedLines: [RecognizedTextLine] = [],
-        originalFilename: String
+        originalFilename: String,
+        screenshotCaptureContext: ScreenshotCaptureContext? = nil
     ) -> ScreenshotNameSuggestion? {
         let originalExtension = URL(fileURLWithPath: originalFilename).pathExtension
         guard !originalExtension.isEmpty else { return nil }
@@ -75,30 +76,41 @@ public struct ScreenshotFilenameSuggester: Sendable {
             )
         }
 
-        if let appIdentity = detectedAppIdentity(
-            in: ocrText,
-            recognizedLines: recognizedLines
-        ) {
+        let context = detectedContext(in: ocrText)
+        if context == .messages {
+            let titleWords = conversationTitle(in: recognizedLines).map {
+                Array($0.words.prefix(Self.maximumWordCount - 1))
+            }
+            let nameWords = titleWords.map { ["messages"] + $0 }
+                ?? ["messages", "conversation"]
+            let displayName = titleWords.map {
+                "Messages — \(humanizedName(from: $0))"
+            } ?? "Messages conversation"
             return makeSuggestion(
-                filenameWords: [appIdentity.filenameWord],
-                displayName: appIdentity.displayName,
+                filenameWords: nameWords,
+                displayName: displayName,
                 originalFilename: originalFilename,
                 originalExtension: originalExtension
             )
         }
 
-        let context = detectedContext(in: ocrText)
-        if context == .messages {
-            let titleWords = conversationTitle(
-                in: recognizedLines
-            )?.words
-            let nameWords = titleWords ?? ["messages", "conversation"]
-            let displayName = titleWords == nil
-                ? "Messages conversation"
-                : humanizedName(from: nameWords)
+        if context != .youtube,
+           let capturedIdentity = capturedWindowIdentity(
+               screenshotCaptureContext
+           ) {
             return makeSuggestion(
-                filenameWords: nameWords,
-                displayName: displayName,
+                filenameWords: capturedIdentity.filenameWords,
+                displayName: capturedIdentity.displayName,
+                originalFilename: originalFilename,
+                originalExtension: originalExtension
+            )
+        }
+
+        if context == nil,
+           let chromeIdentity = topChromeIdentity(in: recognizedLines) {
+            return makeSuggestion(
+                filenameWords: chromeIdentity.filenameWords,
+                displayName: chromeIdentity.displayName,
                 originalFilename: originalFilename,
                 originalExtension: originalExtension
             )
@@ -137,7 +149,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
         if let context,
            !selectedWords.contains(context.filenameWord) {
             filenameWords.insert(context.filenameWord, at: 0)
-            displayName = "\(context.displayName) · \(displayName)"
+            displayName = "\(context.displayName) — \(displayName)"
         } else if let context, selectedWords == [context.filenameWord, "screenshot"] {
             displayName = "\(context.displayName) screenshot"
         }
@@ -333,43 +345,162 @@ public struct ScreenshotFilenameSuggester: Sendable {
         )
     }
 
-    /// App chrome is more trustworthy than temporary page content such as a loading
-    /// indicator. A small brand label in the upper-left is stable across window sizes,
-    /// while flat legacy OCR requires corroborating navigation words.
-    private func detectedAppIdentity(
-        in text: String,
-        recognizedLines: [RecognizedTextLine]
-    ) -> AppIdentity? {
-        let allWords = Set(words(in: text))
-
-        for identity in Self.appIdentities {
-            guard !allWords.isDisjoint(with: identity.brandWords) else {
-                continue
-            }
-
-            if !recognizedLines.isEmpty {
-                let hasAnchoredBrand = recognizedLines.contains { line in
-                    line.minX <= 0.30
-                        && line.minY >= 0.82
-                        && line.height <= 0.05
-                        && !Set(words(in: line.text)).isDisjoint(
-                            with: identity.brandWords
-                        )
-                }
-                if hasAnchoredBrand {
-                    return identity
-                }
-            } else {
-                let chromeSignalCount = allWords
-                    .intersection(identity.chromeWords)
-                    .count
-                if chromeSignalCount >= 2 {
-                    return identity
-                }
-            }
+    /// Fresh screenshot arrivals carry the macOS window that visibly occupied their
+    /// capture rectangle. Native app identity beats temporary body content; browsers
+    /// use their page title, while terminals retain the richer project-aware path.
+    private func capturedWindowIdentity(
+        _ context: ScreenshotCaptureContext?
+    ) -> ResolvedIdentity? {
+        guard let context,
+              context.visibleCoverage >= 0.55
+        else {
+            return nil
         }
 
+        let ownerName = context.ownerName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowercasedOwner = ownerName.lowercased()
+        guard !ownerName.isEmpty,
+              !lowercasedOwner.contains("helper"),
+              !lowercasedOwner.contains("renderer"),
+              !Self.ignoredCaptureOwnerNames.contains(lowercasedOwner)
+        else {
+            return nil
+        }
+
+        if isTerminalOwner(
+            name: lowercasedOwner,
+            bundleIdentifier: context.ownerBundleIdentifier
+        ) {
+            return ResolvedIdentity(
+                displayName: "Terminal workspace",
+                filenameWords: ["terminal", "workspace"]
+            )
+        }
+
+        if isBrowserOwner(
+            name: lowercasedOwner,
+            bundleIdentifier: context.ownerBundleIdentifier
+        ) {
+            return browserPageIdentity(from: context.windowTitle)
+        }
+
+        let filenameWords = words(in: ownerName)
+            .filter(isMeaningful)
+            .prefix(Self.maximumWordCount)
+        guard !filenameWords.isEmpty else { return nil }
+        return ResolvedIdentity(
+            displayName: ownerName,
+            filenameWords: Array(filenameWords)
+        )
+    }
+
+    private func isTerminalOwner(
+        name: String,
+        bundleIdentifier: String?
+    ) -> Bool {
+        if Self.terminalOwnerNames.contains(where: name.contains) {
+            return true
+        }
+        let bundle = bundleIdentifier?.lowercased() ?? ""
+        return bundle.contains("terminal") || bundle.contains("iterm")
+    }
+
+    private func isBrowserOwner(
+        name: String,
+        bundleIdentifier: String?
+    ) -> Bool {
+        if Self.browserOwnerNames.contains(where: name.contains) {
+            return true
+        }
+        let bundle = bundleIdentifier?.lowercased() ?? ""
+        return Self.browserBundleFragments.contains(where: bundle.contains)
+    }
+
+    private func browserPageIdentity(from title: String?) -> ResolvedIdentity? {
+        guard let title else { return nil }
+        let normalized = title
+            .replacingOccurrences(of: " — ", with: " - ")
+            .replacingOccurrences(of: " | ", with: " - ")
+        let segments = normalized
+            .components(separatedBy: " - ")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        for segment in segments.reversed() {
+            let lowercased = segment.lowercased()
+            guard !segment.isEmpty,
+                  !segment.contains("@"),
+                  !segment.contains("://"),
+                  !Self.browserTitleNoise.contains(lowercased)
+            else {
+                continue
+            }
+            let segmentWords = words(in: segment).filter(isMeaningful)
+            guard !segmentWords.isEmpty,
+                  segmentWords.count <= Self.maximumWordCount
+            else {
+                continue
+            }
+            return ResolvedIdentity(
+                displayName: humanizedName(from: segmentWords),
+                filenameWords: segmentWords
+            )
+        }
         return nil
+    }
+
+    /// OCR fallback for screenshots captured before window-context logging shipped.
+    /// App/window titles tend to be short and high in the upper-left; menu commands,
+    /// tabs, queries, percentages, and paths are deliberately excluded.
+    private func topChromeIdentity(
+        in recognizedLines: [RecognizedTextLine]
+    ) -> ResolvedIdentity? {
+        recognizedLines.compactMap { line -> (ResolvedIdentity, Int)? in
+            guard line.minY >= 0.90,
+                  line.minX >= 0.035,
+                  line.minX <= 0.46,
+                  line.maxX <= 0.72,
+                  line.height >= 0.012,
+                  line.height <= 0.06,
+                  !line.text.contains(":"),
+                  !line.text.contains("/"),
+                  !line.text.contains("%")
+            else {
+                return nil
+            }
+
+            let candidateWords = words(in: line.text).filter {
+                isMeaningful($0) && !Self.topChromeNoiseWords.contains($0)
+            }
+            guard !candidateWords.isEmpty,
+                  candidateWords.count <= 3,
+                  candidateWords.contains(where: {
+                      $0.unicodeScalars.contains {
+                          CharacterSet.letters.contains($0)
+                      }
+                  })
+            else {
+                return nil
+            }
+
+            var score = Int(line.height * 1_000)
+            score += Int(max(0, 0.50 - line.minX) * 24)
+            if candidateWords.count == 2 {
+                score += 4
+            }
+            return (
+                ResolvedIdentity(
+                    displayName: humanizedName(from: candidateWords),
+                    filenameWords: candidateWords
+                ),
+                score
+            )
+        }
+        .max {
+            if $0.1 != $1.1 { return $0.1 < $1.1 }
+            return $0.0.displayName > $1.0.displayName
+        }?
+        .0
     }
 
     /// Agent UIs, shells, build logs, and multiplexers all vary, but they share paths,
@@ -397,7 +528,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
 
         if let projectWords = projectWordsFromTerminalPaths(paths) {
             return TerminalWorkspaceContext(
-                displayName: "Terminal · \(humanizedName(from: projectWords))",
+                displayName: "Terminal — \(humanizedName(from: projectWords))",
                 filenameWords: ["terminal"] + projectWords
             )
         }
@@ -674,11 +805,9 @@ public struct ScreenshotFilenameSuggester: Sendable {
         let filenameWords: [String]
     }
 
-    private struct AppIdentity {
+    private struct ResolvedIdentity {
         let displayName: String
-        let filenameWord: String
-        let brandWords: Set<String>
-        let chromeWords: Set<String>
+        let filenameWords: [String]
     }
 
     private enum ScreenshotContext: Equatable {
@@ -713,16 +842,33 @@ public struct ScreenshotFilenameSuggester: Sendable {
         "youtube": "YouTube"
     ]
 
-    private static let appIdentities = [
-        AppIdentity(
-            displayName: "Gmail",
-            filenameWord: "gmail",
-            brandWords: ["gmail"],
-            chromeWords: [
-                "compose", "drafts", "inbox", "labels", "mail", "sent",
-                "snoozed", "starred"
-            ]
-        )
+    private static let ignoredCaptureOwnerNames: Set<String> = [
+        "control center", "dock", "notification center", "perch",
+        "screencaptureui", "systemuiserver", "window server"
+    ]
+
+    private static let terminalOwnerNames = [
+        "iterm", "terminal", "warp", "wezterm", "alacritty", "kitty"
+    ]
+
+    private static let browserOwnerNames = [
+        "arc", "brave", "chrome", "edge", "firefox", "safari"
+    ]
+
+    private static let browserBundleFragments = [
+        "browser", "chrome", "firefox", "safari"
+    ]
+
+    private static let browserTitleNoise: Set<String> = [
+        "arc", "brave", "google chrome", "incognito", "microsoft edge",
+        "mozilla firefox", "new tab", "private browsing", "safari"
+    ]
+
+    private static let topChromeNoiseWords: Set<String> = [
+        "active", "all", "beta", "cpu", "day", "days", "disk", "edit",
+        "energy", "file", "help", "high", "low", "main", "master", "medium",
+        "memory", "mode", "network", "processes", "search", "view", "window",
+        "xhigh"
     ]
 
     private static let terminalCommandWords: Set<String> = [

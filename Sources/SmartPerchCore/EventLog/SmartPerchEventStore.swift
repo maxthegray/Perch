@@ -109,7 +109,7 @@ public final class SmartPerchEventStore: @unchecked Sendable {
 
         let hasSuggestion = filenameSuggestion?.isEmpty == false
         guard !hasSuggestion
-                || (state == .completed
+                || ((state == .completed || state == .noText)
                     && smartLabel?.isEmpty == false
                     && filenameSuggesterIdentifier?.isEmpty == false
                     && filenameSuggesterVersion != nil)
@@ -192,7 +192,7 @@ public final class SmartPerchEventStore: @unchecked Sendable {
                         filename_suggester_identifier = ?,
                         filename_suggester_version = ?
                     WHERE file_id = ?
-                      AND ocr_state = ?
+                      AND ocr_state IN (?, ?)
                       AND (
                         filename_suggestion_state = ?
                         OR (
@@ -212,6 +212,7 @@ public final class SmartPerchEventStore: @unchecked Sendable {
                     filenameSuggesterVersion,
                     fileID,
                     OCRProcessingState.completed,
+                    OCRProcessingState.noText,
                     FilenameSuggestionState.notEvaluated,
                     FilenameSuggestionState.available,
                     filenameSuggesterVersion
@@ -360,6 +361,12 @@ public final class SmartPerchEventStore: @unchecked Sendable {
             try database.alter(table: DroppedFileEvent.databaseTableName) { table in
                 table.add(column: "ocr_layout_json", .text)
                 table.add(column: "smart_label", .text)
+            }
+        }
+
+        migrator.registerMigration("addScreenshotCaptureContext") { database in
+            try database.alter(table: DroppedFileEvent.databaseTableName) { table in
+                table.add(column: "screenshot_capture_context_json", .text)
             }
         }
 
