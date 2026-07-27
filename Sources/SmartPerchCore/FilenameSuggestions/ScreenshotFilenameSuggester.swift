@@ -45,11 +45,11 @@ public struct ScreenshotNameSuggestion: Equatable, Sendable {
 
 /// Produces a human shelf label and an optional keepable filename from screenshot OCR.
 ///
-/// Version 2 uses Vision geometry when available: large, central content wins over
-/// tiny browser/app chrome. Older flat OCR records still get a conservative fallback.
+/// Vision geometry lets large, central content win over tiny browser/app chrome.
+/// Older flat OCR records still get a conservative fallback.
 public struct ScreenshotFilenameSuggester: Sendable {
     public static let identifier = "screenshot-ocr-filename"
-    public static let version = 4
+    public static let version = 5
     public static let maximumBaseNameLength = 48
     public static let maximumWordCount = 4
 
@@ -63,7 +63,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
         let originalExtension = URL(fileURLWithPath: originalFilename).pathExtension
         guard !originalExtension.isEmpty else { return nil }
 
-        if let workspace = developerWorkspaceContext(
+        if let workspace = terminalWorkspaceContext(
             in: ocrText,
             recognizedLines: recognizedLines
         ) {
@@ -321,76 +321,169 @@ public struct ScreenshotFilenameSuggester: Sendable {
         )
     }
 
-    /// Dense Codex screens are workspaces, not documents: body text may discuss any
-    /// topic and must not classify the screenshot. Prefer the stable tool + project
-    /// identity from the status/title band.
-    private func developerWorkspaceContext(
+    /// Agent UIs, shells, build logs, and multiplexers all vary, but they share paths,
+    /// prompts, commands, and command output. Classify that stable concept instead of
+    /// guessing Codex or Claude from words that may merely occur in the transcript.
+    private func terminalWorkspaceContext(
         in text: String,
         recognizedLines: [RecognizedTextLine]
-    ) -> DeveloperWorkspaceContext? {
-        guard recognizedLines.count >= 12 else { return nil }
+    ) -> TerminalWorkspaceContext? {
+        guard recognizedLines.count >= 8 else { return nil }
 
-        let lowercased = text.lowercased()
-        let allWords = Set(words(in: text))
-        guard allWords.contains("codex") else { return nil }
+        let paths = terminalPaths(in: text)
+        let promptCount = recognizedLines.count { looksLikeShellPrompt($0.text) }
+        let commandCount = recognizedLines.count { containsLeadingShellCommand($0.text) }
+        let outputCount = recognizedLines.count { containsTerminalOutput($0.text) }
+        let structuralSignals = promptCount + commandCount + outputCount
 
-        var corroboratingSignals = 0
-        if allWords.contains("gpt") { corroboratingSignals += 1 }
-        if lowercased.contains("auto mode on") { corroboratingSignals += 1 }
-        if lowercased.contains("worked for") || lowercased.contains("crunched for") {
-            corroboratingSignals += 1
+        let hasPathBackedStructure =
+            (paths.count >= 1 && structuralSignals >= 2)
+            || (paths.count >= 2 && structuralSignals >= 1)
+        let hasPromptBackedStructure = promptCount >= 1 && commandCount >= 1
+        guard hasPathBackedStructure || hasPromptBackedStructure else {
+            return nil
         }
-        if lowercased.contains(".codex") || lowercased.contains("/codex") {
-            corroboratingSignals += 1
-        }
-        guard corroboratingSignals >= 1 else { return nil }
 
-        if let projectWords = projectWordsFromTopBand(recognizedLines) {
-            return DeveloperWorkspaceContext(
-                displayName: "Codex · \(humanizedName(from: projectWords))",
-                filenameWords: ["codex"] + projectWords
+        if let projectWords = projectWordsFromTerminalPaths(paths) {
+            return TerminalWorkspaceContext(
+                displayName: "Terminal · \(humanizedName(from: projectWords))",
+                filenameWords: ["terminal"] + projectWords
             )
         }
 
-        return DeveloperWorkspaceContext(
-            displayName: "Codex workspace",
-            filenameWords: ["codex", "workspace"]
+        return TerminalWorkspaceContext(
+            displayName: "Terminal workspace",
+            filenameWords: ["terminal", "workspace"]
         )
     }
 
-    private func projectWordsFromTopBand(
-        _ recognizedLines: [RecognizedTextLine]
+    private func terminalPaths(in text: String) -> [String] {
+        let pattern =
+            #"(?:(?:~)|(?:/Users/[^/\s]+)|(?:/Volumes/[^/\s]+))(?:/[A-Za-z0-9._+@-]+)+"#
+        guard let expression = try? NSRegularExpression(
+            pattern: pattern,
+            options: []
+        ) else {
+            return []
+        }
+
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return expression.matches(in: text, range: range).compactMap { match in
+            guard let swiftRange = Range(match.range, in: text) else { return nil }
+            return String(text[swiftRange])
+        }
+    }
+
+    private func looksLikeShellPrompt(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if ["$", "%", "❯", "➜", "λ"].contains(where: trimmed.hasPrefix) {
+            return true
+        }
+        return trimmed.contains(" λ ")
+            || trimmed.contains(" ❯ ")
+            || trimmed.contains(" ➜ ")
+    }
+
+    private func containsLeadingShellCommand(_ text: String) -> Bool {
+        let leadingWords = words(in: text).prefix(6)
+        return leadingWords.contains { Self.terminalCommandWords.contains($0) }
+    }
+
+    private func containsTerminalOutput(_ text: String) -> Bool {
+        let lowercased = text.lowercased()
+        return Self.terminalOutputPhrases.contains {
+            lowercased.contains($0)
+        }
+    }
+
+    /// Prefer project names repeated in working-directory and build paths. Generic
+    /// containers such as `Projects`, `Swift`, and `Sources` are ignored.
+    private func projectWordsFromTerminalPaths(
+        _ paths: [String]
     ) -> [String]? {
-        recognizedLines
-            .filter { $0.minY >= 0.94 }
-            .sorted { $0.minX < $1.minX }
-            .compactMap { line -> [String]? in
-                guard !line.text.contains("%"),
-                      !line.text.contains(":")
-                else {
-                    return nil
+        var scores: [String: (words: [String], score: Int)] = [:]
+
+        for path in paths {
+            var components = path
+                .split(separator: "/", omittingEmptySubsequences: true)
+                .map(String.init)
+            if components.first == "~" {
+                components.removeFirst()
+            } else if components.first?.lowercased() == "users",
+                      components.count >= 2 {
+                components.removeFirst(2)
+            } else if components.first?.lowercased() == "volumes",
+                      components.count >= 2 {
+                components.removeFirst(2)
+            }
+
+            for (index, component) in components.enumerated() {
+                let pathExtension = (component as NSString).pathExtension.lowercased()
+                let isApplication = pathExtension == "app"
+                if !pathExtension.isEmpty && !isApplication {
+                    break
                 }
 
-                let candidateWords = words(in: line.text).filter {
+                let candidateBase = isApplication
+                    ? (component as NSString).deletingPathExtension
+                    : component
+                let candidateWords = words(in: candidateBase).filter {
                     isMeaningful($0)
-                        && !Self.developerChromeWords.contains($0)
+                        && !Self.genericTerminalPathWords.contains($0)
                         && !$0.unicodeScalars.allSatisfy {
                             CharacterSet.decimalDigits.contains($0)
                         }
                 }
                 guard !candidateWords.isEmpty,
                       candidateWords.count <= 2,
-                      candidateWords.contains(where: { word in
-                          word.unicodeScalars.filter {
-                              CharacterSet.letters.contains($0)
-                          }.count >= 3
-                      })
-                else {
-                    return nil
+                      !candidateBase.hasPrefix("."),
+                      !looksLikeUUID(candidateBase)
+                else { continue }
+
+                var score = 1
+                let isLastComponent = index == components.index(before: components.endIndex)
+                if isLastComponent || isApplication {
+                    score += 4
+                } else if index + 1 < components.count {
+                    let nextWords = Set(words(in: components[index + 1]))
+                    if !nextWords.isDisjoint(with: Self.projectChildPathWords) {
+                        score += 3
+                    }
                 }
-                return candidateWords
+
+                let key = candidateWords.joined(separator: "-")
+                let existing = scores[key]
+                scores[key] = (
+                    words: candidateWords,
+                    score: (existing?.score ?? 0) + score
+                )
+
+                if isApplication {
+                    break
+                }
             }
-            .first
+        }
+
+        return scores.sorted { first, second in
+            if first.value.score != second.value.score {
+                return first.value.score > second.value.score
+            }
+            if first.value.words.count != second.value.words.count {
+                return first.value.words.count < second.value.words.count
+            }
+            return first.key < second.key
+        }.first?.value.words
+    }
+
+    private func looksLikeUUID(_ value: String) -> Bool {
+        let compact = value.replacingOccurrences(of: "-", with: "")
+        guard compact.count == 32 else { return false }
+        let hexadecimalDigits = CharacterSet(
+            charactersIn: "0123456789abcdefABCDEF"
+        )
+        return compact.unicodeScalars.allSatisfy {
+            hexadecimalDigits.contains($0)
+        }
     }
 
     /// Messages puts the conversation title in a compact centered line above the
@@ -525,7 +618,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
         let layout: RecognizedTextLine?
     }
 
-    private struct DeveloperWorkspaceContext {
+    private struct TerminalWorkspaceContext {
         let displayName: String
         let filenameWords: [String]
     }
@@ -557,13 +650,50 @@ public struct ScreenshotFilenameSuggester: Sendable {
         "ocr": "OCR",
         "pdf": "PDF",
         "swiftui": "SwiftUI",
+        "terminal": "Terminal",
         "xcode": "Xcode",
         "youtube": "YouTube"
     ]
 
-    private static let developerChromeWords: Set<String> = [
-        "aarch64", "arm64", "auto", "beta", "codex", "day", "days", "gpt",
-        "high", "low", "main", "master", "medium", "mode", "sol", "xhigh"
+    private static let terminalCommandWords: Set<String> = [
+        "brew", "cargo", "cd", "chmod", "code", "cp", "curl", "docker", "find",
+        "git", "gradle", "grep", "kill", "ls", "make", "mkdir", "mv", "npm",
+        "npx", "open", "pnpm", "python", "python3", "rg", "ruby", "swift",
+        "swiftc", "tail", "xcodebuild", "yarn"
+    ]
+
+    private static let terminalOutputPhrases = [
+        "build complete",
+        "building for ",
+        "committed ",
+        "compiling ",
+        "crunched for ",
+        "error:",
+        "executed ",
+        "exit code ",
+        "installing to ",
+        "linking ",
+        "process exited",
+        "ran ",
+        "test suite ",
+        "tests pass",
+        "warning:",
+        "worked for "
+    ]
+
+    private static let genericTerminalPathWords: Set<String> = [
+        "application", "applications", "build", "code", "coding", "contents",
+        "current", "debug", "dev", "developer", "development", "files",
+        "frameworks", "go", "home", "items", "java", "javascript", "kotlin",
+        "library", "node", "packages", "private", "project", "projects", "python",
+        "release", "repos", "repositories", "rust", "scripts", "source", "sources",
+        "support", "swift", "tests", "typescript", "users", "versions", "workspace",
+        "workspaces", "xpcservices"
+    ]
+
+    private static let projectChildPathWords: Set<String> = [
+        "app", "build", "contents", "package", "packages", "scripts", "source",
+        "sources", "tests"
     ]
 
     private static let stopWords: Set<String> = [

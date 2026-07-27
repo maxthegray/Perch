@@ -42,7 +42,10 @@ struct ItemRowView: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
 
-                    if theme.showsSubtitle {
+                    // A Smart Name is the complete shelf label. Keep its row quiet:
+                    // the original filename remains available through the context
+                    // menu and Finder, but does not compete with the useful name here.
+                    if theme.showsSubtitle && smartName == nil {
                         Text(displayedSubtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
@@ -159,9 +162,6 @@ struct ItemRowView: View {
     }
 
     private var displayedSubtitle: String {
-        if smartName != nil {
-            return item.metadata.title
-        }
         return breadcrumb ?? subtitle
     }
 }

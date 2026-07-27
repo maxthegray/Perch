@@ -225,7 +225,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         )
     }
 
-    func testDenseCodexWorkspaceUsesToolAndProjectInsteadOfBodyText() {
+    func testDenseTerminalWorkspaceUsesProjectPathInsteadOfBodyText() {
         let topLines = [
             line("Perch", x: 0.029, y: 0.966, width: 0.029, height: 0.011),
             line(
@@ -253,7 +253,8 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
             "Building for production",
             "Perch marks something as YouTube",
             "Subscribe or Members",
-            "Changes remain uncommitted on beta"
+            "Changes remain uncommitted on beta",
+            "~/Coding/Swift/Perch λ swift test"
         ]
         let bodyLines = bodyTexts.enumerated().map { index, text in
             line(
@@ -275,8 +276,128 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Codex · Perch",
-                suggestedFilename: "codex-perch.png"
+                displayName: "Terminal · Perch",
+                suggestedFilename: "terminal-perch.png"
+            )
+        )
+    }
+
+    func testClaudeTerminalDoesNotBecomeCodexFromTranscriptText() {
+        let texts = [
+            "claude",
+            "Opus 4.8 high",
+            "Committed in ~/dotfiles, no Claude tag",
+            "Tracked .codex/statusline.py",
+            "Codex still reads it",
+            "Left untracked on purpose: ~/.codex/config.toml",
+            "Ran git status --short --branch",
+            "Crunched for 3m 32s",
+            "auto mode on",
+            "UserPromptSubmit PostToolUse SessionEnd",
+            "Changes remain in .claude/settings.json",
+            "Not pushed yet"
+        ]
+        let lines = texts.enumerated().map { index, text in
+            line(
+                text,
+                x: index.isMultiple(of: 2) ? 0.02 : 0.51,
+                y: 0.97 - Double(index) * 0.07,
+                width: 0.46,
+                height: 0.017
+            )
+        }
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Terminal · Dotfiles",
+                suggestedFilename: "terminal-dotfiles.png"
+            )
+        )
+    }
+
+    func testMixedAgentTerminalUsesRepeatedProjectPathNotToolNames() {
+        let texts = [
+            "claude",
+            "Opus 4.8 high",
+            "gpt-5.6-sol xhigh",
+            "Auto-reviewer approved codex to run ./Scripts/build-app.sh",
+            "Ran git status --short --branch",
+            "Building for production",
+            "Build complete",
+            "~/Coding/Swift/Perch λ ./Scripts/install.sh",
+            "/Users/person/Coding/Swift/Perch/Perch.app/Contents/MacOS/Perch",
+            "Codex and Claude discussion",
+            "Terminal output",
+            "Tests pass"
+        ]
+        let lines = texts.enumerated().map { index, text in
+            line(
+                text,
+                x: index.isMultiple(of: 2) ? 0.01 : 0.50,
+                y: 0.97 - Double(index) * 0.07,
+                width: 0.48,
+                height: 0.016
+            )
+        }
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Terminal · Perch",
+                suggestedFilename: "terminal-perch.png"
+            )
+        )
+    }
+
+    func testArticleMentioningACommandAndPathIsNotATerminalWorkspace() {
+        let texts = [
+            "A Practical Terminal Guide",
+            "This article explains repository health",
+            "Run git status before committing",
+            "The example lives at ~/Projects/sample",
+            "Choose a branch naming convention",
+            "Review every change carefully",
+            "Share the result with your team",
+            "Automate only repetitive work",
+            "Keep local configuration private",
+            "Document the expected workflow",
+            "Prefer small focused commits",
+            "Summary and next steps"
+        ]
+        let lines = texts.enumerated().map { index, text in
+            line(
+                text,
+                x: index == 0 ? 0.24 : 0.18,
+                y: 0.80 - Double(index) * 0.055,
+                width: index == 0 ? 0.42 : 0.62,
+                height: index == 0 ? 0.055 : 0.018
+            )
+        }
+
+        let suggestion = suggester.suggestName(
+            from: lines.map(\.text).joined(separator: "\n"),
+            recognizedLines: lines,
+            originalFilename: "Screenshot.png"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            ScreenshotNameSuggestion(
+                displayName: "Practical Terminal Guide",
+                suggestedFilename: "practical-terminal-guide.png"
             )
         )
     }
