@@ -1,6 +1,8 @@
 import AppKit
 import Combine
 import Darwin
+import SmartPerchCore
+import SmartPerchVision
 import UniformTypeIdentifiers
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
@@ -15,6 +17,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
+    /// Optional so a damaged/unwritable smart log never prevents the shelf itself
+    /// from launching and handling files.
+    private let smartDropRecorder: SmartPerchDropRecorder?
+    private let smartNames = SmartNameStore()
+    private let screenshotOCRWorker = ScreenshotOCRWorker()
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let dockSnapPreview = DockSnapPreviewWindow()
@@ -159,10 +166,23 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         settingsWindow = SettingsWindowController(themeStore: themeStore, edgeSettings: edgeSettings)
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
+        do {
+            let eventStore = try SmartPerchEventStore(databaseURL: holding.smartEventLogFile)
+            smartDropRecorder = SmartPerchDropRecorder(eventStore: eventStore)
+        } catch {
+            NSLog("Perch could not open the Smart Perch event log: \(error)")
+            smartDropRecorder = nil
+        }
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore, ledger: ledger, arrivals: arrivals)
+        hostView = ShelfHostView(
+            store: store,
+            themeStore: themeStore,
+            ledger: ledger,
+            arrivals: arrivals,
+            smartNames: smartNames
+        )
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -249,6 +269,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.contextMenuDidClose()
         }
 
+        hostView.onAcceptFilenameSuggestion = { [weak self] item, suggestion in
+            self?.acceptFilenameSuggestion(suggestion, for: item)
+        }
+        hostView.onDismissFilenameSuggestion = { [weak self] item in
+            self?.dismissFilenameSuggestion(for: item)
+        }
+
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
@@ -263,14 +290,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         // Recent downloads can be adopted individually or as one temporal session.
-        hostView.onAdoptArrival = { [weak self] offer, _ in
-            self?.adoptArrival(offer)
+        hostView.onAdoptArrival = { [weak self] offer, session in
+            self?.adoptArrival(offer, from: session)
         }
         hostView.onAdoptArrivalSession = { [weak self] session in
             self?.adoptArrivalSession(session) ?? []
         }
         hostView.onExpandArrivalSession = { [weak self] session in
-            self?.arrivals.expand(session)
+            self?.expandArrivalSession(session)
         }
         hostView.onDismissArrival = { [weak self] ghost in
             self?.dismissArrival(ghost)
@@ -315,6 +342,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         } catch {
             NSLog("Perch failed to load stored items: \(error)")
         }
+        loadFilenameSuggestions()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -572,7 +600,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     @discardableResult
     private func adoptArrival(
         _ offer: ArrivalOffer,
-        refreshAfterAdoption: Bool = true
+        from session: ArrivalSession,
+        refreshAfterAdoption: Bool = true,
+        recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
         guard fileManager.fileExists(atPath: offer.url.path) else {
@@ -618,6 +648,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let item = StoredItem(metadata: metadata, directoryURL: directory.url)
         store.insert(item, at: nil)
+        recordSmartDrop(
+            item,
+            context: DropRecordingContext(
+                batchID: session.id,
+                occurredAt: metadata.createdAt,
+                sourceApplication: nil
+            ),
+            payloadKind: .recentArrival
+        )
+        if recordsInteraction {
+            recordArrivalSessionInteraction(
+                session,
+                action: .adoptedOne,
+                affectedFileCount: 1
+            )
+        }
         // The copy-fallback case leaves the original in the folder; the origin-path
         // exclusion keeps it from being re-offered.
         if refreshAfterAdoption {
@@ -631,18 +677,162 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Each individual insert goes to the front, so process oldest-first to leave
         // the session's newest-first presentation order intact on the shelf.
         let adopted = session.offers.reversed().compactMap { offer in
-            adoptArrival(offer, refreshAfterAdoption: false)
+            adoptArrival(
+                offer,
+                from: session,
+                refreshAfterAdoption: false,
+                recordsInteraction: false
+            )
         }
         refreshArrivals()
+        guard !adopted.isEmpty else { return [] }
+        recordArrivalSessionInteraction(
+            session,
+            action: .adoptedAll,
+            affectedFileCount: adopted.count
+        )
         return adopted
     }
 
+    private func expandArrivalSession(_ session: ArrivalSession) {
+        arrivals.expand(session)
+        recordArrivalSessionInteraction(
+            session,
+            action: .expanded,
+            affectedFileCount: 0
+        )
+    }
+
     private func dismissArrival(_ ghost: ArrivalGhost) {
+        let session = ghost.session
         switch ghost {
         case let .offer(offer, _):
             arrivals.dismiss(offer)
-        case let .summary(session, _):
+            recordArrivalSessionInteraction(
+                session,
+                action: .dismissedOne,
+                affectedFileCount: 1
+            )
+        case .summary:
             arrivals.dismiss(session)
+            recordArrivalSessionInteraction(
+                session,
+                action: .dismissedAll,
+                affectedFileCount: session.offers.count
+            )
+        }
+    }
+
+    private func recordArrivalSessionInteraction(
+        _ session: ArrivalSession,
+        action: ArrivalSessionAction,
+        affectedFileCount: Int
+    ) {
+        guard let smartDropRecorder,
+              let location = session.offers.first?.location
+        else { return }
+
+        Task(priority: .utility) {
+            do {
+                try await smartDropRecorder.recordArrivalSessionInteraction(
+                    sessionID: session.id,
+                    locationIdentifier: location.rawValue,
+                    action: action,
+                    totalFileCount: session.totalFileCount,
+                    affectedFileCount: affectedFileCount
+                )
+            } catch {
+                NSLog(
+                    "Perch could not record arrival session \(session.id.uuidString): \(error)"
+                )
+            }
+        }
+    }
+
+    private func loadFilenameSuggestions() {
+        guard let smartDropRecorder else { return }
+
+        Task(priority: .utility) { [weak self] in
+            do {
+                let suggestions = try await smartDropRecorder.prepareFilenameSuggestions()
+                guard let self else { return }
+
+                let itemsByID = Dictionary(uniqueKeysWithValues: store.items.map {
+                    ($0.id, $0)
+                })
+                var availableSuggestions: [AvailableFilenameSuggestion] = []
+                var usedItemIDs: Set<UUID> = []
+                for suggestion in suggestions {
+                    guard let item = itemsByID[suggestion.shelfItemID],
+                          item.metadata.backingFileNames == [suggestion.originalFilename],
+                          usedItemIDs.insert(suggestion.shelfItemID).inserted
+                    else {
+                        continue
+                    }
+                    availableSuggestions.append(suggestion)
+                }
+                smartNames.replace(with: availableSuggestions)
+            } catch {
+                NSLog("Perch could not load Smart Perch filename suggestions: \(error)")
+            }
+        }
+    }
+
+    private func acceptFilenameSuggestion(
+        _ proposedFilename: String,
+        for item: StoredItem
+    ) {
+        guard let suggestion = smartNames.suggestion(for: item.id),
+              suggestion.suggestedFilename == proposedFilename,
+              item.metadata.backingFileNames == [suggestion.originalFilename],
+              let smartDropRecorder
+        else {
+            return
+        }
+
+        do {
+            let renamedItem = try store.renameSingleBackingFile(
+                of: item,
+                to: proposedFilename
+            )
+            guard let acceptedFilename = renamedItem.metadata.backingFileNames.first else {
+                return
+            }
+            smartNames.remove(for: item.id)
+
+            Task(priority: .utility) {
+                do {
+                    try await smartDropRecorder.acceptFilenameSuggestion(
+                        fileID: suggestion.fileID,
+                        acceptedFilename: acceptedFilename
+                    )
+                } catch {
+                    NSLog(
+                        "Perch could not record accepted filename suggestion for \(item.id): \(error)"
+                    )
+                }
+            }
+        } catch {
+            NSLog("Perch could not rename \(item.metadata.title) to \(proposedFilename): \(error)")
+        }
+    }
+
+    private func dismissFilenameSuggestion(for item: StoredItem) {
+        guard let suggestion = smartNames.remove(for: item.id),
+              let smartDropRecorder else {
+            return
+        }
+
+        Task(priority: .utility) {
+            do {
+                try await smartDropRecorder.dismissFilenameSuggestion(
+                    fileID: suggestion.fileID
+                )
+            } catch {
+                NSLog(
+                    "Perch could not record dismissed filename suggestion for \(item.id): \(error)"
+                )
+            }
         }
     }
 
@@ -1567,6 +1757,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         let beforeCount = store.items.count
+        let batchID = UUID()
+        let droppedAt = Date()
+        let sourceApplication = SourceApplicationCapture.current()
 
         do {
             let results = try snapshotter.snapshot(pasteboard, into: store)
@@ -1577,16 +1770,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 "Perch drop stored \(results.count) item(s); count \(beforeCount)->\(afterCount); files [\(backingFiles)]"
             )
 
-            for result in results where !result.pendingPromises.isEmpty {
-                materializePendingPromises(
-                    for: result.item,
-                    receivers: result.pendingPromises,
-                    initialCount: beforeCount
+            for result in results {
+                let recordingContext = DropRecordingContext(
+                    batchID: batchID,
+                    occurredAt: droppedAt,
+                    sourceApplication: sourceApplication
                 )
-            }
-
-            for result in results where !result.pendingCopies.isEmpty {
-                performDeferredCopies(result.pendingCopies, for: result.item)
+                finalizeDrop(
+                    result,
+                    initialCount: beforeCount,
+                    recordingContext: recordingContext
+                )
             }
 
             // Keep the shelf open after a drop (the pointer is over it); it closes
@@ -2166,15 +2360,63 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         windowController.hide(animated: animated)
     }
 
-    /// Copy-fallback files the snapshotter deferred (the move was refused, e.g. a
-    /// cross-volume source). The item is already on the shelf with these file names
-    /// recorded; the bulk copy runs off the main thread so a large external-volume
-    /// drop can't beachball the app. If a copy fails the file never arrives, leaving
-    /// a dead row (nothing to vend or preview) — take the item back off the shelf,
-    /// matching the old synchronous behavior where the drop failed outright.
+    /// Wait for every asynchronous part of a stored item before recording it. This
+    /// prevents the log from observing promise placeholders, half-copied files, or a
+    /// fallback copy that is about to fail and remove its shelf row.
+    private func finalizeDrop(
+        _ result: PasteboardSnapshotResult,
+        initialCount: Int,
+        recordingContext: DropRecordingContext
+    ) {
+        let hasPromises = !result.pendingPromises.isEmpty
+        let hasCopies = !result.pendingCopies.isEmpty
+        let payloadKind: DropPayloadKind
+
+        if hasPromises && (hasCopies || !result.item.backingFileURLs().isEmpty) {
+            payloadKind = .mixed
+        } else if hasPromises {
+            payloadKind = .filePromise
+        } else if result.item.backingFileURLs().isEmpty {
+            payloadKind = .clipping
+        } else {
+            payloadKind = .file
+        }
+
+        let finishAfterCopies: @MainActor (Bool) -> Void = { [weak self] copiesSucceeded in
+            guard let self, copiesSucceeded else { return }
+
+            if hasPromises {
+                self.materializePendingPromises(
+                    for: result.item,
+                    receivers: result.pendingPromises,
+                    initialCount: initialCount,
+                    recordingContext: recordingContext,
+                    payloadKind: payloadKind
+                )
+            } else {
+                self.recordSmartDrop(
+                    result.item,
+                    context: recordingContext,
+                    payloadKind: payloadKind
+                )
+            }
+        }
+
+        if hasCopies {
+            performDeferredCopies(
+                result.pendingCopies,
+                for: result.item,
+                completion: finishAfterCopies
+            )
+        } else {
+            finishAfterCopies(true)
+        }
+    }
+
     private func performDeferredCopies(
         _ copies: [(source: URL, destination: URL)],
-        for item: StoredItem
+        for item: StoredItem,
+        completion: @escaping @MainActor (Bool) -> Void
     ) {
         Task.detached(priority: .userInitiated) { [weak self] in
             var failed = false
@@ -2186,9 +2428,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     failed = true
                 }
             }
-            guard failed, let self else { return }
+            let copiesSucceeded = !failed
+            guard let self else { return }
             await MainActor.run {
-                self.store.remove(item)
+                if !copiesSucceeded {
+                    self.store.remove(item)
+                }
+                completion(copiesSucceeded)
             }
         }
     }
@@ -2196,7 +2442,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func materializePendingPromises(
         for item: StoredItem,
         receivers: [NSFilePromiseReceiver],
-        initialCount: Int
+        initialCount: Int,
+        recordingContext: DropRecordingContext,
+        payloadKind: DropPayloadKind
     ) {
         let filesDir = item.directoryURL.appendingPathComponent("files", isDirectory: true)
 
@@ -2216,6 +2464,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     let backingFiles = finalItem.backingFileURLs().map(\.lastPathComponent).joined(separator: ",")
                     NSLog(
                         "Perch promise materialization stored item \(finalItem.id.uuidString); count \(initialCount)->\(self.store.items.count); reps [\(repTypes)]; files [\(backingFiles)]; mainThread \(beforeInsertMainThread)"
+                    )
+                    self.recordSmartDrop(
+                        finalItem,
+                        context: recordingContext,
+                        payloadKind: payloadKind
                     )
                 } catch {
                     NSLog("Perch promise materialization failed for item \(item.id.uuidString): \(error)")
@@ -2245,5 +2498,81 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
 
         return StoredItem(metadata: metadata, directoryURL: item.directoryURL)
+    }
+
+    private func recordSmartDrop(
+        _ item: StoredItem,
+        context: DropRecordingContext,
+        payloadKind: DropPayloadKind
+    ) {
+        guard let smartDropRecorder else { return }
+        let shelfItemID = item.id
+        let fileURLs = item.backingFileURLs()
+
+        Task(priority: .utility) {
+            do {
+                let recordedDrop = try await smartDropRecorder.recordFinalizedDrop(
+                    context: context,
+                    shelfItemID: shelfItemID,
+                    payloadKind: payloadKind,
+                    fileURLs: fileURLs
+                )
+                await runPendingOCR(
+                    in: recordedDrop,
+                    fileURLs: fileURLs,
+                    recorder: smartDropRecorder
+                )
+            } catch {
+                NSLog("Perch could not record Smart Perch drop \(context.eventID): \(error)")
+            }
+        }
+    }
+
+    private func runPendingOCR(
+        in drop: RecordedDrop,
+        fileURLs: [URL],
+        recorder: SmartPerchDropRecorder
+    ) async {
+        for file in drop.files where file.ocrState == .pending {
+            guard fileURLs.indices.contains(file.ordinal) else {
+                try? await recorder.failOCR(fileID: file.fileID)
+                continue
+            }
+
+            do {
+                let result = try await screenshotOCRWorker.recognizeText(
+                    at: fileURLs[file.ordinal]
+                )
+                let nameSuggestion = try await recorder.completeOCR(
+                    fileID: file.fileID,
+                    text: result.text,
+                    recognizedLines: result.lines,
+                    originalFilename: file.displayName,
+                    durationMilliseconds: result.durationMilliseconds
+                )
+                if let nameSuggestion {
+                    smartNames.set(
+                        AvailableFilenameSuggestion(
+                            fileID: file.fileID,
+                            shelfItemID: drop.event.shelfItemID,
+                            originalFilename: file.displayName,
+                            displayName: nameSuggestion.displayName,
+                            suggestedFilename: nameSuggestion.suggestedFilename
+                        )
+                    )
+                }
+                if result.durationMilliseconds > 2_000 {
+                    NSLog(
+                        "Perch screenshot OCR took \(result.durationMilliseconds) ms for \(file.displayName)"
+                    )
+                }
+            } catch {
+                do {
+                    try await recorder.failOCR(fileID: file.fileID)
+                } catch {
+                    NSLog("Perch could not persist failed OCR state for \(file.displayName): \(error)")
+                }
+            }
+        }
     }
 }

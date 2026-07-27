@@ -29,10 +29,17 @@ struct ArrivalOffer: Identifiable, Equatable {
 }
 
 /// Files that completed in the same Downloads burst. The UUID remains stable while
-/// members are adopted or dismissed so an expanded session stays expanded.
+/// members are adopted or dismissed, and doubles as the Smart Perch drop batch ID.
 struct ArrivalSession: Identifiable, Equatable {
     let id: UUID
     let offers: [ArrivalOffer]
+    let totalFileCount: Int
+
+    init(id: UUID, offers: [ArrivalOffer], totalFileCount: Int? = nil) {
+        self.id = id
+        self.offers = offers
+        self.totalFileCount = max(totalFileCount ?? offers.count, offers.count)
+    }
 
     var addedAt: Date {
         offers.map(\.addedAt).max() ?? .distantPast

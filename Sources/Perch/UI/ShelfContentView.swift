@@ -67,6 +67,7 @@ struct ShelfContentView: View {
     @ObservedObject var thumbnails: ThumbnailStore
     @ObservedObject var ledger: ProvenanceLedger
     @ObservedObject var arrivals: RecentArrivals
+    @ObservedObject var smartNames: SmartNameStore
     var onContentHeight: (CGFloat) -> Void = { _ in }
 
     private var theme: ShelfTheme { themeStore.theme }
@@ -461,6 +462,7 @@ struct ShelfContentView: View {
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,
             showsLabels: themeStore.showsLabels,
+            smartName: smartNames.suggestion(for: item.id)?.displayName,
             breadcrumb: breadcrumb(for: item)
         )
         .transition(.asymmetric(

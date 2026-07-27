@@ -13,6 +13,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let themeStore: ThemeStore
     private let ledger: ProvenanceLedger
     private let arrivals: RecentArrivals
+    private let smartNames: SmartNameStore
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let hostingView: NSHostingView<ShelfContentView>
@@ -20,6 +21,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var activeDragSource: ItemDragSource?
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
+    /// Snapshot of the suggestion displayed by the current menu.
+    private var menuTargetFilenameSuggestion: String?
     /// The temporary arrival row under the right-click, acted on without touching
     /// unrelated files in the watched folder.
     private var menuTargetArrival: ArrivalGhost?
@@ -105,12 +108,17 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
-    /// Recent-arrival actions are performed by the controller because they mutate the
-    /// holding directory and the shelf's item list.
+    /// Recent-arrival actions are performed by the controller because they mutate both
+    /// the holding directory and the Smart Perch interaction log.
     var onAdoptArrival: ((ArrivalOffer, ArrivalSession) -> StoredItem?)?
     var onAdoptArrivalSession: ((ArrivalSession) -> [StoredItem])?
     var onExpandArrivalSession: ((ArrivalSession) -> Void)?
     var onDismissArrival: ((ArrivalGhost) -> Void)?
+
+    /// Smart Name decisions are forwarded to the controller so filesystem and event
+    /// log updates stay coordinated.
+    var onAcceptFilenameSuggestion: ((StoredItem, String) -> Void)?
+    var onDismissFilenameSuggestion: ((StoredItem) -> Void)?
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
@@ -158,11 +166,18 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.grabberRevealProgress = clamped
     }
 
-    init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger, arrivals: RecentArrivals) {
+    init(
+        store: ItemStore,
+        themeStore: ThemeStore,
+        ledger: ProvenanceLedger,
+        arrivals: RecentArrivals,
+        smartNames: SmartNameStore
+    ) {
         self.store = store
         self.themeStore = themeStore
         self.ledger = ledger
         self.arrivals = arrivals
+        self.smartNames = smartNames
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
@@ -170,7 +185,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 interaction: interaction,
                 thumbnails: thumbnails,
                 ledger: ledger,
-                arrivals: arrivals
+                arrivals: arrivals,
+                smartNames: smartNames
             )
         )
         super.init(frame: .zero)
@@ -204,6 +220,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             thumbnails: thumbnails,
             ledger: ledger,
             arrivals: arrivals,
+            smartNames: smartNames,
             onContentHeight: { [weak self] height in
                 self?.measuredContentHeight = height
                 self?.onContentHeight?(height)
@@ -996,6 +1013,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
 
             menuTargetItem = nil
+            menuTargetFilenameSuggestion = nil
             menuTargetArrival = ghost
             interaction.selectedItemIDs.removeAll()
 
@@ -1023,6 +1041,41 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
             menuTargetItem = item
             let targets = actionItems(for: item)
+
+            if targets.count == 1,
+               item.metadata.backingFileNames.count == 1,
+               let suggestion = smartNames.suggestion(for: item.id) {
+                menuTargetFilenameSuggestion = suggestion.suggestedFilename
+
+                let smartName = NSMenuItem(
+                    title: "Smart Name",
+                    action: nil,
+                    keyEquivalent: ""
+                )
+                let smartNameMenu = NSMenu(title: "Smart Name")
+
+                let acceptSuggestion = NSMenuItem(
+                    title: "Keep “\(suggestion.displayName)” as Filename",
+                    action: #selector(acceptFilenameSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                acceptSuggestion.target = self
+                smartNameMenu.addItem(acceptSuggestion)
+
+                let dismissSuggestion = NSMenuItem(
+                    title: "Dismiss Suggestion",
+                    action: #selector(dismissFilenameSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                dismissSuggestion.target = self
+                smartNameMenu.addItem(dismissSuggestion)
+
+                smartName.submenu = smartNameMenu
+                menu.addItem(smartName)
+                menu.addItem(.separator())
+            } else {
+                menuTargetFilenameSuggestion = nil
+            }
 
             let quickLook = NSMenuItem(
                 title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
@@ -1052,6 +1105,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(.separator())
         } else {
             menuTargetItem = nil
+            menuTargetFilenameSuggestion = nil
             menuTargetArrival = nil
             interaction.selectedItemIDs.removeAll()
         }
@@ -1184,6 +1238,24 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard let item = menuTargetItem else { return }
         removeWithBounce(actionItems(for: item), returnToOrigin: true)
         menuTargetItem = nil
+    }
+
+    @objc private func acceptFilenameSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem,
+              let suggestion = menuTargetFilenameSuggestion
+        else {
+            return
+        }
+        onAcceptFilenameSuggestion?(item, suggestion)
+        menuTargetItem = nil
+        menuTargetFilenameSuggestion = nil
+    }
+
+    @objc private func dismissFilenameSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        onDismissFilenameSuggestion?(item)
+        menuTargetItem = nil
+        menuTargetFilenameSuggestion = nil
     }
 
     @objc private func adoptArrivalMenuAction(_ sender: NSMenuItem) {

@@ -1,6 +1,14 @@
 import Combine
 import Foundation
 
+enum ItemStoreRenameError: Error, Equatable {
+    case itemNotFound
+    case requiresSingleBackingFile
+    case invalidFilename
+    case extensionChanged
+    case backingFileMissing
+}
+
 /// In-memory ordered list of stored items plus the persistence facade over the
 /// holding directory.
 @MainActor
@@ -69,6 +77,98 @@ final class ItemStore: ObservableObject {
         guard ordered.count == items.count else { return }
         items = ordered
         persistIndexOrLogFailure()
+    }
+
+    /// Rename a one-file shelf item in place and atomically persist its updated
+    /// metadata. Name collisions are uniquified instead of overwriting another file.
+    @discardableResult
+    func renameSingleBackingFile(
+        of item: StoredItem,
+        to proposedFilename: String
+    ) throws -> StoredItem {
+        guard let itemIndex = items.firstIndex(where: { $0.id == item.id }) else {
+            throw ItemStoreRenameError.itemNotFound
+        }
+        guard item.metadata.backingFileNames.count == 1,
+              let oldFilename = item.metadata.backingFileNames.first
+        else {
+            throw ItemStoreRenameError.requiresSingleBackingFile
+        }
+
+        let trimmedFilename = proposedFilename.trimmingCharacters(
+            in: .whitespacesAndNewlines
+        )
+        guard !trimmedFilename.isEmpty,
+              trimmedFilename != ".",
+              trimmedFilename != "..",
+              (trimmedFilename as NSString).lastPathComponent == trimmedFilename
+        else {
+            throw ItemStoreRenameError.invalidFilename
+        }
+
+        let oldExtension = (oldFilename as NSString).pathExtension
+        let newExtension = (trimmedFilename as NSString).pathExtension
+        guard !oldExtension.isEmpty,
+              oldExtension.caseInsensitiveCompare(newExtension) == .orderedSame
+        else {
+            throw ItemStoreRenameError.extensionChanged
+        }
+
+        let filesDirectory = item.directoryURL.appendingPathComponent(
+            "files",
+            isDirectory: true
+        )
+        let sourceURL = filesDirectory.appendingPathComponent(
+            oldFilename,
+            isDirectory: false
+        )
+        guard FileManager.default.fileExists(atPath: sourceURL.path) else {
+            throw ItemStoreRenameError.backingFileMissing
+        }
+
+        let proposedURL = filesDirectory.appendingPathComponent(
+            trimmedFilename,
+            isDirectory: false
+        )
+        let destinationURL = nonClobberingURL(
+            for: proposedURL,
+            fileManager: .default
+        )
+        let finalFilename = destinationURL.lastPathComponent
+
+        var metadata = item.metadata
+        metadata.backingFileNames = [finalFilename]
+        metadata.title = finalFilename
+        if var originPaths = metadata.originPaths,
+           let originPath = originPaths.removeValue(forKey: oldFilename) {
+            originPaths[finalFilename] = originPath
+            metadata.originPaths = originPaths
+        }
+
+        let metadataURL = item.directoryURL.appendingPathComponent(
+            "meta.json",
+            isDirectory: false
+        )
+        var movedFile = false
+        do {
+            try FileManager.default.moveItem(at: sourceURL, to: destinationURL)
+            movedFile = true
+            try JSONEncoder().encode(metadata).write(to: metadataURL, options: .atomic)
+        } catch {
+            if movedFile {
+                try? FileManager.default.moveItem(at: destinationURL, to: sourceURL)
+            }
+            throw error
+        }
+
+        let renamedItem = StoredItem(
+            metadata: metadata,
+            directoryURL: item.directoryURL
+        )
+        var updatedItems = items
+        updatedItems[itemIndex] = renamedItem
+        items = updatedItems
+        return renamedItem
     }
 
     /// Put an item's backing files back where they were taken from, then remove the

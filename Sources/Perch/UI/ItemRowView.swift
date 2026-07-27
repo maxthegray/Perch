@@ -24,6 +24,8 @@ struct ItemRowView: View {
     let showsSeparator: Bool
     /// When false, the name/subtitle are hidden and the row shows just a centered icon.
     let showsLabels: Bool
+    /// An unresolved OCR-derived shelf label. This never changes the backing filename.
+    let smartName: String?
     /// An origin → destination provenance breadcrumb, shown in place of the type
     /// subtitle when the item's travel is known; nil falls back to the type label.
     let breadcrumb: String?
@@ -34,14 +36,14 @@ struct ItemRowView: View {
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.metadata.title)
+                    Text(smartName ?? item.metadata.title)
                         .font(.system(size: theme.titleSize, weight: theme.titleWeight))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
 
                     if theme.showsSubtitle {
-                        Text(breadcrumb ?? subtitle)
+                        Text(displayedSubtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
@@ -65,7 +67,7 @@ struct ItemRowView: View {
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? theme.rowHoverFill : theme.rowFill))
         )
         .overlay(alignment: .bottom) { separator }
-        .overlay(alignment: .trailing) { deleteButton }
+        .overlay(alignment: .trailing) { rowActionButton }
         .contentShape(Rectangle())
         .scaleEffect(isDeleting ? 1.06 : (isDragging ? 1.03 : 1))
         .shadow(color: .black.opacity(isDragging ? 0.25 : 0), radius: 6, y: 3)
@@ -74,6 +76,7 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.13), value: isSelected)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
+        .animation(.easeOut(duration: 0.2), value: smartName)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
     }
@@ -117,13 +120,13 @@ struct ItemRowView: View {
     }
 
     @ViewBuilder
-    private var deleteButton: some View {
+    private var rowActionButton: some View {
         if theme.showsDeleteButton && showsLabels && isHovered {
             ZStack {
                 Circle().fill(.thinMaterial)
                 Circle().stroke(.white.opacity(0.18), lineWidth: 0.5)
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
+                Image(systemName: rowActionSymbol)
+                    .font(.system(size: 8.5, weight: .semibold))
                     .foregroundStyle(.secondary)
             }
             .frame(width: RowMetrics.deleteDiameter, height: RowMetrics.deleteDiameter)
@@ -131,6 +134,14 @@ struct ItemRowView: View {
             .padding(.trailing, RowMetrics.deleteTrailingInset)
             .transition(.opacity.combined(with: .scale(scale: 0.6)))
         }
+    }
+
+    /// Files whose origin is known really go back when clicked, so show a return
+    /// arrow. Clippings/promises have no place to return and are removed, retaining ✕.
+    private var rowActionSymbol: String {
+        item.metadata.originPaths?.isEmpty == false
+            ? "arrow.uturn.backward"
+            : "xmark"
     }
 
     private var subtitle: String {
@@ -145,5 +156,12 @@ struct ItemRowView: View {
             return description.capitalized
         }
         return "Clipping"
+    }
+
+    private var displayedSubtitle: String {
+        if smartName != nil {
+            return item.metadata.title
+        }
+        return breadcrumb ?? subtitle
     }
 }

@@ -44,6 +44,7 @@ final class RecentArrivals: ObservableObject {
     /// Stable while any member remains visible, so adopting one file does not turn the
     /// rest of its session into a new behavioral batch.
     private var sessionIDByPath: [String: UUID] = [:]
+    private var sessionTotalCountByID: [UUID: Int] = [:]
     private var expandedSessionIDs: Set<UUID> = []
     /// Directory event sources stay alive for the lifetime of the app. Chrome writes a
     /// temporary `.crdownload` and then renames it, so directory-level events are the
@@ -150,10 +151,19 @@ final class RecentArrivals: ObservableObject {
                 .first { !usedSessionIDs.contains($0) }
             let sessionID = existingID ?? UUID()
             usedSessionIDs.insert(sessionID)
+            let totalFileCount = max(
+                sessionTotalCountByID[sessionID, default: 0],
+                offers.count
+            )
+            sessionTotalCountByID[sessionID] = totalFileCount
             for offer in offers {
                 sessionIDByPath[offer.id] = sessionID
             }
-            return ArrivalSession(id: sessionID, offers: offers)
+            return ArrivalSession(
+                id: sessionID,
+                offers: offers,
+                totalFileCount: totalFileCount
+            )
         }
 
         if markRevealed, !suppressed {
@@ -223,7 +233,11 @@ final class RecentArrivals: ObservableObject {
                 expandedSessionIDs.remove(session.id)
                 return nil
             }
-            return ArrivalSession(id: session.id, offers: remaining)
+            return ArrivalSession(
+                id: session.id,
+                offers: remaining,
+                totalFileCount: session.totalFileCount
+            )
         }
         publishVisibleGhosts()
     }
@@ -263,6 +277,10 @@ final class RecentArrivals: ObservableObject {
             activePaths.contains(path)
                 || revealCounts[path] != nil
                 || dismissedPaths[path] != nil
+        }
+        let retainedSessionIDs = Set(sessionIDByPath.values)
+        sessionTotalCountByID = sessionTotalCountByID.filter {
+            retainedSessionIDs.contains($0.key)
         }
     }
 
