@@ -204,6 +204,7 @@ struct BehaviorSettingsPane: View {
     @AppStorage(DockGeometryReader.enabledKey) private var snapBesideDock = false
     @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
     @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
+    @AppStorage(SmartPerchSettings.enabledKey) private var smartPerchEnabled = true
 
     var body: some View {
         Form {
@@ -275,6 +276,32 @@ struct BehaviorSettingsPane: View {
                 .padding(.vertical, 2)
             }
 
+            Section("Smart Perch") {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Smart Perch")
+                        Text(smartPerchCaption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("Smart Perch", isOn: $smartPerchEnabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                .padding(.vertical, 2)
+                // Generated names are invisible on an icons-only shelf, so switching
+                // Smart Perch on reveals the labels that show its work. This fires on
+                // the transition only: "Show names" can be turned straight back off and
+                // will stay off, and switching Smart Perch off never hides labels the
+                // user asked for.
+                .onChange(of: smartPerchEnabled) { _, enabled in
+                    if enabled {
+                        themeStore.showsLabels = true
+                    }
+                }
+            }
+
             Section("Docking") {
                 dockEdgeToggles
                 HStack(alignment: .center, spacing: 12) {
@@ -295,6 +322,14 @@ struct BehaviorSettingsPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    /// States plainly that analysis continues either way. "Off" hides Smart Perch's
+    /// output; it is not a switch that stops Perch from reading files.
+    private var smartPerchCaption: String {
+        smartPerchEnabled
+            ? "Names screenshots from their contents and offers the folder you usually file an item in."
+            : "Hidden, but Perch keeps reading and learning from items on this Mac so the suggestions are ready when you turn it back on."
     }
 
     private var dockSnapCaption: String {

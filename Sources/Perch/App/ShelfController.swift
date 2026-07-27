@@ -136,6 +136,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var labelsCancellable: AnyCancellable?
     private var smartNamesCancellable: AnyCancellable?
     private var routeSuggestionsCancellable: AnyCancellable?
+    private var smartPerchEnabledCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
@@ -550,6 +551,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.scheduleAsynchronousNameResize()
+            }
+
+        // The Smart Perch switch lives in UserDefaults (written by the settings pane's
+        // @AppStorage, like every other toggle). Mirror it into the two presentation
+        // stores so flipping it re-renders the rows immediately.
+        smartPerchEnabledCancellable = NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.applySmartPerchEnabled()
             }
 
         // A learned route reserves a second trailing slot, so the card's width follows
@@ -1012,6 +1023,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 )
             }
         }
+    }
+
+    /// Push the Smart Perch switch into the presentation stores. Recording is not
+    /// consulted here on purpose: drops, OCR, and route history keep accumulating while
+    /// the switch is off, so turning it on shows what was learned in the meantime.
+    private func applySmartPerchEnabled() {
+        let isEnabled = SmartPerchSettings.isEnabled
+        guard isEnabled != smartNames.isEnabled
+                || isEnabled != routeSuggestions.isEnabled
+        else {
+            // Any defaults write wakes this observer; only a real change costs a re-fit.
+            return
+        }
+        smartNames.isEnabled = isEnabled
+        routeSuggestions.isEnabled = isEnabled
+        scheduleAsynchronousNameResize()
     }
 
     /// Re-match the shelf against the learned routes. Cheap enough to run on every
@@ -2339,15 +2366,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         let ghostRows = showsGhosts ? arrivals.visibleGhosts.compactMap {
             ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
-            if ghost.offer?.usesStableScreenshotName == true {
+            if smartNames.isEnabled, ghost.offer?.usesStableScreenshotName == true {
                 usesStabilizedNameWidth = true
                 return nil
             }
             return (
                 title: ghost.displayTitle(
-                    smartName: ghost.offer.flatMap {
-                        arrivals.smartName(for: $0)
-                    }
+                    smartName: smartNames.isEnabled
+                        ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
+                        : nil,
+                    usesScreenshotPlaceholder: smartNames.isEnabled
                 ),
                 // Match an adopted row's stable trailing slot. The ghost does not draw
                 // the arrow yet, but reserving its room prevents title truncation and

@@ -157,7 +157,13 @@ enum ArrivalGhost: Identifiable, Equatable {
         return nil
     }
 
-    func displayTitle(smartName: String?) -> String {
+    /// `usesScreenshotPlaceholder` is false when Smart Perch is switched off: with no
+    /// generated name coming, the generic label would never resolve into anything, so
+    /// the real filename is the more useful title.
+    func displayTitle(
+        smartName: String?,
+        usesScreenshotPlaceholder: Bool = true
+    ) -> String {
         switch self {
         case let .summary(session, .expand):
             return "\(session.offers.count) new downloads"
@@ -165,7 +171,7 @@ enum ArrivalGhost: Identifiable, Equatable {
             return "Add all \(session.offers.count) downloads"
         case let .offer(offer, _):
             return smartName
-                ?? (offer.usesStableScreenshotName
+                ?? (offer.usesStableScreenshotName && usesScreenshotPlaceholder
                     ? ScreenshotNamePresentation.placeholder
                     : offer.name)
         }

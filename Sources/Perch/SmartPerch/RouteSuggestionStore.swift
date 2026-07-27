@@ -9,6 +9,9 @@ import SmartPerchCore
 /// the matched offer so SwiftUI can draw it. Mirrors `SmartNameStore`.
 @MainActor
 final class RouteSuggestionStore: ObservableObject {
+    /// Mirrors the Smart Perch switch. Matched offers are still held while this is
+    /// false, so turning Smart Perch on surfaces them without waiting for a refresh.
+    @Published var isEnabled = SmartPerchSettings.isEnabled
     @Published private(set) var suggestionsByItemID: [UUID: SuggestedRoute] = [:]
     /// Items the user waved off. A dismissal lasts as long as the item is on the shelf,
     /// so a refresh cannot bring the same offer back a second later.
@@ -18,7 +21,8 @@ final class RouteSuggestionStore: ObservableObject {
     private var filingItemIDs: Set<UUID> = []
 
     func suggestion(for itemID: UUID) -> SuggestedRoute? {
-        suggestionsByItemID[itemID]
+        guard isEnabled else { return nil }
+        return suggestionsByItemID[itemID]
     }
 
     func replace(with suggestions: [UUID: SuggestedRoute]) {

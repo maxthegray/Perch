@@ -280,9 +280,10 @@ struct ShelfContentView: View {
                     theme: theme,
                     isHovered: interaction.hoveredArrivalID == ghost.id,
                     showsLabels: themeStore.showsLabels,
-                    smartName: ghost.offer.flatMap {
-                        arrivals.smartName(for: $0)
-                    }
+                    smartName: smartNames.isEnabled
+                        ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
+                        : nil,
+                    usesScreenshotPlaceholder: smartNames.isEnabled
                 )
                 .transition(.opacity)
             }
@@ -611,6 +612,9 @@ struct ArrivalGhostRowView: View {
     let isHovered: Bool
     let showsLabels: Bool
     let smartName: String?
+    /// With Smart Perch off, a screenshot ghost shows its real filename rather than the
+    /// generic "Screenshot" label that stands in while a name is being generated.
+    var usesScreenshotPlaceholder = true
 
     var body: some View {
         HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
@@ -677,7 +681,10 @@ struct ArrivalGhostRowView: View {
     }
 
     private var title: String {
-        ghost.displayTitle(smartName: smartName)
+        ghost.displayTitle(
+            smartName: smartName,
+            usesScreenshotPlaceholder: usesScreenshotPlaceholder
+        )
     }
 
     private var isSessionSummary: Bool {
