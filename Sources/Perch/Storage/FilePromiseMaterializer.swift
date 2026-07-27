@@ -65,10 +65,16 @@ final class FilePromiseMaterializer {
         let finish: (String?) -> Void = { reason in
             guard !state.finished else { return }
             state.finished = true
+            var delivered = state.urls
             if let reason {
-                NSLog("Perch promise materialization \(reason); storing \(state.urls.count) delivered file(s)")
+                // A receiver that never called back may still have written its file.
+                // Adopt whatever actually landed, or those bytes sit in the item's
+                // `files/` directory with no entry in `backingFileNames` — invisible
+                // to the shelf and unreachable by every vend path.
+                delivered = Self.includingUnreportedFiles(in: filesDir, alreadyDelivered: delivered)
+                NSLog("Perch promise materialization \(reason); storing \(delivered.count) delivered file(s)")
             }
-            completion(state.urls)
+            completion(delivered)
         }
 
         for receiver in receivers where !receiver.fileTypes.isEmpty {
@@ -94,6 +100,25 @@ final class FilePromiseMaterializer {
             queue.addOperation {
                 finish("timed out")
             }
+        }
+    }
+
+    /// `alreadyDelivered` plus any other file sitting in `filesDir`. Note this cannot
+    /// recover a promise the source writes *after* the timeout has elapsed; it closes
+    /// the much more common case of a delivered file whose callback never arrived.
+    private static func includingUnreportedFiles(
+        in filesDir: URL,
+        alreadyDelivered: [URL]
+    ) -> [URL] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: filesDir,
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        ) else { return alreadyDelivered }
+
+        let deliveredNames = Set(alreadyDelivered.map(\.lastPathComponent))
+        return alreadyDelivered + entries.filter {
+            !deliveredNames.contains($0.lastPathComponent)
         }
     }
 }

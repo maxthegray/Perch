@@ -8,7 +8,6 @@ import QuartzCore
 @MainActor
 final class ShelfWindowController {
     let panel: ShelfPanel
-    private static let persistedFrameKey = "Perch.ShelfWindowController.frame"
     private static let transformKey = "perch.reveal.transform"
 
     private static let revealDuration: CFTimeInterval = 0.30
@@ -247,26 +246,6 @@ final class ShelfWindowController {
             NSLog("Perch healed contentView shear: \(NSStringFromRect(contentView.frame)) -> \(NSStringFromRect(expected))")
             contentView.frame = expected
         }
-    }
-
-    func restorePersistedFrame() {
-        guard let frameString = UserDefaults.standard.string(forKey: Self.persistedFrameKey) else {
-            revealedFrame = panel.frame
-            return
-        }
-
-        let frame = NSRectFromString(frameString)
-        guard frame.width > 0, frame.height > 0 else {
-            revealedFrame = panel.frame
-            return
-        }
-
-        revealedFrame = frame
-        panel.setFrame(frame, display: false)
-    }
-
-    func persistFrame() {
-        UserDefaults.standard.set(NSStringFromRect(revealedFrame), forKey: Self.persistedFrameKey)
     }
 
     /// A pure scale about the card's center, for the cursor-summon reveal/hide.

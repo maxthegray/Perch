@@ -73,6 +73,29 @@ final class ItemStoreRenameTests: XCTestCase {
             XCTAssertEqual(error as? ItemStoreRenameError, .extensionChanged)
         }
     }
+
+    /// On a case-insensitive volume the destination "already exists" — it is the source
+    /// file itself — so the collision check used to hand back `Photo-2.png`.
+    func testCaseOnlyRenameKeepsTheRequestedNameWithoutASuffix() throws {
+        let fixture = try ItemStoreRenameFixture()
+        defer { fixture.remove() }
+
+        let item = try fixture.makeItem(filename: "photo.png")
+        let renamedItem = try fixture.store.renameSingleBackingFile(
+            of: item,
+            to: "Photo.png"
+        )
+
+        XCTAssertEqual(renamedItem.metadata.backingFileNames, ["Photo.png"])
+        XCTAssertEqual(
+            try fixture.backingFileNamesOnDisk(of: renamedItem),
+            ["Photo.png"]
+        )
+        XCTAssertEqual(
+            try Data(contentsOf: renamedItem.backingFileURLs()[0]),
+            Data("screenshot".utf8)
+        )
+    }
 }
 
 @MainActor
@@ -121,6 +144,18 @@ private final class ItemStoreRenameFixture {
         let item = StoredItem(metadata: metadata, directoryURL: directory.url)
         store.insert(item, at: nil)
         return item
+    }
+
+    /// The real on-disk names, which `fileExists` cannot distinguish on a
+    /// case-insensitive volume.
+    func backingFileNamesOnDisk(of item: StoredItem) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(
+            at: item.directoryURL.appendingPathComponent("files", isDirectory: true),
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        )
+        .map(\.lastPathComponent)
+        .sorted()
     }
 
     nonisolated func remove() {

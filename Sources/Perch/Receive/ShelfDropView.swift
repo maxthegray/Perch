@@ -68,7 +68,6 @@ final class ShelfDropView: NSView {
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         let operation = dragOperation(for: sender)
-        NSLog("Perch DROPDBG draggingEntered op=\(operation.rawValue) bounds=\(NSStringFromRect(bounds))")
         if !operation.isEmpty {
             dropHandler?.pointerDidEnterShelf()
             dropHandler?.dragOverShelfDidChange(true)
@@ -81,7 +80,6 @@ final class ShelfDropView: NSView {
     }
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
-        NSLog("Perch DROPDBG draggingExited")
         dropHandler?.dragOverShelfDidChange(false)
         dropHandler?.pointerDidExitShelf(duringDrag: true)
     }
@@ -104,14 +102,12 @@ final class ShelfDropView: NSView {
         if ok {
             perchSource?.markReturnedToPerch()
         }
-        NSLog("Perch DROPDBG performDragOperation ok=\(ok)")
         return ok
     }
 
     override func wantsPeriodicDraggingUpdates() -> Bool { false }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        NSLog("Perch DROPDBG prepareForDragOperation")
-        return true
+        true
     }
 }

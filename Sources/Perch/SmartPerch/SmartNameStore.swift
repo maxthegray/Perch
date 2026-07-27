@@ -64,6 +64,10 @@ final class SmartNameStore: ObservableObject {
     }
 
     func retainPresentations(for itemIDs: Set<UUID>) {
+        let retainedSuggestions = suggestionsByItemID.filter { itemIDs.contains($0.key) }
+        if retainedSuggestions.count != suggestionsByItemID.count {
+            suggestionsByItemID = retainedSuggestions
+        }
         let retainedScreenshots = screenshotItemIDs.intersection(itemIDs)
         if retainedScreenshots != screenshotItemIDs {
             screenshotItemIDs = retainedScreenshots

@@ -647,17 +647,28 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         )
         routeCoordinators[routeCoordinator.routeSessionID] = routeCoordinator
         let ledger = ledger
+        // Retained by the writer callbacks below, which AppKit keeps alive for as long
+        // as the destination can still call in a promise — exactly the window in which
+        // a late delivery result can still arrive.
+        let delivery = VendDeliveryTracker(
+            items: items,
+            appliesMoveSemantics: isMove,
+            // The row leaves the shelf but the backing directory stays on disk for a
+            // grace period: destinations read the vended file URL (or call in the
+            // promise) asynchronously, sometimes seconds after the drop, and deleting
+            // eagerly made the drop silently vanish.
+            retire: { [weak self] item in self?.store.retire(item) },
+            restore: { [weak self] item in
+                NSLog("Perch vend delivery failed for \(item.metadata.title); restoring it to the shelf")
+                self?.store.unretire(item)
+            }
+        )
         dragSource.recordVend = { entry in
             Task { @MainActor in ledger.record(entry) }
         }
-        dragSource.onWriteFailed = { [weak self] in
-            Task { @MainActor in
-                NSLog("Perch multi-item vend delivery failed; restoring selection to shelf")
-                for item in items { self?.store.unretire(item) }
-            }
-        }
         dragSource.onRouteWriteSucceeded = { [weak routeCoordinator] itemID, url in
             Task { @MainActor in
+                delivery.promiseDidWrite(itemID: itemID)
                 routeCoordinator?.filePromiseDidWrite(
                     itemID: itemID,
                     destinationFileURL: url
@@ -666,6 +677,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
         dragSource.onRouteWriteFailed = { [weak routeCoordinator] itemID in
             Task { @MainActor in
+                delivery.promiseDidFail(itemID: itemID)
                 routeCoordinator?.filePromiseDidFail(itemID: itemID)
             }
         }
@@ -683,19 +695,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 at: screenPoint,
                 occurredAt: occurredAt
             )
-            guard isMove else { return }
             if returnedToPerch || operation.isEmpty {
                 // A canceled drag or a drop back onto Perch restores the original rows,
                 // exactly as they were. For cancellation, endedAt fires after AppKit's
                 // slide-back completes, so the rows return as the drag image arrives.
+                delivery.dragDidNotLand()
                 self.interaction.vendingItemIDs.removeAll()
                 return
             }
-            // The item landed somewhere: retire it — the row leaves the shelf now, but
-            // the backing directory stays on disk for a grace period. Destinations read
-            // the vended file URL (or call in the promise) asynchronously, sometimes
-            // seconds after the drop; deleting eagerly made the drop silently vanish.
-            for item in items { self.store.retire(item) }
+            delivery.dragDidLand()
+            guard isMove else { return }
             self.interaction.vendingItemIDs.removeAll()
             self.interaction.selectedItemIDs.subtract(itemIDs)
         }
@@ -1091,6 +1100,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let point = convert(event.locationInWindow, from: nil)
         let menu = NSMenu()
         menu.delegate = self
+        // Automatic enabling ignores the `isEnabled` values set below (every item has a
+        // target that responds), which left "Return All" clickable on an empty shelf
+        // and "Quick Look" clickable for items with nothing to preview.
+        menu.autoenablesItems = false
 
         if let ghostIndex = arrivalIndex(at: point) {
             let ghost = ghostRows[ghostIndex]
@@ -1142,6 +1155,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                     keyEquivalent: ""
                 )
                 let smartNameMenu = NSMenu(title: "Smart Name")
+                smartNameMenu.autoenablesItems = false
 
                 let acceptSuggestion = NSMenuItem(
                     title: "Keep “\(suggestion.displayName)” as Filename",

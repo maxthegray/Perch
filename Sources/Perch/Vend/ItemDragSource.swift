@@ -23,13 +23,10 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// movement. The host hops it back to the main actor to append to the ledger.
     var recordVend: (@Sendable (ProvenanceEntry) -> Void)?
 
-    /// Called off the main actor when a file-promise write fails after the drop landed
-    /// (e.g. the destination denied the write). The host puts the retired row back so
-    /// the item isn't silently lost.
-    var onWriteFailed: (@Sendable () -> Void)?
-
-    /// Successful/failed promise evidence is kept separate from the JSON provenance
-    /// hook so Smart Perch can coordinate it with the drag-ended observation.
+    /// Called off the main actor when a file-promise write succeeds or fails, with the
+    /// item it belongs to. The host reconciles the result against the drag-ended
+    /// callback (`VendDeliveryTracker`) so a refused write puts exactly that row back,
+    /// and Smart Perch coordinates the same evidence into its route observation.
     var onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
     var onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
@@ -61,7 +58,6 @@ final class ItemDragSource: NSObject, NSDraggingSource {
             StoredItemDragWriter(
                 item: $0,
                 recordVend: recordVend,
-                onWriteFailed: onWriteFailed,
                 onRouteWriteSucceeded: onRouteWriteSucceeded,
                 onRouteWriteFailed: onRouteWriteFailed
             )

@@ -11,6 +11,10 @@ final class ThumbnailStore: ObservableObject {
     /// Republished whenever a new thumbnail lands, so observing rows refresh.
     @Published private var cache: [UUID: CachedThumbnail] = [:]
     private var inFlight: [UUID: CGFloat] = [:]
+    /// Items Quick Look declined to preview. Without remembering the failure, every
+    /// SwiftUI render pass would start another generator request for the same file,
+    /// forever — the miss re-enters `requestIfNeeded` exactly like a cold cache.
+    private var unpreviewableItemIDs: Set<UUID> = []
 
     private struct CachedThumbnail {
         let image: NSImage
@@ -30,7 +34,8 @@ final class ThumbnailStore: ObservableObject {
     }
 
     private func requestIfNeeded(for item: StoredItem, pointSize: CGFloat) {
-        guard (cache[item.id]?.pointSize ?? 0) < pointSize,
+        guard !unpreviewableItemIDs.contains(item.id),
+              (cache[item.id]?.pointSize ?? 0) < pointSize,
               (inFlight[item.id] ?? 0) < pointSize else { return }
         guard let url = item.backingFileURLs().first(where: {
             FileManager.default.fileExists(atPath: $0.path)
@@ -53,13 +58,17 @@ final class ThumbnailStore: ObservableObject {
             if self.inFlight[id] == pointSize {
                 self.inFlight[id] = nil
             }
-            if let representation {
-                if (self.cache[id]?.pointSize ?? 0) < pointSize {
-                    self.cache[id] = CachedThumbnail(
-                        image: representation.nsImage,
-                        pointSize: pointSize
-                    )
-                }
+            guard let representation else {
+                // Quick Look has no content preview for this file; the row keeps its
+                // type icon and we stop asking.
+                self.unpreviewableItemIDs.insert(id)
+                return
+            }
+            if (self.cache[id]?.pointSize ?? 0) < pointSize {
+                self.cache[id] = CachedThumbnail(
+                    image: representation.nsImage,
+                    pointSize: pointSize
+                )
             }
         }
     }

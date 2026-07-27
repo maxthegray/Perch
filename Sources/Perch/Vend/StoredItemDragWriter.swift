@@ -17,14 +17,12 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
     convenience init(
         item: StoredItem,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
-        onWriteFailed: (@Sendable () -> Void)? = nil,
         onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
         onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
         let delegate = StoredItemDragWriterDelegate(
             item: item,
             recordVend: recordVend,
-            onWriteFailed: onWriteFailed,
             onRouteWriteSucceeded: onRouteWriteSucceeded,
             onRouteWriteFailed: onRouteWriteFailed
         )
@@ -114,14 +112,12 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
     private let operationQueue: OperationQueue
     fileprivate let promisedFileType: String
     private let recordVend: (@Sendable (ProvenanceEntry) -> Void)?
-    private let onWriteFailed: (@Sendable () -> Void)?
     private let onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
     private let onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
     init(
         item: StoredItem,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
-        onWriteFailed: (@Sendable () -> Void)? = nil,
         onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
         onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
@@ -129,7 +125,6 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
             StoredItemDragSnapshot(item: item)
         }
         self.recordVend = recordVend
-        self.onWriteFailed = onWriteFailed
         self.onRouteWriteSucceeded = onRouteWriteSucceeded
         self.onRouteWriteFailed = onRouteWriteFailed
         operationQueue = OperationQueue()
@@ -187,7 +182,6 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
         } catch {
             NSLog("Perch promised file write failed for \(sourceURL.lastPathComponent) to \(destinationURL.path): \(error)")
             onRouteWriteFailed?(snapshot.itemID)
-            onWriteFailed?()
             completionHandler(error)
         }
     }
@@ -265,7 +259,10 @@ private struct StoredItemDragSnapshot {
     let representations: [RepRecord]
     let backingFileURLs: [URL]
     let itemID: UUID
-    /// Original source path (first recorded origin), captured for the provenance ledger.
+    /// Where the file this drag actually vends came from, captured for the provenance
+    /// ledger. Looked up by the vended file's name rather than taking an arbitrary
+    /// slot out of `originPaths` — dictionary order would attribute a multi-file item's
+    /// move to whichever sibling happened to hash first.
     let origin: String?
     /// Whether the shelf keeps its copy on a successful vend (copy mode).
     let wasCopy: Bool
@@ -275,9 +272,12 @@ private struct StoredItemDragSnapshot {
     init(item: StoredItem) {
         title = item.metadata.title
         representations = item.metadata.representations
-        backingFileURLs = item.backingFileURLs()
+        let resolvedBackingFileURLs = item.backingFileURLs()
+        backingFileURLs = resolvedBackingFileURLs
         itemID = item.id
-        origin = item.metadata.originPaths?.values.first
+        origin = resolvedBackingFileURLs.first.flatMap {
+            item.metadata.originPaths?[$0.lastPathComponent]
+        }
         wasCopy = UserDefaults.standard.bool(forKey: "Perch.VendCopies")
 
         let repsDir = item.directoryURL.appendingPathComponent("reps", isDirectory: true)

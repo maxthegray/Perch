@@ -1842,10 +1842,25 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         NSLog("Perch snapped free shelf beside the Dock")
     }
 
+    /// Fast enough to ride the Dock's auto-hide animation frame for frame.
+    private static let dockTrackingActiveInterval: Duration = .milliseconds(16)
+    /// A Dock the cursor is nowhere near cannot start animating, so it can be sampled
+    /// far more cheaply — each sample is a synchronous cross-process Accessibility read
+    /// on the main actor.
+    private static let dockTrackingIdleInterval: Duration = .milliseconds(200)
+    /// Keep sampling fast for a beat after the last movement so the tail of an
+    /// animation is never truncated by an early back-off.
+    private static let dockTrackingCoastTicks = 40
+    /// How close the cursor must come to the Dock's shown position to re-arm fast
+    /// sampling — generous, because the reveal begins before the pointer lands.
+    private static let dockTrackingWakeDistance: CGFloat = 260
+
     private func startSystemDockTracking() {
         dockTrackingTask?.cancel()
         guard let attachment = dockAttachment else { return }
         dockTrackingTask = Task { @MainActor [weak self] in
+            var lastOrigin: NSPoint?
+            var coastingTicks = 0
             while !Task.isCancelled {
                 guard let self, self.dockAttachment == attachment else { return }
                 if !UserDefaults.standard.bool(forKey: DockGeometryReader.enabledKey) {
@@ -1856,13 +1871,40 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     for: self.panel.frame.size,
                     followsVisibility: true
                 ).first(where: { $0.kind == attachment }) {
-                    // Direct origin updates preserve the Dock's live timing instead of
-                    // layering a second AppKit animation on top of it.
-                    self.panel.setFrameOrigin(placement.frame.origin)
+                    if placement.frame.origin != lastOrigin {
+                        lastOrigin = placement.frame.origin
+                        coastingTicks = Self.dockTrackingCoastTicks
+                        // Direct origin updates preserve the Dock's live timing instead
+                        // of layering a second AppKit animation on top of it.
+                        self.panel.setFrameOrigin(placement.frame.origin)
+                    } else if coastingTicks > 0 {
+                        coastingTicks -= 1
+                    }
                 }
-                try? await Task.sleep(for: .milliseconds(16))
+                try? await Task.sleep(
+                    for: coastingTicks > 0 || self.cursorCouldWakeSystemDock(attachment)
+                        ? Self.dockTrackingActiveInterval
+                        : Self.dockTrackingIdleInterval
+                )
             }
         }
+    }
+
+    /// Whether the cursor is near enough to the Dock's *shown* frame to trigger a
+    /// reveal. The shown frame — not the panel's current position — is the anchor: a
+    /// hidden Dock has carried the panel off-screen, and the cursor approaching the
+    /// screen edge is exactly the moment fast sampling has to resume.
+    private func cursorCouldWakeSystemDock(_ attachment: DockSnapTargetKind) -> Bool {
+        // Reads through DockGeometryReader's short cache, which the live sample above
+        // has just refreshed — no extra Accessibility round trip.
+        guard let shown = systemDockFrames(
+            for: panel.frame.size,
+            followsVisibility: false
+        ).first(where: { $0.kind == attachment })?.frame else {
+            return true
+        }
+        return Self.distance(from: NSEvent.mouseLocation, to: shown)
+            <= Self.dockTrackingWakeDistance
     }
 
     /// Stop following the Dock. A user-initiated drag keeps the current presentation

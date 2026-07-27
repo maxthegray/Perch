@@ -27,7 +27,14 @@ struct PasteboardSnapshotter {
         // Finder supplies file data lazily. Capture every representation before moving
         // any source file; moving the first selected file can otherwise invalidate data
         // that Finder has not supplied for the remaining selection yet.
-        let capturedItems = try pasteboardItems.map(capture)
+        //
+        // Items that yield nothing readable are skipped rather than failing the drop:
+        // apps routinely advertise flavors whose data is unavailable at read time, and
+        // one of those must not cost the user every other item in the drag.
+        let capturedItems = pasteboardItems.compactMap(capture)
+        guard !capturedItems.isEmpty else {
+            throw PasteboardSnapshotError.noReadableRepresentations
+        }
         let receivers = pasteboard.readObjects(
             forClasses: [NSFilePromiseReceiver.self],
             options: nil
@@ -76,7 +83,9 @@ struct PasteboardSnapshotter {
         let stringTitle: String?
     }
 
-    private func capture(_ pasteboardItem: NSPasteboardItem) throws -> CapturedItem {
+    /// Nil when nothing usable could be read off the item, so the caller can drop it
+    /// without discarding the rest of the pasteboard.
+    private func capture(_ pasteboardItem: NSPasteboardItem) -> CapturedItem? {
         let promiseTypes = Set(NSFilePromiseReceiver.readableDraggedTypes)
         var representations: [(NSPasteboard.PasteboardType, Data?, Bool)] = []
 
@@ -86,8 +95,13 @@ struct PasteboardSnapshotter {
             } else if let data = pasteboardItem.data(forType: type) {
                 representations.append((type, data, false))
             } else {
-                throw PasteboardSnapshotError.missingData(type.rawValue)
+                NSLog("Perch skipped unreadable pasteboard flavor \(type.rawValue)")
             }
+        }
+
+        guard !representations.isEmpty else {
+            NSLog("Perch skipped a pasteboard item with no readable representation")
+            return nil
         }
 
         let title = pasteboardItem.string(forType: .string)?
@@ -244,6 +258,7 @@ struct PasteboardSnapshotter {
 
 private enum PasteboardSnapshotError: Error {
     case noItems
+    case noReadableRepresentations
     case holdingMismatch(snapshotterURL: URL, storeURL: URL)
     case invalidFileURL
     case missingData(String)
