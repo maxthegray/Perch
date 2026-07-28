@@ -37,8 +37,8 @@ case "${TRACK}" in
     NOTARY_ZIP="/tmp/Perch-Smart-notary.zip"
     ASSET_NAME="Perch-Smart.zip"
     TARGET_BRANCH="smart-perch"
-    FEED_TITLE="Perch Smart"
-    RELEASE_TITLE="Perch Smart ${VERSION}"
+    FEED_TITLE="Smart Perch"
+    RELEASE_TITLE="Smart Perch ${VERSION}"
     RELEASE_FLAGS=(--prerelease)
     ;;
   *)
