@@ -49,6 +49,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var dismissingFreeShelfResetTask: Task<Void, Never>?
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
+    /// Delays the visual edge tab so short, ordinary drags stay quiet. If a drag lasts
+    /// long enough, the home tab appears as a reminder that Perch is available.
+    private var edgeTabReminderTask: Task<Void, Never>?
+    private var edgeTabReminderVisible = false
     /// True when the current drag (in "reveal while dragging" mode) opened the shelf.
     /// The chosen edge remains stable until the drag ends or the pointer explicitly
     /// enters another edge tab.
@@ -68,10 +72,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
         PerchSettings.flag(PerchSettings.keepEmptyShelf, default: true)
-    }
-    /// Whether free shelves preview and snap back into enabled edge docks.
-    private var snapBackToEdgesEnabled: Bool {
-        PerchSettings.flag(PerchSettings.snapBackToEdges, default: true)
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -379,6 +379,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// three-session count does not restart.
     private func reconcileSmartPerchFeature(loadingExistingState: Bool = true) {
         let shouldBeActive = SmartPerchSettings.isEnabled
+        let presentationChanged = smartNames.isEnabled != shouldBeActive
+            || routeSuggestions.isEnabled != shouldBeActive
+        smartNames.isEnabled = shouldBeActive
+        routeSuggestions.isEnabled = shouldBeActive
+        if presentationChanged {
+            scheduleAsynchronousNameResize()
+        }
         guard shouldBeActive != (smart != nil) else { return }
 
         guard shouldBeActive else {
@@ -434,29 +441,25 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             Task { @MainActor in self?.rebuildEdgeStrips() }
         }
 
-        // During a drag, advertise and reveal the shelf's established dock. Choosing a
-        // target from the drag's starting point made screenshot drags (which begin in
+        // During a longer drag, advertise the established dock as a reminder. Choosing
+        // a target from the drag's starting point made screenshot drags (which begin in
         // the lower-right corner) pull a left-docked shelf across the screen.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
             self.setDragActive(active)
             if active {
-                if self.usesEdgeDock {
-                    self.showHomeTab()
-                } else {
-                    self.setTabsShown(false)
-                }
+                self.beginEdgeTabReminder()
                 if self.usesEdgeDock, self.revealOnDragStart {
                     self.revealForDrag()
                 }
             } else {
-                self.setTabsShown(false)
+                self.endEdgeTabReminder()
                 self.dragDidEnd()
             }
         }
         mouseMonitor.onDragMoved = { [weak self] _ in
             guard let self else { return }
-            if self.usesEdgeDock {
+            if self.usesEdgeDock, self.edgeTabReminderVisible {
                 self.showHomeTab()
             } else {
                 self.setTabsShown(false)
@@ -558,16 +561,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.scheduleAsynchronousNameResize()
             }
 
-        // Both Smart Perch switches live in UserDefaults (written by the settings pane's
-        // @AppStorage, like every other toggle). The master one builds or tears the
-        // feature down; the other only mirrors into the presentation stores so flipping
-        // it re-renders the rows immediately.
+        // The Smart Perch switch lives in UserDefaults, like every other toggle. It
+        // builds or tears down the complete feature whenever the setting changes.
         smartPerchEnabledCancellable = NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.reconcileSmartPerchFeature()
-                self?.applySmartPerchEnabled()
             }
 
         // A learned route reserves a second trailing slot, so the card's width follows
@@ -603,17 +603,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.panel.hasShadow = shows
             }
 
-        // Flipping the edge tab off mid-drag must fade the handle out right away (and
-        // flipping it on must bring it back), so reconcile against the live drag state.
-        // Deferred to the next main pass because @Published emits before the new value
-        // is stored, and `showHomeTab`/`setTabsShown` read it.
+        // Flipping the edge tab off mid-drag hides it right away. Turning it back on
+        // starts a fresh reminder delay instead of flashing the tab immediately.
         edgeTabCancellable = themeStore.$showsEdgeTab
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 guard let self else { return }
                 if self.dragActive {
-                    self.showHomeTab()
+                    self.beginEdgeTabReminder()
                 } else {
                     self.setTabsShown(false)
                 }
@@ -904,23 +902,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
         smart.didFileAtSuggestedRoute(filing)
-    }
-
-    /// Push the "Show suggestions" switch into the presentation stores. Learning keeps
-    /// running while it is off, so turning it on shows what was learned in the meantime.
-    /// The master switch is a different question — it decides whether Smart Perch was
-    /// built at all, and is handled where the feature is constructed.
-    private func applySmartPerchEnabled() {
-        let showsSuggestions = SmartPerchSettings.showsSuggestions
-        guard showsSuggestions != smartNames.isEnabled
-                || showsSuggestions != routeSuggestions.isEnabled
-        else {
-            // Any defaults write wakes this observer; only a real change costs a re-fit.
-            return
-        }
-        smartNames.isEnabled = showsSuggestions
-        routeSuggestions.isEnabled = showsSuggestions
-        scheduleAsynchronousNameResize()
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -1269,6 +1250,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    private func beginEdgeTabReminder() {
+        edgeTabReminderTask?.cancel()
+        edgeTabReminderVisible = false
+        setTabsShown(false)
+        guard usesEdgeDock, themeStore.showsEdgeTab else { return }
+
+        edgeTabReminderTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(1200))
+            } catch {
+                return
+            }
+            guard let self, self.dragActive, self.usesEdgeDock else { return }
+            self.edgeTabReminderVisible = true
+            self.showHomeTab()
+        }
+    }
+
+    private func endEdgeTabReminder() {
+        edgeTabReminderTask?.cancel()
+        edgeTabReminderTask = nil
+        edgeTabReminderVisible = false
+        setTabsShown(false)
+    }
+
     private func setDragActive(_ active: Bool) {
         dragActive = active
         // A retract scheduled just before the drag pasteboard became active must not
@@ -1503,10 +1509,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// free also gets a chance to re-dock at any enabled edge.
     private func shelfDragDidEnd() {
         if revealMode == .free {
-            guard snapBackToEdgesEnabled else {
-                clearDockSnapPreview()
-                return
-            }
             let target = refreshedPreviewedDockTarget() ?? nearestDockSnapTarget()
             if let target {
                 snapFreeShelf(to: target)
@@ -1660,7 +1662,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Reveal the exact landing frame while a free shelf is inside the snap radius.
     /// Moving away or dragging a still-docked shelf removes the preview immediately.
     private func updateDockSnapPreview() {
-        guard revealMode == .free, snapBackToEdgesEnabled else {
+        guard revealMode == .free else {
             clearDockSnapPreview()
             return
         }

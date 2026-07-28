@@ -19,6 +19,7 @@ final class SmartPerchDataRemovalTests: XCTestCase {
         defaults.set(true, forKey: "Perch.SmartPerchEnabled")
         defaults.set(false, forKey: "Perch.SmartPerchShowsSuggestions")
         defaults.set(true, forKey: "Perch.LabsUnlocked")
+        defaults.set(true, forKey: "Perch.ShowsLabels")
 
         SmartPerchDataRemoval.request(defaults: defaults, databaseURL: databaseURL)
 
@@ -29,6 +30,7 @@ final class SmartPerchDataRemovalTests: XCTestCase {
         XCTAssertFalse(defaults.bool(forKey: "Perch.SmartPerchEnabled"))
         XCTAssertNil(defaults.object(forKey: "Perch.SmartPerchShowsSuggestions"))
         XCTAssertFalse(defaults.bool(forKey: "Perch.LabsUnlocked"))
+        XCTAssertFalse(defaults.bool(forKey: "Perch.ShowsLabels"))
         XCTAssertTrue(defaults.bool(forKey: SmartPerchDataRemoval.pendingKey))
         for suffix in ["", "-wal", "-shm", "-journal"] {
             XCTAssertFalse(FileManager.default.fileExists(atPath: databaseURL.path + suffix))

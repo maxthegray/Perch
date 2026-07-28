@@ -6,6 +6,7 @@ enum SmartPerchDataRemoval {
     private static let enabledKey = "Perch.SmartPerchEnabled"
     private static let suggestionsKey = "Perch.SmartPerchShowsSuggestions"
     private static let paneUnlockedKey = "Perch.LabsUnlocked"
+    private static let showsLabelsKey = "Perch.ShowsLabels"
 
     static func request(
         defaults: UserDefaults = .standard,
@@ -16,6 +17,7 @@ enum SmartPerchDataRemoval {
         defaults.set(false, forKey: enabledKey)
         defaults.removeObject(forKey: suggestionsKey)
         defaults.set(false, forKey: paneUnlockedKey)
+        defaults.set(false, forKey: showsLabelsKey)
         defaults.set(true, forKey: pendingKey)
 
         if let databaseURL = databaseURL ?? defaultDatabaseURL(fileManager: fileManager) {

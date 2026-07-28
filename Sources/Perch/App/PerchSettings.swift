@@ -48,9 +48,6 @@ enum PerchSettings {
     /// A free-floating shelf stays put (as the empty drop tile) after its last item
     /// leaves, instead of dismissing itself. Defaults on.
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
-    /// Releasing a free shelf near an enabled dock previews the target and snaps it back
-    /// into ordinary edge behavior. Defaults on.
-    static let snapBackToEdges = "Perch.SnapBackToEdges"
     /// Offer recently downloaded files as ghost rows.
     static let offerRecentArrivals = "Perch.OfferRecentArrivals"
 
@@ -63,9 +60,6 @@ enum PerchSettings {
     /// Master switch for Smart Perch. Off means the feature is never built: no database,
     /// no OCR, nothing recorded.
     static let smartPerchEnabled = "Perch.SmartPerchEnabled"
-    /// Whether Smart Perch displays what it has learned. Only meaningful while the master
-    /// switch is on; off means it keeps learning with nothing on screen.
-    static let smartPerchShowsSuggestions = "Perch.SmartPerchShowsSuggestions"
     /// Whether the Labs pane is visible at all. Off until the user asks for it.
     static let labsUnlocked = "Perch.LabsUnlocked"
 

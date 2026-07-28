@@ -26,23 +26,6 @@ final class SmartPerchToggleTests: XCTestCase {
         XCTAssertNil(store.suggestion(for: itemID))
     }
 
-    /// The generated name is kept, not discarded, so switching Smart Perch back on
-    /// shows what was learned while it was off rather than re-running Vision.
-    func testGeneratedNamesSurviveBeingHiddenAndReappearOnReenable() {
-        let store = SmartNameStore()
-        let itemID = UUID()
-        store.set(suggestion(for: itemID))
-
-        store.isEnabled = false
-        XCTAssertNil(store.suggestion(for: itemID))
-
-        store.isEnabled = true
-        XCTAssertEqual(
-            store.presentation(for: itemID, originalTitle: "Ignored.png").title,
-            "Terminal — Perch"
-        )
-    }
-
     func testDisabledSmartPerchWithholdsLearnedRoutesWithoutForgettingThem() {
         let store = RouteSuggestionStore()
         let itemID = UUID()
@@ -117,17 +100,6 @@ final class SmartPerchToggleTests: XCTestCase {
             let unopenable = URL(fileURLWithPath: "/dev/null/perch-smart.sqlite")
             XCTAssertNil(makeFeature(databaseURL: unopenable))
         }
-    }
-
-    /// "Show suggestions" is the *other* switch: learning keeps running, the shelf just
-    /// stops displaying it. This is what the single old toggle did silently.
-    func testShowSuggestionsDefaultsOnSoTurningSmartPerchOnShowsItsWork() {
-        let defaults = UserDefaults.standard
-        let previous = defaults.object(forKey: PerchSettings.smartPerchShowsSuggestions)
-        defaults.removeObject(forKey: PerchSettings.smartPerchShowsSuggestions)
-        defer { defaults.set(previous, forKey: PerchSettings.smartPerchShowsSuggestions) }
-
-        XCTAssertTrue(SmartPerchSettings.showsSuggestions)
     }
 
     /// Ships off: a shelf is a shelf until the user asks for more.

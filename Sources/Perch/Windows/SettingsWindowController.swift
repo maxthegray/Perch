@@ -138,7 +138,7 @@ final class SettingsWindowController {
         guard existing == nil else { return }
         addPane(
             to: tabs, label: Self.labsPaneLabel, symbol: "sparkles",
-            size: NSSize(width: 560, height: 380),
+            size: NSSize(width: 560, height: 330),
             view: LabsSettingsPane(themeStore: themeStore)
         )
     }

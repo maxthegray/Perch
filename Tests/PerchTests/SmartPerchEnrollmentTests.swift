@@ -9,7 +9,7 @@ final class SmartPerchEnrollmentTests: XCTestCase {
         SmartPerchEnrollment.completeIfPending(defaults: defaults)
 
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchEnabled))
-        XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchShowsSuggestions))
+        XCTAssertTrue(defaults.bool(forKey: PerchSettings.showsLabels))
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.labsUnlocked))
         XCTAssertNil(defaults.object(forKey: UpdateTrackStore.smartEnrollmentPendingKey))
     }

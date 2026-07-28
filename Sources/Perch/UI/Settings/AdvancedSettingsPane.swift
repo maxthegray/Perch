@@ -22,7 +22,7 @@ struct AdvancedSettingsPane: View {
             switch self {
             case .look: return 440
             case .behavior: return 720
-            case .docking: return 450
+            case .docking: return 380
             }
         }
     }
@@ -36,7 +36,6 @@ struct AdvancedSettingsPane: View {
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = true
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
-    @AppStorage(PerchSettings.snapBackToEdges) private var snapBackToEdges = true
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
 
@@ -161,12 +160,6 @@ struct AdvancedSettingsPane: View {
             }
 
             SwiftUI.Section("Snapping") {
-                behaviorRow(
-                    demo: .moveShelf,
-                    title: "Snap to locations",
-                    caption: "Release a free shelf near an enabled screen edge or Dock side.",
-                    isOn: $snapBackToEdges
-                )
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Beside the Dock")

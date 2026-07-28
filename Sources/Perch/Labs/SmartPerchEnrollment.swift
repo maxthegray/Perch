@@ -7,7 +7,7 @@ enum SmartPerchEnrollment {
         }
 
         defaults.set(true, forKey: PerchSettings.smartPerchEnabled)
-        defaults.set(true, forKey: PerchSettings.smartPerchShowsSuggestions)
+        defaults.set(true, forKey: PerchSettings.showsLabels)
         defaults.set(true, forKey: PerchSettings.labsUnlocked)
         defaults.removeObject(forKey: UpdateTrackStore.smartEnrollmentPendingKey)
     }

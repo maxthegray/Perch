@@ -10,7 +10,6 @@ struct LabsSettingsPane: View {
     @ObservedObject var themeStore: ThemeStore
 
     @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = false
-    @AppStorage(PerchSettings.smartPerchShowsSuggestions) private var showsSuggestions = true
     @State private var showsUninstallConfirmation = false
 
     var body: some View {
@@ -29,31 +28,10 @@ struct LabsSettingsPane: View {
                         .labelsHidden()
                 }
                 .padding(.vertical, 2)
-                // Generated names are invisible on an icons-only shelf, so switching
-                // Smart Perch on reveals the labels that show its work. This fires on
-                // the transition only: "Show names" can be turned straight back off and
-                // will stay off, and switching Smart Perch off never hides labels the
-                // user asked for.
+                // Smart Names need labels, so the master switch controls both together.
                 .onChange(of: smartPerchEnabled) { _, enabled in
-                    if enabled {
-                        themeStore.showsLabels = true
-                    }
+                    themeStore.showsLabels = enabled
                 }
-
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Show suggestions")
-                        Text("Turn this off to keep learning without showing suggestions.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("Show suggestions", isOn: $showsSuggestions)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                }
-                .padding(.vertical, 2)
-                .disabled(!smartPerchEnabled)
             }
 
             Section {
