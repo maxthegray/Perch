@@ -921,7 +921,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         edgeTabReminderTask = Task { @MainActor [weak self] in
             do {
-                try await Task.sleep(for: .milliseconds(1200))
+                try await Task.sleep(for: .seconds(5))
             } catch {
                 return
             }
