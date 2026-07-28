@@ -6,6 +6,10 @@ import SwiftUI
 /// window also activates the app so it can come forward and accept focus.
 @MainActor
 final class SettingsWindowController {
+    /// The pane that carries the appearance controls, and therefore the one that summons
+    /// the live preview shelf.
+    private static let advancedPaneLabel = "Advanced"
+
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
     private var window: NSWindow?
@@ -41,7 +45,7 @@ final class SettingsWindowController {
         tabs.tabStyle = .toolbar
         tabs.onPaneSelected = { [weak self] label in
             guard let self else { return }
-            if label == "Appearance" {
+            if label == Self.advancedPaneLabel {
                 guard let frame = self.window?.frame else { return }
                 self.onAppearancePaneSelected?(frame)
             } else {
@@ -51,18 +55,18 @@ final class SettingsWindowController {
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 560, height: 200),
-            view: GeneralSettingsPane()
+            size: NSSize(width: 560, height: 340),
+            view: GeneralSettingsPane(edgeSettings: edgeSettings)
         )
         addPane(
-            to: tabs, label: "Appearance", symbol: "paintbrush",
-            size: NSSize(width: 560, height: 330),
-            view: AppearanceSettingsPane(themeStore: themeStore)
+            to: tabs, label: Self.advancedPaneLabel, symbol: "slider.horizontal.3",
+            size: NSSize(width: 560, height: 820),
+            view: AdvancedSettingsPane(themeStore: themeStore)
         )
         addPane(
-            to: tabs, label: "Behavior", symbol: "cursorarrow.motionlines",
-            size: NSSize(width: 560, height: 660),
-            view: BehaviorSettingsPane(themeStore: themeStore, edgeSettings: edgeSettings)
+            to: tabs, label: "Labs", symbol: "flask",
+            size: NSSize(width: 560, height: 300),
+            view: LabsSettingsPane(themeStore: themeStore)
         )
 
         let window = NSWindow(contentViewController: tabs)
@@ -85,12 +89,12 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Reopening the window on a still-selected Appearance tab must re-summon the
+    /// Reopening the window on a still-selected Advanced tab must re-summon the
     /// preview shelf; tab-switch callbacks alone would miss it.
     private func notifyIfAppearanceSelected() {
         guard let window, let tabs = window.contentViewController as? NSTabViewController,
               tabs.tabViewItems.indices.contains(tabs.selectedTabViewItemIndex),
-              tabs.tabViewItems[tabs.selectedTabViewItemIndex].label == "Appearance"
+              tabs.tabViewItems[tabs.selectedTabViewItemIndex].label == Self.advancedPaneLabel
         else { return }
         onAppearancePaneSelected?(window.frame)
     }
