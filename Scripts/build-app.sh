@@ -47,6 +47,14 @@ else
   echo "  (no Resources/AppIcon.icns -- run 'swift Scripts/make-icon.swift' for a custom icon)"
 fi
 
+# SwiftPM resource bundle containing GRDB's privacy manifest.
+GRDB_RESOURCES=".build/${CONFIG}/GRDB_GRDB.bundle"
+if [ -d "${GRDB_RESOURCES}" ]; then
+  cp -R "${GRDB_RESOURCES}" "${APP}/Contents/Resources/"
+else
+  echo "  WARNING: ${GRDB_RESOURCES} not found -- GRDB privacy resources are missing"
+fi
+
 # Embed Sparkle.framework for auto-updates. The binary already carries an rpath to
 # @executable_path/../Frameworks (set in Package.swift).
 FRAMEWORK=".build/${CONFIG}/Sparkle.framework"
