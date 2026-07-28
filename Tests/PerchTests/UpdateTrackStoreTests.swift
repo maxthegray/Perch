@@ -28,6 +28,18 @@ final class UpdateTrackStoreTests: XCTestCase {
         XCTAssertTrue(defaults.bool(forKey: UpdateTrackStore.smartEnrollmentPendingKey))
     }
 
+    func testLeavingSmartBuildSelectsStandardFeedAndClearsPendingEnrollment() {
+        let defaults = makeDefaults()
+        let store = UpdateTrackStore(defaults: defaults, bundledTrack: .smart)
+        store.enrollInSmartPerch()
+
+        store.leaveSmartPerch()
+
+        XCTAssertEqual(store.selectedTrack, .standard)
+        XCTAssertEqual(store.feedURLString, UpdateTrackStore.standardFeedURL)
+        XCTAssertNil(defaults.object(forKey: UpdateTrackStore.smartEnrollmentPendingKey))
+    }
+
     private func makeDefaults() -> UserDefaults {
         let suite = "UpdateTrackStoreTests-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!

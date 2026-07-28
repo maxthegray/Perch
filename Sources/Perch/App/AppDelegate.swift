@@ -4,6 +4,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: ShelfController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        SmartPerchDataRemoval.completeIfPending()
         SmartPerchEnrollment.completeIfPending()
         do {
             let controller = try ShelfController()

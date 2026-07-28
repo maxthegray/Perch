@@ -35,6 +35,12 @@ final class Updater: NSObject, SPUUpdaterDelegate {
         controller.checkForUpdates(nil)
     }
 
+    func leaveSmartPerchAndDeleteData() {
+        SmartPerchDataRemoval.request(defaults: trackStore.defaults)
+        controller.updater.resetUpdateCycle()
+        controller.updater.checkForUpdatesInBackground()
+    }
+
     func feedURLString(for updater: SPUUpdater) -> String? {
         trackStore.feedURLString
     }
