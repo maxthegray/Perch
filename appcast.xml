@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Smart Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/smart-v0.8.3/Perch-Smart.zip</link>
-    <description>Auto-update feed for Smart Perch.</description>
+    <title>Perch</title>
+    <link>https://github.com/maxthegray/Perch/releases/download/v0.9.0/Perch.zip</link>
+    <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 0.8.3</title>
-      <pubDate>Tue, 28 Jul 2026 15:53:01 +0000</pubDate>
-      <sparkle:version>80031</sparkle:version>
-      <sparkle:shortVersionString>0.8.3</sparkle:shortVersionString>
+      <title>Version 0.9.0</title>
+      <pubDate>Tue, 28 Jul 2026 19:20:01 +0000</pubDate>
+      <sparkle:version>90000</sparkle:version>
+      <sparkle:shortVersionString>0.9.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/smart-v0.8.3/Perch-Smart.zip" sparkle:edSignature="5ldSx4pR4zhFhHLadFYariqTZhFo/f6iu7FVx4MoBcG7k4pPclZ3P3yE0HApK07912CauX8zxDxa9+3Z30iEBw==" length="3859690" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v0.9.0/Perch.zip" sparkle:edSignature="lYsanc34/GE/0tjhVxt5VLDgowBdmwRP5Mn3LQ/DgQxAIc9Z1R1vNa5+ZNKqGZvmL60LAj7zqXFiD4MWSKA+DA==" length="3868430" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
