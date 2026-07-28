@@ -1470,10 +1470,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         // Ghost rows hide for the drag's duration so the drop geometry never shifts
         // under the cursor.
-        arrivals.suppressed = active
-        if store.items.isEmpty {
-            measuredContentHeight = nil
-        }
+        setArrivalsSuppressed(active)
         hostView.setDropTarget(active)
         // The drag ended somewhere off the shelf; make sure the outline is cleared even
         // if no draggingExited arrived.
@@ -1483,6 +1480,23 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Keep the panel frame fixed for the whole gesture. In particular, hiding
         // recent-arrival rows must not stack a resize onto the reveal animation.
         // `dragDidEnd` performs one reconciled resize after the visibility hold ends.
+    }
+
+    /// Hide (or restore) the ghost rows for a drag. Offers left over from a reveal the
+    /// user ignored are still in the model when the shelf retracts, so a drag that
+    /// re-reveals the shelf is sized while they are on their way out: the last measured
+    /// height still counts them, and it *wins* over the estimate in `fittedContentHeight`
+    /// because it is the larger of the two — the card would open at the ghosts' height
+    /// and then snap down mid-reveal. Drop the measurement whenever suppression actually
+    /// changes what is on the shelf. (The rows themselves leave without animating; see
+    /// ShelfContentView's ghost animation.)
+    private func setArrivalsSuppressed(_ suppressed: Bool) {
+        let changesGhostVisibility = arrivals.suppressed != suppressed
+            && !arrivals.visibleGhosts.isEmpty
+        if changesGhostVisibility || store.items.isEmpty {
+            measuredContentHeight = nil
+        }
+        arrivals.suppressed = suppressed
     }
 
     /// Show only the tab belonging to the shelf's established dock. The pointer may

@@ -231,7 +231,8 @@ struct ShelfContentView: View {
                         .background(heightReader(addingGrabberStrip: grabberHeight))
                     }
                 }
-                .animation(.easeOut(duration: 0.18), value: ghostRows)
+                .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+                .animation(nil, value: arrivals.suppressed)
                 .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
@@ -268,6 +269,19 @@ struct ShelfContentView: View {
     /// never shift the drop geometry under the cursor.
     private var ghostRows: [ArrivalGhost] {
         arrivals.suppressed ? [] : arrivals.visibleGhosts
+    }
+
+    /// Ghosts arriving and leaving animate; being suppressed for a drag does not — hence
+    /// keying on the offers rather than on `ghostRows`. Suppression is a geometry freeze,
+    /// and the shelf is usually *hidden* when it flips (a drag re-reveals a shelf whose
+    /// ignored offers are still in the model): fading rows out over 0.18s inside a window
+    /// that is fading in over 0.30s is what made the reveal look like it glitched.
+    /// It is paired at every ghost site with `.animation(nil, value: arrivals.suppressed)`:
+    /// the drag-start update also flips `isDropTarget`, and the card-level animation keyed
+    /// on *that* would animate the rows away on suppression's behalf. A nil animation on
+    /// this subtree overrides the ancestor for that one update.
+    private var ghostAnimationValue: [ArrivalGhost] {
+        arrivals.visibleGhosts
     }
 
     /// The dimmed recent-arrival rows. They follow real rows on a populated shelf and
@@ -311,7 +325,8 @@ struct ShelfContentView: View {
                 ghostStack
             }
         }
-        .animation(.easeOut(duration: 0.18), value: ghostRows)
+        .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+        .animation(nil, value: arrivals.suppressed)
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         // One transaction drives both the row fade and the layout: a spring while a
@@ -373,7 +388,8 @@ struct ShelfContentView: View {
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: contentHeight, alignment: .top)
-        .animation(.easeOut(duration: 0.18), value: ghostRows)
+        .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+        .animation(nil, value: arrivals.suppressed)
         .animation(
             interaction.previewOrder != nil
                 ? .spring(response: 0.34, dampingFraction: 0.86)
