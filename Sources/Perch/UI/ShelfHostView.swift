@@ -1338,13 +1338,22 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(settings)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(title: "Quit Perch", action: #selector(quitAction(_:)), keyEquivalent: "")
+        let productName = UpdateTrackStore().displayName
+        let quit = NSMenuItem(
+            title: "quit \(productName)",
+            action: #selector(quitAction(_:)),
+            keyEquivalent: ""
+        )
         quit.target = self
         menu.addItem(quit)
 
         menu.addItem(.separator())
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
-        let about = NSMenuItem(title: "Perch \(version)", action: nil, keyEquivalent: "")
+        let about = NSMenuItem(
+            title: "\(productName) \(version)",
+            action: nil,
+            keyEquivalent: ""
+        )
         about.isEnabled = false
         menu.addItem(about)
 
@@ -1358,7 +1367,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         case let .summary(session, .addAll):
             return "Add All \(session.offers.count) Downloads"
         case .offer:
-            return "Add to Perch"
+            return "add to \(UpdateTrackStore().displayName)"
         }
     }
 

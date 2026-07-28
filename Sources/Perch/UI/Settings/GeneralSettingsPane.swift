@@ -48,7 +48,7 @@ struct GeneralSettingsPane: View {
             }
 
             Section {
-                LabeledContent("Version", value: appVersion)
+                LabeledContent("version", value: "\(productName) \(appVersion)")
                     // The way into Labs. Deliberately undiscoverable: nothing about the
                     // row suggests it, and the count resets whenever the pane goes away.
                     .contentShape(Rectangle())
@@ -88,5 +88,9 @@ struct GeneralSettingsPane: View {
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+    }
+
+    private var productName: String {
+        UpdateTrackStore().displayName
     }
 }

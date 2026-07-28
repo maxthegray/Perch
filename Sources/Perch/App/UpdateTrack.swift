@@ -39,6 +39,10 @@ struct UpdateTrackStore {
         }
     }
 
+    var displayName: String {
+        selectedTrack == .smart ? "smart perch" : "Perch"
+    }
+
     func enrollInSmartPerch() {
         defaults.set(PerchUpdateTrack.smart.rawValue, forKey: Self.selectionKey)
         defaults.set(true, forKey: Self.smartEnrollmentPendingKey)

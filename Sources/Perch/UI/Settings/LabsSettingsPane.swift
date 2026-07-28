@@ -11,6 +11,7 @@ struct LabsSettingsPane: View {
 
     @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = false
     @AppStorage(PerchSettings.smartPerchShowsSuggestions) private var showsSuggestions = true
+    @State private var showsUninstallConfirmation = false
 
     var body: some View {
         Form {
@@ -66,11 +67,34 @@ struct LabsSettingsPane: View {
                     Button("hide smart perch") { hideLabs() }
                     Text("turns it off and tucks this tab away. it keeps what it already learned. click the version in general five times if you want it back.")
                         .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            }
+
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("uninstall smart perch", role: .destructive) {
+                        showsUninstallConfirmation = true
+                    }
+                    Text("switches back to regular perch and permanently deletes everything smart perch learned. your shelf stays exactly where it is.")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
+        .alert("leave smart perch?", isPresented: $showsUninstallConfirmation) {
+            Button("uninstall + delete everything", role: .destructive) {
+                Updater.shared.leaveSmartPerchAndDeleteData()
+            }
+            Button("never mind", role: .cancel) {}
+        } message: {
+            Text(
+                "this turns smart perch off, leaves the smart update track, and deletes "
+                    + "its database from this mac. your shelf items and regular perch "
+                    + "settings won't be touched."
+            )
+        }
     }
 
     /// Off first, then hide. The other order would leave Smart Perch running behind a tab

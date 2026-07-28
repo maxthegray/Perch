@@ -15,6 +15,7 @@ final class UpdateTrackStoreTests: XCTestCase {
         let store = UpdateTrackStore(defaults: defaults, bundledTrack: .smart)
 
         XCTAssertEqual(store.selectedTrack, .smart)
+        XCTAssertEqual(store.displayName, "smart perch")
         XCTAssertEqual(store.feedURLString, UpdateTrackStore.smartFeedURL)
     }
 
@@ -36,6 +37,7 @@ final class UpdateTrackStoreTests: XCTestCase {
         store.leaveSmartPerch()
 
         XCTAssertEqual(store.selectedTrack, .standard)
+        XCTAssertEqual(store.displayName, "Perch")
         XCTAssertEqual(store.feedURLString, UpdateTrackStore.standardFeedURL)
         XCTAssertNil(defaults.object(forKey: UpdateTrackStore.smartEnrollmentPendingKey))
     }
