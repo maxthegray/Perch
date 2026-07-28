@@ -34,6 +34,7 @@ final class FilePromiseMaterializer {
     func materialize(
         _ receivers: [NSFilePromiseReceiver],
         into filesDir: URL,
+        lateDelivery: @escaping (URL) -> Void,
         completion: @escaping ([URL]) -> Void
     ) {
         // One reader callback per promised file. A receiver with an empty `fileTypes`
@@ -65,10 +66,16 @@ final class FilePromiseMaterializer {
         let finish: (String?) -> Void = { reason in
             guard !state.finished else { return }
             state.finished = true
+            var delivered = state.urls
             if let reason {
-                NSLog("Perch promise materialization \(reason); storing \(state.urls.count) delivered file(s)")
+                // A receiver that never called back may still have written its file.
+                // Adopt whatever actually landed, or those bytes sit in the item's
+                // `files/` directory with no entry in `backingFileNames` — invisible
+                // to the shelf and unreachable by every vend path.
+                delivered = Self.includingUnreportedFiles(in: filesDir, alreadyDelivered: delivered)
+                NSLog("Perch promise materialization \(reason); storing \(delivered.count) delivered file(s)")
             }
-            completion(state.urls)
+            completion(delivered)
         }
 
         for receiver in receivers where !receiver.fileTypes.isEmpty {
@@ -78,7 +85,14 @@ final class FilePromiseMaterializer {
                 operationQueue: queue
             ) { fileURL, error in
                 if error == nil {
-                    state.urls.append(fileURL)
+                    if state.finished {
+                        // The timeout already completed the drop. Surface this file
+                        // separately so the caller can append it to the now-visible
+                        // shelf item instead of leaving invisible bytes behind.
+                        lateDelivery(fileURL)
+                    } else {
+                        state.urls.append(fileURL)
+                    }
                 }
 
                 state.remaining -= 1
@@ -95,5 +109,54 @@ final class FilePromiseMaterializer {
                 finish("timed out")
             }
         }
+    }
+
+    /// `alreadyDelivered` plus any other file already sitting in `filesDir` when the
+    /// timeout fires. A later successful callback travels through `lateDelivery`.
+    private static func includingUnreportedFiles(
+        in filesDir: URL,
+        alreadyDelivered: [URL]
+    ) -> [URL] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: filesDir,
+            includingPropertiesForKeys: nil,
+            options: .skipsHiddenFiles
+        ) else { return alreadyDelivered }
+
+        let deliveredNames = Set(alreadyDelivered.map(\.lastPathComponent))
+        return alreadyDelivered + entries.filter {
+            !deliveredNames.contains($0.lastPathComponent)
+        }
+    }
+}
+
+/// Orders the materializer's initial completion and late-delivery callbacks after
+/// both hop from its operation queue to the main actor. An early late-delivery task
+/// can run before the initial-completion task, so it waits here and joins that first
+/// batch; later files can be appended to the already-visible item immediately.
+@MainActor
+final class PromiseMaterializationReconciler {
+    private var handledInitialCompletion = false
+    private var queuedLateURLs: [URL] = []
+
+    func reconcileInitial(_ urls: [URL]) -> [URL] {
+        handledInitialCompletion = true
+        defer { queuedLateURLs.removeAll() }
+        return Self.removingDuplicatePaths(from: urls + queuedLateURLs)
+    }
+
+    /// Nil means the initial completion has not reached the main actor yet, so this
+    /// URL was queued and will be returned by `reconcileInitial(_:)`.
+    func reconcileLate(_ url: URL) -> URL? {
+        guard handledInitialCompletion else {
+            queuedLateURLs.append(url)
+            return nil
+        }
+        return url
+    }
+
+    private static func removingDuplicatePaths(from urls: [URL]) -> [URL] {
+        var seenPaths: Set<String> = []
+        return urls.filter { seenPaths.insert($0.standardizedFileURL.path).inserted }
     }
 }

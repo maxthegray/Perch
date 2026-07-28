@@ -24,38 +24,54 @@ struct ItemRowView: View {
     let showsSeparator: Bool
     /// When false, the name/subtitle are hidden and the row shows just a centered icon.
     let showsLabels: Bool
-    /// An origin → destination provenance breadcrumb, shown in place of the type
-    /// subtitle when the item's travel is known; nil falls back to the type label.
-    let breadcrumb: String?
+    /// The populated shelf hugs its widest title; every row then fills that compact
+    /// width so the stack has clean, consistent left and right edges.
+    let maximumWidth: CGFloat
+    /// Presentation title selected by SmartNameStore. Screenshot rows begin with a
+    /// generic label and later crossfade to the generated name in the same geometry.
+    let displayTitle: String
+    let isNameAnalysisPending: Bool
+    /// Short name of the folder this item has repeatedly been dragged to, if Perch has
+    /// learned one. Its presence adds the file-it button and the destination subtitle.
+    let learnedDestinationName: String?
 
     var body: some View {
-        HStack(spacing: showsLabels ? 10 : 0) {
+        HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
             icon
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(item.metadata.title)
+                    Text(displayTitle)
                         .font(.system(size: theme.titleSize, weight: theme.titleWeight))
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .contentTransition(.opacity)
 
+                    // Keep this line present before and after analysis. Removing it when
+                    // the Smart Name arrived made the title jump vertically even when
+                    // the outer card width was held steady.
                     if theme.showsSubtitle {
-                        Text(breadcrumb ?? subtitle)
+                        Text(displayedSubtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .contentTransition(.opacity)
                     }
                 }
-
-                Spacer(minLength: 0)
             }
         }
-        .padding(.horizontal, showsLabels ? 10 : 0)
+        .padding(
+            .horizontal,
+            showsLabels ? RowMetrics.labeledRowHorizontalPadding : 0
+        )
         .frame(
-            maxWidth: .infinity,
+            width: rowWidth,
+            alignment: showsLabels ? .leading : .center
+        )
+        .frame(
             minHeight: theme.rowHeight,
             maxHeight: theme.rowHeight,
             alignment: showsLabels ? .leading : .center
@@ -65,7 +81,7 @@ struct ItemRowView: View {
                 .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? theme.rowHoverFill : theme.rowFill))
         )
         .overlay(alignment: .bottom) { separator }
-        .overlay(alignment: .trailing) { deleteButton }
+        .overlay(alignment: .trailing) { trailingActions }
         .contentShape(Rectangle())
         .scaleEffect(isDeleting ? 1.06 : (isDragging ? 1.03 : 1))
         .shadow(color: .black.opacity(isDragging ? 0.25 : 0), radius: 6, y: 3)
@@ -74,8 +90,15 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.13), value: isSelected)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
+        .animation(.easeOut(duration: 0.18), value: displayTitle)
+        .animation(.easeOut(duration: 0.18), value: learnedDestinationName)
+        .animation(.easeOut(duration: 0.18), value: isNameAnalysisPending)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
+    }
+
+    private var rowWidth: CGFloat {
+        maximumWidth
     }
 
     /// A real preview is shown as a small rounded "photo" tile; a generic file icon is
@@ -116,21 +139,40 @@ struct ItemRowView: View {
         }
     }
 
+    /// The file-it button sits inboard of the delete button, so the destructive action
+    /// keeps the corner position muscle memory already points at.
     @ViewBuilder
-    private var deleteButton: some View {
+    private var trailingActions: some View {
         if theme.showsDeleteButton && showsLabels && isHovered {
-            ZStack {
-                Circle().fill(.thinMaterial)
-                Circle().stroke(.white.opacity(0.18), lineWidth: 0.5)
-                Image(systemName: "xmark")
-                    .font(.system(size: 8, weight: .bold))
-                    .foregroundStyle(.secondary)
+            HStack(spacing: RowMetrics.trailingActionSpacing) {
+                if learnedDestinationName != nil {
+                    circularAction(symbol: "folder", isProminent: true)
+                }
+                circularAction(symbol: rowActionSymbol, isProminent: false)
             }
-            .frame(width: RowMetrics.deleteDiameter, height: RowMetrics.deleteDiameter)
-            .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
             .padding(.trailing, RowMetrics.deleteTrailingInset)
             .transition(.opacity.combined(with: .scale(scale: 0.6)))
         }
+    }
+
+    private func circularAction(symbol: String, isProminent: Bool) -> some View {
+        ZStack {
+            Circle().fill(.thinMaterial)
+            Circle().stroke(.white.opacity(0.18), lineWidth: 0.5)
+            Image(systemName: symbol)
+                .font(.system(size: 8.5, weight: .semibold))
+                .foregroundStyle(isProminent ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+        }
+        .frame(width: RowMetrics.deleteDiameter, height: RowMetrics.deleteDiameter)
+        .shadow(color: .black.opacity(0.18), radius: 2, y: 1)
+    }
+
+    /// Files whose origin is known really go back when clicked, so show a return
+    /// arrow. Clippings/promises have no place to return and are removed, retaining ✕.
+    private var rowActionSymbol: String {
+        item.metadata.originPaths?.isEmpty == false
+            ? "arrow.uturn.backward"
+            : "xmark"
     }
 
     private var subtitle: String {
@@ -145,5 +187,17 @@ struct ItemRowView: View {
             return description.capitalized
         }
         return "Clipping"
+    }
+
+    /// The learned destination replaces the file-type line: where this is going is more
+    /// useful than what it is, and the row has room for exactly one of them.
+    private var displayedSubtitle: String {
+        if isNameAnalysisPending {
+            return "Finding a useful name…"
+        }
+        if let learnedDestinationName {
+            return "→ \(learnedDestinationName)"
+        }
+        return subtitle
     }
 }

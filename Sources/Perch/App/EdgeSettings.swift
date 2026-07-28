@@ -8,7 +8,7 @@ import Foundation
 /// become unreachable.
 @MainActor
 final class EdgeSettings: ObservableObject {
-    private static let key = "Perch.EnabledEdges"
+    private static let key = PerchSettings.enabledEdges
 
     /// Called after the selection changes (and has been persisted).
     var onChange: (() -> Void)?

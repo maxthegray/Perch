@@ -12,7 +12,7 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// Called when the drag session ends, with the operation the destination
     /// performed (empty == no drop) and whether it landed back on this Perch.
     /// Used to apply move semantics only after a real external landing.
-    var onEnded: ((NSDragOperation, Bool) -> Void)?
+    var onEnded: ((NSDragOperation, Bool, NSPoint, Date) -> Void)?
 
     /// Set when this drag lands back on the same Perch shelf. The destination accepts
     /// the drop so AppKit can finish normally, but the host restores the original rows
@@ -23,10 +23,12 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// movement. The host hops it back to the main actor to append to the ledger.
     var recordVend: (@Sendable (ProvenanceEntry) -> Void)?
 
-    /// Called off the main actor when a file-promise write fails after the drop landed
-    /// (e.g. the destination denied the write). The host puts the retired row back so
-    /// the item isn't silently lost.
-    var onWriteFailed: (@Sendable () -> Void)?
+    /// Called off the main actor when a file-promise write succeeds or fails, with the
+    /// item it belongs to. The host reconciles the result against the drag-ended
+    /// callback (`VendDeliveryTracker`) so a refused write puts exactly that row back,
+    /// and Smart Perch coordinates the same evidence into its route observation.
+    var onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
+    var onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
     init(items: [StoredItem]) {
         precondition(!items.isEmpty)
@@ -53,7 +55,12 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     /// the selection as distinct files rather than one compound pasteboard item.
     func draggingItems() -> [NSDraggingItem] {
         activeWriters = items.map {
-            StoredItemDragWriter(item: $0, recordVend: recordVend, onWriteFailed: onWriteFailed)
+            StoredItemDragWriter(
+                item: $0,
+                recordVend: recordVend,
+                onRouteWriteSucceeded: onRouteWriteSucceeded,
+                onRouteWriteFailed: onRouteWriteFailed
+            )
         }
         return zip(items, activeWriters).map { item, writer in
             let draggingItem = NSDraggingItem(pasteboardWriter: writer)
@@ -86,6 +93,6 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         endedAt screenPoint: NSPoint,
         operation: NSDragOperation
     ) {
-        onEnded?(operation, returnedToPerch)
+        onEnded?(operation, returnedToPerch, screenPoint, Date())
     }
 }

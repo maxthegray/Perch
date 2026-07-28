@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import SmartPerchCore
 import UniformTypeIdentifiers
 
 /// OFFER: surfaces files that just arrived in Downloads / Desktop as ghost rows.
@@ -18,14 +19,14 @@ import UniformTypeIdentifiers
 final class RecentArrivals: ObservableObject {
     /// Master switch, user-toggled from Behavior settings. Default on (an unset value
     /// reads as true) — the worst case is a few dim rows on an already-summoned shelf.
-    static let enabledKey = "Perch.OfferRecentArrivals"
+    static let enabledKey = PerchSettings.offerRecentArrivals
 
     static let window: TimeInterval = 15 * 60
     static let maxSessions = 3
     static let maxReveals = 3
 
-    private static let dismissedKey = "Perch.ArrivalDismissed"
-    private static let revealCountsKey = "Perch.ArrivalRevealCounts"
+    private static let dismissedKey = PerchSettings.arrivalDismissed
+    private static let revealCountsKey = PerchSettings.arrivalRevealCounts
     /// In-progress download artifacts that must never be offered.
     private static let partialExtensions: Set<String> = [
         "crdownload", "download", "part", "partial", "tmp"
@@ -33,6 +34,9 @@ final class RecentArrivals: ObservableObject {
 
     private(set) var sessions: [ArrivalSession] = []
     @Published private(set) var visibleGhosts: [ArrivalGhost] = []
+    /// Temporary presentation names for files that have not been adopted. The SQLite
+    /// event log remains untouched until an actual drop/adoption occurs.
+    @Published private(set) var smartNamesByPath: [String: String] = [:]
     /// True while a system drag is in flight: ghosts hide so they never shift the
     /// drop target under the cursor.
     @Published var suppressed = false
@@ -44,6 +48,10 @@ final class RecentArrivals: ObservableObject {
     /// Stable while any member remains visible, so adopting one file does not turn the
     /// rest of its session into a new behavioral batch.
     private var sessionIDByPath: [String: UUID] = [:]
+    private var sessionTotalCountByID: [UUID: Int] = [:]
+    /// A screenshot's desktop context is meaningful only at arrival time. Cache it by
+    /// path so later refreshes and a delayed ghost click reuse that original snapshot.
+    private var screenshotContextByPath: [String: ScreenshotCaptureContext] = [:]
     private var expandedSessionIDs: Set<UUID> = []
     /// Directory event sources stay alive for the lifetime of the app. Chrome writes a
     /// temporary `.crdownload` and then renames it, so directory-level events are the
@@ -100,6 +108,7 @@ final class RecentArrivals: ObservableObject {
         guard enabled else {
             sessions = []
             expandedSessionIDs = []
+            smartNamesByPath = [:]
             publishVisibleGhosts()
             return
         }
@@ -135,7 +144,12 @@ final class RecentArrivals: ObservableObject {
                 candidates.append(ArrivalOffer(
                     url: url,
                     addedAt: added,
-                    location: location
+                    location: location,
+                    screenshotCaptureContext: screenshotContext(
+                        for: url,
+                        addedAt: added,
+                        now: now
+                    )
                 ))
             }
         }
@@ -150,10 +164,19 @@ final class RecentArrivals: ObservableObject {
                 .first { !usedSessionIDs.contains($0) }
             let sessionID = existingID ?? UUID()
             usedSessionIDs.insert(sessionID)
+            let totalFileCount = max(
+                sessionTotalCountByID[sessionID, default: 0],
+                offers.count
+            )
+            sessionTotalCountByID[sessionID] = totalFileCount
             for offer in offers {
                 sessionIDByPath[offer.id] = sessionID
             }
-            return ArrivalSession(id: sessionID, offers: offers)
+            return ArrivalSession(
+                id: sessionID,
+                offers: offers,
+                totalFileCount: totalFileCount
+            )
         }
 
         if markRevealed, !suppressed {
@@ -164,6 +187,10 @@ final class RecentArrivals: ObservableObject {
         }
 
         sessions = fresh
+        let freshPaths = Set(fresh.flatMap(\.offers).map(\.id))
+        smartNamesByPath = smartNamesByPath.filter {
+            freshPaths.contains($0.key)
+        }
         expandedSessionIDs.formIntersection(
             Set(fresh.filter(\.isBatch).map(\.id))
         )
@@ -193,6 +220,26 @@ final class RecentArrivals: ObservableObject {
         publishVisibleGhosts()
     }
 
+    func smartName(for offer: ArrivalOffer) -> String? {
+        smartNamesByPath[offer.id]
+    }
+
+    func setSmartName(_ name: String, forPath path: String) {
+        guard sessions.contains(where: { session in
+            session.offers.contains(where: { $0.id == path })
+        }) else {
+            return
+        }
+        smartNamesByPath[path] = name
+    }
+
+    /// Drop the generated names when Smart Perch is switched off, so ghosts fall back to
+    /// their real filenames instead of keeping labels nothing is maintaining any more.
+    func clearSmartNames() {
+        guard !smartNamesByPath.isEmpty else { return }
+        smartNamesByPath = [:]
+    }
+
     /// Silence paths Perch itself just placed (vended files, returns-to-origin) so the
     /// shelf never offers back what it just put down.
     func excludePermanently(_ paths: [String]) {
@@ -203,6 +250,76 @@ final class RecentArrivals: ObservableObject {
         }
         persist()
         removeVisibleOffers(withIDs: Set(paths))
+    }
+
+    /// A promise-backed drag (notably the floating screenshot thumbnail) gives Perch
+    /// only the file it wrote into the holding directory, not the original Desktop
+    /// path. Silence a unique, very recent filename + size match so the same screenshot
+    /// cannot reappear as a ghost row immediately after it lands as a stored item.
+    func excludeRecentlyMatchingCopies(
+        of materializedURLs: [URL],
+        droppedAt: Date
+    ) {
+        let fingerprints = Set(
+            materializedURLs.compactMap(Self.fileFingerprint)
+        )
+        guard !fingerprints.isEmpty else { return }
+
+        let keys: Set<URLResourceKey> = [
+            .addedToDirectoryDateKey, .creationDateKey, .isDirectoryKey, .fileSizeKey
+        ]
+        var candidates: [ArrivalCopyCandidate] = []
+        for (_, directory) in Self.watchedDirectories() {
+            guard let entries = try? FileManager.default.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: Array(keys),
+                options: .skipsHiddenFiles
+            ) else {
+                continue
+            }
+
+            for url in entries {
+                guard let values = try? url.resourceValues(forKeys: keys),
+                      values.isDirectory != true,
+                      let byteCount = values.fileSize,
+                      byteCount > 0,
+                      let addedAt = values.addedToDirectoryDate ?? values.creationDate
+                else {
+                    continue
+                }
+                candidates.append(
+                    ArrivalCopyCandidate(
+                        path: url.path,
+                        fingerprint: ArrivalFileFingerprint(
+                            name: url.lastPathComponent,
+                            byteCount: byteCount
+                        ),
+                        addedAt: addedAt
+                    )
+                )
+            }
+        }
+
+        excludePermanently(
+            ArrivalCopyMatcher.matchingPaths(
+                materializedFingerprints: fingerprints,
+                candidates: candidates,
+                droppedAt: droppedAt
+            )
+        )
+    }
+
+    private static func fileFingerprint(for url: URL) -> ArrivalFileFingerprint? {
+        guard let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
+              let byteCount = values.fileSize,
+              byteCount > 0,
+              !url.lastPathComponent.isEmpty else {
+            return nil
+        }
+        return ArrivalFileFingerprint(
+            name: url.lastPathComponent,
+            byteCount: byteCount
+        )
     }
 
     private static func watchedDirectories() -> [(ArrivalLocation, URL)] {
@@ -216,14 +333,50 @@ final class RecentArrivals: ObservableObject {
         }
     }
 
+    private func screenshotContext(
+        for url: URL,
+        addedAt: Date,
+        now: Date
+    ) -> ScreenshotCaptureContext? {
+        if let cached = screenshotContextByPath[url.path] {
+            return cached
+        }
+
+        // Never match an older screenshot against whatever windows happen to be open
+        // now. Directory notifications reach this scan after a 700 ms settle delay.
+        guard now.timeIntervalSince(addedAt) >= -2,
+              now.timeIntervalSince(addedAt) <= 8,
+              let context = ScreenshotWindowContextCapture.captureContext(
+                for: url,
+                capturedAt: now
+              )
+        else {
+            return nil
+        }
+        screenshotContextByPath[url.path] = context
+        NSLog(
+            "Perch matched fresh screenshot \(url.lastPathComponent) to "
+                + "\(context.ownerName) at "
+                + "\(Int((context.visibleCoverage * 100).rounded()))% visible coverage"
+        )
+        return context
+    }
+
     private func removeVisibleOffers(withIDs removedIDs: Set<String>) {
+        smartNamesByPath = smartNamesByPath.filter {
+            !removedIDs.contains($0.key)
+        }
         sessions = sessions.compactMap { session in
             let remaining = session.offers.filter { !removedIDs.contains($0.id) }
             guard !remaining.isEmpty else {
                 expandedSessionIDs.remove(session.id)
                 return nil
             }
-            return ArrivalSession(id: session.id, offers: remaining)
+            return ArrivalSession(
+                id: session.id,
+                offers: remaining,
+                totalFileCount: session.totalFileCount
+            )
         }
         publishVisibleGhosts()
     }
@@ -263,6 +416,18 @@ final class RecentArrivals: ObservableObject {
             activePaths.contains(path)
                 || revealCounts[path] != nil
                 || dismissedPaths[path] != nil
+        }
+        screenshotContextByPath = screenshotContextByPath.filter { path, _ in
+            activePaths.contains(path)
+                || revealCounts[path] != nil
+                || dismissedPaths[path] != nil
+        }
+        smartNamesByPath = smartNamesByPath.filter {
+            activePaths.contains($0.key)
+        }
+        let retainedSessionIDs = Set(sessionIDByPath.values)
+        sessionTotalCountByID = sessionTotalCountByID.filter {
+            retainedSessionIDs.contains($0.key)
         }
     }
 

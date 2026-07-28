@@ -65,8 +65,9 @@ struct ShelfContentView: View {
     @ObservedObject var themeStore: ThemeStore
     @ObservedObject var interaction: RowInteractionState
     @ObservedObject var thumbnails: ThumbnailStore
-    @ObservedObject var ledger: ProvenanceLedger
     @ObservedObject var arrivals: RecentArrivals
+    @ObservedObject var smartNames: SmartNameStore
+    @ObservedObject var routeSuggestions: RouteSuggestionStore
     var onContentHeight: (CGFloat) -> Void = { _ in }
 
     private var theme: ShelfTheme { themeStore.theme }
@@ -230,7 +231,8 @@ struct ShelfContentView: View {
                         .background(heightReader(addingGrabberStrip: grabberHeight))
                     }
                 }
-                .animation(.easeOut(duration: 0.18), value: ghostRows)
+                .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+                .animation(nil, value: arrivals.suppressed)
                 .frame(maxHeight: .infinity)
             } else {
                 GeometryReader { proxy in
@@ -242,7 +244,7 @@ struct ShelfContentView: View {
                                     availableHeight: proxy.size.height
                                 )
                             } else {
-                                rowStack
+                                rowStack(availableWidth: proxy.size.width)
                             }
                         }
                             .background(heightReader(addingGrabberStrip: grabberHeight))
@@ -263,32 +265,23 @@ struct ShelfContentView: View {
             .filter { !interaction.vendingItemIDs.contains($0.id) }
     }
 
-    /// An `origin → destination` provenance breadcrumb, using each path's parent folder
-    /// name. Origin comes from the item's recorded source; destination from the latest
-    /// ledger entry for the item. Returns nil when neither is known (falls back to the
-    /// type subtitle).
-    private func breadcrumb(for item: StoredItem) -> String? {
-        let origin = item.metadata.originPaths?.values.first.map(locationLabel(forPath:))
-        let destination = ledger.latestEntry(for: item.id).map { locationLabel(forPath: $0.destination) }
-        switch (origin, destination) {
-        case let (origin?, destination?): return "\(origin) → \(destination)"
-        case let (origin?, nil): return "from \(origin)"
-        case let (nil, destination?): return "→ \(destination)"
-        case (nil, nil): return nil
-        }
-    }
-
-    /// The parent folder name of a file path, for compact display.
-    private func locationLabel(forPath path: String) -> String {
-        let parent = (path as NSString).deletingLastPathComponent
-        let name = (parent as NSString).lastPathComponent
-        return name.isEmpty ? "/" : name
-    }
-
     /// Recent-arrival ghosts, hidden while a drag is in flight (`suppressed`) so they
     /// never shift the drop geometry under the cursor.
     private var ghostRows: [ArrivalGhost] {
         arrivals.suppressed ? [] : arrivals.visibleGhosts
+    }
+
+    /// Ghosts arriving and leaving animate; being suppressed for a drag does not — hence
+    /// keying on the offers rather than on `ghostRows`. Suppression is a geometry freeze,
+    /// and the shelf is usually *hidden* when it flips (a drag re-reveals a shelf whose
+    /// ignored offers are still in the model): fading rows out over 0.18s inside a window
+    /// that is fading in over 0.30s is what made the reveal look like it glitched.
+    /// It is paired at every ghost site with `.animation(nil, value: arrivals.suppressed)`:
+    /// the drag-start update also flips `isDropTarget`, and the card-level animation keyed
+    /// on *that* would animate the rows away on suppression's behalf. A nil animation on
+    /// this subtree overrides the ancestor for that one update.
+    private var ghostAnimationValue: [ArrivalGhost] {
+        arrivals.visibleGhosts
     }
 
     /// The dimmed recent-arrival rows. They follow real rows on a populated shelf and
@@ -300,26 +293,40 @@ struct ShelfContentView: View {
                     ghost: ghost,
                     theme: theme,
                     isHovered: interaction.hoveredArrivalID == ghost.id,
-                    showsLabels: themeStore.showsLabels
+                    showsLabels: themeStore.showsLabels,
+                    smartName: smartNames.isEnabled
+                        ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
+                        : nil,
+                    usesScreenshotPlaceholder: smartNames.isEnabled
                 )
                 .transition(.opacity)
             }
         }
     }
 
-    private var rowStack: some View {
-        VStack(alignment: .leading, spacing: theme.rowSpacing) {
+    private func rowStack(availableWidth: CGFloat) -> some View {
+        let maximumRowWidth = max(
+            0,
+            RowMetrics.rowLaneWidth(
+                availableWidth: availableWidth,
+                widthScale: rowLaneWidthScale
+            ) - theme.contentPadding * 2
+        )
+
+        return VStack(alignment: .leading, spacing: theme.rowSpacing) {
             ForEach(displayedItems) { item in
                 itemRow(
                     item,
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id
+                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
+                    maximumWidth: maximumRowWidth
                 )
             }
             if !ghostRows.isEmpty {
                 ghostStack
             }
         }
-        .animation(.easeOut(duration: 0.18), value: ghostRows)
+        .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+        .animation(nil, value: arrivals.suppressed)
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         // One transaction drives both the row fade and the layout: a spring while a
@@ -381,7 +388,8 @@ struct ShelfContentView: View {
         .padding(theme.contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .frame(height: contentHeight, alignment: .top)
-        .animation(.easeOut(duration: 0.18), value: ghostRows)
+        .animation(.easeOut(duration: 0.18), value: ghostAnimationValue)
+        .animation(nil, value: arrivals.suppressed)
         .animation(
             interaction.previewOrder != nil
                 ? .spring(response: 0.34, dampingFraction: 0.86)
@@ -450,8 +458,16 @@ struct ShelfContentView: View {
             .animation(.easeOut(duration: 0.14), value: interaction.hoveredArrivalID == ghost.id)
     }
 
-    private func itemRow(_ item: StoredItem, showsSeparator: Bool) -> some View {
-        ItemRowView(
+    private func itemRow(
+        _ item: StoredItem,
+        showsSeparator: Bool,
+        maximumWidth: CGFloat
+    ) -> some View {
+        let name = smartNames.presentation(
+            for: item.id,
+            originalTitle: item.metadata.title
+        )
+        return ItemRowView(
             item: item,
             theme: theme,
             isHovered: interaction.hoveredItemID == item.id,
@@ -461,7 +477,12 @@ struct ShelfContentView: View {
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,
             showsLabels: themeStore.showsLabels,
-            breadcrumb: breadcrumb(for: item)
+            maximumWidth: maximumWidth,
+            displayTitle: name.title,
+            isNameAnalysisPending: name.isAnalyzing,
+            learnedDestinationName: routeSuggestions.suggestion(for: item.id).map {
+                RouteDestinationPresentation.shortName(for: $0.destination)
+            }
         )
         .transition(.asymmetric(
             insertion: .opacity,
@@ -484,9 +505,19 @@ struct ShelfContentView: View {
     private func centeredRowLane<Content: View>(
         @ViewBuilder content: () -> Content
     ) -> some View {
-        CenteredRowLaneLayout(widthScale: themeStore.widthScale) {
+        CenteredRowLaneLayout(widthScale: rowLaneWidthScale) {
             content()
         }
+    }
+
+    /// A named, non-deck shelf already has a content-hugging window, so dividing its
+    /// width by the Width slider again would recreate a narrow centered lane inside it.
+    private var rowLaneWidthScale: CGFloat {
+        !themeStore.stacksItems
+            && themeStore.showsLabels
+            && (!store.items.isEmpty || !ghostRows.isEmpty)
+            ? 1
+            : themeStore.widthScale
     }
 
     /// A sheet-style grab handle pinned to the very top of the card, however tall it
@@ -596,9 +627,13 @@ struct ArrivalGhostRowView: View {
     let theme: ShelfTheme
     let isHovered: Bool
     let showsLabels: Bool
+    let smartName: String?
+    /// With Smart Perch off, a screenshot ghost shows its real filename rather than the
+    /// generic "Screenshot" label that stands in while a name is being generated.
+    var usesScreenshotPlaceholder = true
 
     var body: some View {
-        HStack(spacing: showsLabels ? 10 : 0) {
+        HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
             icon
                 .frame(width: theme.iconSize, height: theme.iconSize)
 
@@ -609,20 +644,22 @@ struct ArrivalGhostRowView: View {
                         .foregroundStyle(.primary)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .contentTransition(.opacity)
 
                     if theme.showsSubtitle {
                         Text(subtitle)
                             .font(.system(size: 9.5, weight: .semibold))
                             .tracking(0.4)
                             .foregroundStyle(.tertiary)
-                            .lineLimit(1)
+                        .lineLimit(1)
                     }
                 }
-
-                Spacer(minLength: 0)
             }
         }
-        .padding(.horizontal, showsLabels ? 10 : 0)
+        .padding(
+            .horizontal,
+            showsLabels ? RowMetrics.labeledRowHorizontalPadding : 0
+        )
         .frame(
             maxWidth: .infinity,
             minHeight: theme.rowHeight,
@@ -643,6 +680,7 @@ struct ArrivalGhostRowView: View {
         .contentShape(Rectangle())
         .opacity(isHovered ? 0.95 : (isSessionSummary ? 0.76 : 0.55))
         .animation(.easeOut(duration: 0.13), value: isHovered)
+        .animation(.easeOut(duration: 0.18), value: title)
     }
 
     @ViewBuilder
@@ -659,14 +697,10 @@ struct ArrivalGhostRowView: View {
     }
 
     private var title: String {
-        switch ghost {
-        case let .summary(session, .expand):
-            return "\(session.offers.count) new downloads"
-        case let .summary(session, .addAll):
-            return "Add all \(session.offers.count) downloads"
-        case let .offer(offer, _):
-            return offer.name
-        }
+        ghost.displayTitle(
+            smartName: smartName,
+            usesScreenshotPlaceholder: usesScreenshotPlaceholder
+        )
     }
 
     private var isSessionSummary: Bool {

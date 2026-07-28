@@ -1,5 +1,6 @@
 import AppKit
 import Quartz
+import SmartPerchCore
 import SwiftUI
 
 /// AppKit host (`NSView`) for the SwiftUI shelf content, hosting `ShelfContentView`
@@ -13,13 +14,26 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let themeStore: ThemeStore
     private let ledger: ProvenanceLedger
     private let arrivals: RecentArrivals
+    private let smartNames: SmartNameStore
+    private let routeSuggestions: RouteSuggestionStore
     private let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
+    /// Retained beyond AppKit's drag-ended callback while late file promises resolve.
+    /// More than one may be pending if the user starts another vend during the grace
+    /// period for the previous drag.
+    private var routeCoordinators: [UUID: RouteDragSessionCoordinator] = [:]
+    /// Whether drags should be watched to learn where items go. Set by the controller
+    /// from the Smart Perch master switch. With it off no coordinator is created, so a
+    /// vend costs no window lookup and starts no grace timer — the observation itself is
+    /// what the switch turns off, not just the display of what was observed.
+    var routeLearningActive = false
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
+    /// Snapshot of the suggestion displayed by the current menu.
+    private var menuTargetFilenameSuggestion: String?
     /// The temporary arrival row under the right-click, acted on without touching
     /// unrelated files in the watched folder.
     private var menuTargetArrival: ArrivalGhost?
@@ -30,6 +44,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Set on mouse-down over a row's delete button; suppresses drag and, if the mouse
     /// is released still over the button, deletes the item.
     private var pendingDeleteItem: StoredItem?
+    /// The same arrangement for the file-it button: a press arms it, a release still
+    /// over it files the item at its learned route.
+    private var pendingRouteActionItem: StoredItem?
     /// Set on mouse-down over a recent-arrival ghost row. A click adopts it in place;
     /// crossing the drag threshold adopts it and immediately begins a normal vend.
     private var pendingArrival: ArrivalGhost?
@@ -73,44 +90,37 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// centering offset when the card is floored taller than its content.
     private var measuredContentHeight: CGFloat = 0
 
-    // The behavior flags below are written by the Settings window (@AppStorage on these
-    // keys) and read live from UserDefaults, so a change applies on the next gesture.
+    // The behavior flags are written by the Settings window (@AppStorage) and read live
+    // from UserDefaults, so a change applies on the next gesture. Their keys live in
+    // `PerchSettings`; the ones the controller reads are no longer declared here.
 
-    /// When true, dragging an item out leaves the original on the shelf (copy);
-    /// otherwise it's removed once it lands somewhere (move — the default).
-    static let vendCopiesKey = "Perch.VendCopies"
     private var vendCopies: Bool {
-        UserDefaults.standard.bool(forKey: Self.vendCopiesKey)
+        UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
     }
-
-    /// When true, the shelf reveals at the nearest enabled edge the moment a drag starts,
-    /// instead of waiting for the pointer to reach the edge tab. Read live by the
-    /// controller's drag handlers. Default true.
-    static let revealOnDragStartKey = "Perch.RevealOnDragStart"
-
-    /// When true, shaking the cursor summons a free-floating shelf at the pointer. Read
-    /// live by the controller's summon handler. Default true (the original behavior), so
-    /// an unset value keeps shake-to-summon on.
-    static let shakeToSummonKey = "Perch.ShakeToSummon"
-
-    /// When true, a free-floating shelf stays where it is after its last item leaves
-    /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
-    /// itself. Read live by the controller. Default true.
-    static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
-    /// When true, releasing a free shelf near an enabled dock previews the target and
-    /// snaps it back into ordinary edge behavior. Default true.
-    static let snapBackToEdgesKey = "Perch.SnapBackToEdges"
 
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
 
-    /// Recent-arrival actions are performed by the controller because they mutate the
-    /// holding directory and the shelf's item list.
+    /// Recent-arrival actions are performed by the controller because they mutate both
+    /// the holding directory and the Smart Perch interaction log.
     var onAdoptArrival: ((ArrivalOffer, ArrivalSession) -> StoredItem?)?
     var onAdoptArrivalSession: ((ArrivalSession) -> [StoredItem])?
     var onExpandArrivalSession: ((ArrivalSession) -> Void)?
     var onDismissArrival: ((ArrivalGhost) -> Void)?
+
+    /// Canonical successful routes are handed to the controller, which owns the
+    /// existing recorder actor and its off-main SQLite queue.
+    var onRecordSuccessfulRoutes: (([ItemRouteEvent]) -> Void)?
+
+    /// Smart Name decisions are forwarded to the controller so filesystem and event
+    /// log updates stay coordinated.
+    var onAcceptFilenameSuggestion: ((StoredItem, String) -> Void)?
+    var onDismissFilenameSuggestion: ((StoredItem) -> Void)?
+
+    /// Accepting a learned route moves files and appends to the event log, so the
+    /// controller performs it for the same reason.
+    var onFileItemAtSuggestedRoute: ((StoredItem) -> Void)?
 
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
@@ -158,19 +168,29 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.grabberRevealProgress = clamped
     }
 
-    init(store: ItemStore, themeStore: ThemeStore, ledger: ProvenanceLedger, arrivals: RecentArrivals) {
+    init(
+        store: ItemStore,
+        themeStore: ThemeStore,
+        ledger: ProvenanceLedger,
+        arrivals: RecentArrivals,
+        smartNames: SmartNameStore,
+        routeSuggestions: RouteSuggestionStore
+    ) {
         self.store = store
         self.themeStore = themeStore
         self.ledger = ledger
         self.arrivals = arrivals
+        self.smartNames = smartNames
+        self.routeSuggestions = routeSuggestions
         hostingView = NSHostingView(
             rootView: ShelfContentView(
                 store: store,
                 themeStore: themeStore,
                 interaction: interaction,
                 thumbnails: thumbnails,
-                ledger: ledger,
-                arrivals: arrivals
+                arrivals: arrivals,
+                smartNames: smartNames,
+                routeSuggestions: routeSuggestions
             )
         )
         super.init(frame: .zero)
@@ -202,8 +222,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             themeStore: themeStore,
             interaction: interaction,
             thumbnails: thumbnails,
-            ledger: ledger,
             arrivals: arrivals,
+            smartNames: smartNames,
+            routeSuggestions: routeSuggestions,
             onContentHeight: { [weak self] height in
                 self?.measuredContentHeight = height
                 self?.onContentHeight?(height)
@@ -384,10 +405,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         if !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels,
-           let index = rowIndex(at: point),
-           deleteHitRect(forRow: index).contains(point) {
-            pendingDeleteItem = visibleItems[index]
-            return
+           let index = rowIndex(at: point) {
+            if deleteHitRect(forRow: index).contains(point) {
+                pendingDeleteItem = visibleItems[index]
+                return
+            }
+            if routeActionHitRect(forRow: index).contains(point) {
+                pendingRouteActionItem = visibleItems[index]
+                return
+            }
         }
 
         // A press on a ghost row arms either a click-to-adopt or drag-to-vend. It must
@@ -454,8 +480,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             return
         }
 
-        // A press that started on a delete button must not turn into a drag.
-        guard pendingDeleteItem == nil, !vendStarted else { return }
+        // A press that started on a trailing button must not turn into a drag.
+        guard pendingDeleteItem == nil, pendingRouteActionItem == nil, !vendStarted else {
+            return
+        }
         if shelfDragArmed {
             trackShelfDrag()
             return
@@ -527,6 +555,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
                 removeWithBounce(actionItems(for: item), returnToOrigin: true)
+            }
+        } else if let item = pendingRouteActionItem {
+            pendingRouteActionItem = nil
+            let point = convert(event.locationInWindow, from: nil)
+            if let index = rowIndex(at: point),
+               index < visibleItems.count,
+               visibleItems[index].id == item.id,
+               routeActionHitRect(forRow: index).contains(point) {
+                onFileItemAtSuggestedRoute?(item)
             }
         } else if reorderActive {
             commitReorder()
@@ -605,32 +642,86 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction.vendingItemIDs = itemIDs
         }
         let dragSource = ItemDragSource(items: items)
+        let routeCoordinator: RouteDragSessionCoordinator? = routeLearningActive
+            ? RouteDragSessionCoordinator(
+                items: items.map {
+                    RouteDragItem(
+                        shelfItemID: $0.id,
+                        addedToPerchAt: $0.metadata.createdAt,
+                        expectsFilePromise: !$0.backingFileURLs().isEmpty
+                    )
+                },
+                transferMode: isMove ? .move : .copy,
+                recordRoutes: { [weak self] routes in
+                    self?.onRecordSuccessfulRoutes?(routes)
+                },
+                onTerminal: { [weak self] sessionID in
+                    self?.routeCoordinators.removeValue(forKey: sessionID)
+                }
+            )
+            : nil
+        if let routeCoordinator {
+            routeCoordinators[routeCoordinator.routeSessionID] = routeCoordinator
+        }
         let ledger = ledger
+        // Retained by the writer callbacks below, which AppKit keeps alive for as long
+        // as the destination can still call in a promise — exactly the window in which
+        // a late delivery result can still arrive.
+        let delivery = VendDeliveryTracker(
+            items: items,
+            appliesMoveSemantics: isMove,
+            // The row leaves the shelf but the backing directory stays on disk for a
+            // grace period: destinations read the vended file URL (or call in the
+            // promise) asynchronously, sometimes seconds after the drop, and deleting
+            // eagerly made the drop silently vanish.
+            retire: { [weak self] item in self?.store.retire(item) },
+            restore: { [weak self] item in
+                NSLog("Perch vend delivery failed for \(item.metadata.title); restoring it to the shelf")
+                self?.store.unretire(item)
+            }
+        )
         dragSource.recordVend = { entry in
             Task { @MainActor in ledger.record(entry) }
         }
-        dragSource.onWriteFailed = { [weak self] in
+        dragSource.onRouteWriteSucceeded = { [weak routeCoordinator] itemID, url in
             Task { @MainActor in
-                NSLog("Perch multi-item vend delivery failed; restoring selection to shelf")
-                for item in items { self?.store.unretire(item) }
+                delivery.promiseDidWrite(itemID: itemID)
+                routeCoordinator?.filePromiseDidWrite(
+                    itemID: itemID,
+                    destinationFileURL: url
+                )
             }
         }
-        dragSource.onEnded = { [weak self] operation, returnedToPerch in
+        dragSource.onRouteWriteFailed = { [weak routeCoordinator] itemID in
+            Task { @MainActor in
+                delivery.promiseDidFail(itemID: itemID)
+                routeCoordinator?.filePromiseDidFail(itemID: itemID)
+            }
+        }
+        dragSource.onEnded = {
+            [weak self, weak routeCoordinator]
+            operation,
+            returnedToPerch,
+            screenPoint,
+            occurredAt in
             guard let self else { return }
             self.activeDragSource = nil
-            guard isMove else { return }
+            routeCoordinator?.draggingEnded(
+                operation: operation,
+                returnedToPerch: returnedToPerch,
+                at: screenPoint,
+                occurredAt: occurredAt
+            )
             if returnedToPerch || operation.isEmpty {
                 // A canceled drag or a drop back onto Perch restores the original rows,
                 // exactly as they were. For cancellation, endedAt fires after AppKit's
                 // slide-back completes, so the rows return as the drag image arrives.
+                delivery.dragDidNotLand()
                 self.interaction.vendingItemIDs.removeAll()
                 return
             }
-            // The item landed somewhere: retire it — the row leaves the shelf now, but
-            // the backing directory stays on disk for a grace period. Destinations read
-            // the vended file URL (or call in the promise) asynchronously, sometimes
-            // seconds after the drop; deleting eagerly made the drop silently vanish.
-            for item in items { self.store.retire(item) }
+            delivery.dragDidLand()
+            guard isMove else { return }
             self.interaction.vendingItemIDs.removeAll()
             self.interaction.selectedItemIDs.subtract(itemIDs)
         }
@@ -664,6 +755,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         hasActiveLeftPress = false
         dragItem = nil
         pendingArrival = nil
+        pendingRouteActionItem = nil
         preservesSelectionForDrag = false
         reorderActive = false
         vendStarted = false
@@ -709,8 +801,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var rowLaneInset: CGFloat {
         RowMetrics.rowLaneInset(
             availableWidth: bounds.width,
-            widthScale: themeStore.widthScale
+            widthScale: usesContentHuggingRows ? 1 : themeStore.widthScale
         )
+    }
+
+    private var usesContentHuggingRows: Bool {
+        !usesStackedRows
+            && themeStore.showsLabels
+            && (!visibleItems.isEmpty || !ghostRows.isEmpty)
     }
 
     private func rowLaneContains(x: CGFloat) -> Bool {
@@ -718,6 +816,28 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let minX = rowLaneInset + padding
         let maxX = bounds.width - rowLaneInset - padding
         return minX <= maxX && x >= minX && x <= maxX
+    }
+
+    /// The rendered bounds of one ordinary item chip. SwiftUI and AppKit share the
+    /// title-width calculation so hover, dragging, menus, and the return arrow follow
+    /// the compact visual surface instead of the old full-width invisible row.
+    private func itemRowRect(forRow index: Int) -> NSRect {
+        let theme = themeStore.theme
+        let padding = theme.contentPadding
+        let laneMinX = rowLaneInset + padding
+        let maximumWidth = max(
+            0,
+            bounds.width - (rowLaneInset + padding) * 2
+        )
+        let pitch = theme.rowHeight + theme.rowSpacing
+        let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
+            - contentScrollOffsetY()
+        return NSRect(
+            x: laneMinX,
+            y: rowTop,
+            width: maximumWidth,
+            height: theme.rowHeight
+        )
     }
 
     private var stackedPreviewSide: CGFloat {
@@ -815,6 +935,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard contentY >= topInset else { return nil }
         let index = Int((contentY - topInset) / rowHeight)
         guard index < visibleItems.count else { return nil }
+        let rowRect = itemRowRect(forRow: index)
+        guard point.x >= rowRect.minX, point.x <= rowRect.maxX else {
+            return nil
+        }
         return index
     }
 
@@ -822,20 +946,61 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// (trailing-aligned, vertically centered in the row), enlarged slightly for an
     /// easier target. Shifted by the scroll offset so it tracks the visible row.
     private func deleteHitRect(forRow index: Int) -> NSRect {
+        trailingButtonHitRect(forRow: index, actionIndex: 0)
+    }
+
+    /// The clickable rect of a row's "file it at the learned route" button, drawn just
+    /// inboard of the delete button. Empty for rows with no learned route, so a click
+    /// there falls through to the ordinary row gesture.
+    private func routeActionHitRect(forRow index: Int) -> NSRect {
+        guard index < visibleItems.count,
+              routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        else {
+            return .zero
+        }
+        return trailingButtonHitRect(forRow: index, actionIndex: 1)
+    }
+
+    private func trailingButtonHitRect(forRow index: Int, actionIndex: Int) -> NSRect {
         let theme = themeStore.theme
         let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
         let rowTop = contentTopOffset + rowsTopInset + CGFloat(index) * pitch
-        return trailingButtonHitRect(rowTop: rowTop)
+        let rowMaxX = usesStackedRows
+            ? bounds.midX + stackedPreviewSide / 2
+            : itemRowRect(forRow: index).maxX
+        let hasNeighbor = index < visibleItems.count
+            && routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        return trailingButtonHitRect(
+            rowTop: rowTop,
+            rowMaxX: rowMaxX,
+            actionIndex: actionIndex,
+            hasAdjacentAction: hasNeighbor
+        )
     }
 
-    /// A trailing ✕ button's enlarged hit rect for a row whose top edge (pre-scroll)
-    /// is `rowTop` — shared by the item rows' delete and the ghosts' dismiss.
-    private func trailingButtonHitRect(rowTop: CGFloat) -> NSRect {
+    /// A trailing button's enlarged hit rect for a row whose top edge (pre-scroll) is
+    /// `rowTop`. `actionIndex` counts inward from the trailing edge, matching the order
+    /// `ItemRowView` lays the buttons out in: 0 is the ✕ / return arrow, 1 the file-it
+    /// button. Shared by the item rows and the ghosts' dismiss.
+    private func trailingButtonHitRect(
+        rowTop: CGFloat,
+        rowMaxX: CGFloat? = nil,
+        actionIndex: Int = 0,
+        hasAdjacentAction: Bool = false
+    ) -> NSRect {
         let theme = themeStore.theme
         let centerY = rowTop + theme.rowHeight / 2 - contentScrollOffsetY()
-        let centerX = bounds.width - rowLaneInset - theme.contentPadding
-            - RowMetrics.deleteTrailingInset - RowMetrics.deleteDiameter / 2
-        let hit = RowMetrics.deleteDiameter + 10
+        let centerX = (
+            rowMaxX
+                ?? bounds.width - rowLaneInset - theme.contentPadding
+        )
+            - RowMetrics.trailingActionCenterInset(index: actionIndex)
+        // A lone button is enlarged for an easier target. Two side by side are held to
+        // their pitch instead, so their rects cannot overlap: a near-miss on "file it"
+        // must not land on delete.
+        let hit = hasAdjacentAction
+            ? RowMetrics.deleteDiameter + RowMetrics.trailingActionSpacing
+            : RowMetrics.deleteDiameter + 10
         return NSRect(x: centerX - hit / 2, y: centerY - hit / 2, width: hit, height: hit)
     }
 
@@ -985,6 +1150,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let point = convert(event.locationInWindow, from: nil)
         let menu = NSMenu()
         menu.delegate = self
+        // Automatic enabling ignores the `isEnabled` values set below (every item has a
+        // target that responds), which left "Return All" clickable on an empty shelf
+        // and "Quick Look" clickable for items with nothing to preview.
+        menu.autoenablesItems = false
 
         if let ghostIndex = arrivalIndex(at: point) {
             let ghost = ghostRows[ghostIndex]
@@ -996,6 +1165,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
 
             menuTargetItem = nil
+            menuTargetFilenameSuggestion = nil
             menuTargetArrival = ghost
             interaction.selectedItemIDs.removeAll()
 
@@ -1023,6 +1193,67 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
             menuTargetItem = item
             let targets = actionItems(for: item)
+
+            if targets.count == 1,
+               item.metadata.backingFileNames.count == 1,
+               let suggestion = smartNames.suggestion(for: item.id) {
+                menuTargetFilenameSuggestion = suggestion.suggestedFilename
+
+                let smartName = NSMenuItem(
+                    title: "Smart Name",
+                    action: nil,
+                    keyEquivalent: ""
+                )
+                let smartNameMenu = NSMenu(title: "Smart Name")
+                smartNameMenu.autoenablesItems = false
+
+                let acceptSuggestion = NSMenuItem(
+                    title: "Keep “\(suggestion.displayName)” as Filename",
+                    action: #selector(acceptFilenameSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                acceptSuggestion.target = self
+                smartNameMenu.addItem(acceptSuggestion)
+
+                let dismissSuggestion = NSMenuItem(
+                    title: "Dismiss Suggestion",
+                    action: #selector(dismissFilenameSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                dismissSuggestion.target = self
+                smartNameMenu.addItem(dismissSuggestion)
+
+                smartName.submenu = smartNameMenu
+                menu.addItem(smartName)
+                menu.addItem(.separator())
+            } else {
+                menuTargetFilenameSuggestion = nil
+            }
+
+            // The deck layout draws no trailing buttons, so the menu is the only way to
+            // accept a learned route there.
+            if targets.count == 1,
+               let suggestion = routeSuggestions.suggestion(for: item.id) {
+                let destinationName = RouteDestinationPresentation.shortName(
+                    for: suggestion.destination
+                )
+                let fileItem = NSMenuItem(
+                    title: "Send to “\(destinationName)”",
+                    action: #selector(fileItemAtSuggestedRouteAction(_:)),
+                    keyEquivalent: ""
+                )
+                fileItem.target = self
+                menu.addItem(fileItem)
+
+                let dismissRoute = NSMenuItem(
+                    title: "Don't Suggest for This Item",
+                    action: #selector(dismissRouteSuggestionAction(_:)),
+                    keyEquivalent: ""
+                )
+                dismissRoute.target = self
+                menu.addItem(dismissRoute)
+                menu.addItem(.separator())
+            }
 
             let quickLook = NSMenuItem(
                 title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
@@ -1052,6 +1283,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(.separator())
         } else {
             menuTargetItem = nil
+            menuTargetFilenameSuggestion = nil
             menuTargetArrival = nil
             interaction.selectedItemIDs.removeAll()
         }
@@ -1184,6 +1416,38 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard let item = menuTargetItem else { return }
         removeWithBounce(actionItems(for: item), returnToOrigin: true)
         menuTargetItem = nil
+    }
+
+    @objc private func acceptFilenameSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem,
+              let suggestion = menuTargetFilenameSuggestion
+        else {
+            return
+        }
+        onAcceptFilenameSuggestion?(item, suggestion)
+        menuTargetItem = nil
+        menuTargetFilenameSuggestion = nil
+    }
+
+    @objc private func fileItemAtSuggestedRouteAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        onFileItemAtSuggestedRoute?(item)
+        menuTargetItem = nil
+    }
+
+    /// Waving off a route is a local presentation decision — no file moves, nothing to
+    /// append to the log — so it is applied straight to the projection.
+    @objc private func dismissRouteSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        routeSuggestions.dismiss(item.id)
+        menuTargetItem = nil
+    }
+
+    @objc private func dismissFilenameSuggestionAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        onDismissFilenameSuggestion?(item)
+        menuTargetItem = nil
+        menuTargetFilenameSuggestion = nil
     }
 
     @objc private func adoptArrivalMenuAction(_ sender: NSMenuItem) {

@@ -1,11 +1,14 @@
 import AppKit
 import Combine
 import Darwin
+import SmartPerchCore
+import SmartPerchVision
 import UniformTypeIdentifiers
 
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
 @MainActor
 final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
+    private static let preferredEdgeKey = PerchSettings.preferredShelfEdge
     private let panel: ShelfPanel
     private let windowController: ShelfWindowController
     private let holding: HoldingDirectory
@@ -15,6 +18,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
+    /// Smart Perch, or `nil` when the user has it switched off (and when its event log
+    /// cannot be opened — a damaged log must not stop the shelf from launching). Nil is
+    /// the whole feature being absent: no database, no OCR, nothing recorded.
+    private var smart: SmartPerchFeature?
+    /// Inert view-models when `smart` is nil. They stay on the controller so rebuilding
+    /// the feature on a toggle cannot pull the bindings out from under the view tree.
+    private let smartNames = SmartNameStore()
+    private let routeSuggestions = RouteSuggestionStore()
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let dockSnapPreview = DockSnapPreviewWindow()
@@ -38,29 +49,29 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var dismissingFreeShelfResetTask: Task<Void, Never>?
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
-    /// True when the current drag (in "reveal while dragging" mode) is what opened the
-    /// shelf, so it follows the nearest edge during the drag and retracts on drag-end if
-    /// nothing was dropped onto it.
+    /// True when the current drag (in "reveal while dragging" mode) opened the shelf.
+    /// The chosen edge remains stable until the drag ends or the pointer explicitly
+    /// enters another edge tab.
     private var revealedForDrag = false
 
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
     private var revealOnDragStart: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.revealOnDragStartKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.revealOnDragStart, default: true)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
     /// value reads as true), matching the original always-on behavior.
     private var shakeToSummonEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.shakeToSummon, default: true)
     }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.keepEmptyShelfKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.keepEmptyShelf, default: true)
     }
     /// Whether free shelves preview and snap back into enabled edge docks.
     private var snapBackToEdgesEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.snapBackToEdgesKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.snapBackToEdges, default: true)
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -71,6 +82,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var measuredContentHeight: CGFloat?
     /// Item count at the last store change, to tell removals from insertions.
     private var lastItemCount = 0
+    /// The item snapshot emitted by `store.$items`. `@Published` emits before
+    /// `store.items` is replaced, so width calculations during that callback must use
+    /// this snapshot rather than the temporarily stale property.
+    private var sizingItems: [StoredItem] = []
     /// True while a row-removal animation is in flight. The rows animate their shrink,
     /// so the measured height streams a new value every frame; acting on each one would
     /// snap-resize (and re-center) the window per frame — the visible "clunk". Instead
@@ -78,6 +93,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// ignored until the dust settles.
     private var removalResizeInFlight = false
     private var removalResizeTask: Task<Void, Never>?
+    /// Invalidates queued insertion re-fits so one multi-item drop produces one window
+    /// animation instead of several competing animations with intermediate targets.
+    private var insertionResizeGeneration: UInt = 0
+    /// Store insertion and recent-arrival removal are one visual row replacement during
+    /// a drop. Combine publishes them separately; hold their layout reactions until
+    /// both mutations have completed, then resize the panel once.
+    private var dropLayoutMutationInFlight = false
+    private var dropInsertionResizePending = false
     private struct GrabberResizeTransition {
         let startHeight: CGFloat
         let targetHeight: CGFloat
@@ -99,14 +122,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shownEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
     private var styleCancellable: AnyCancellable?
-    private var heightCancellable: AnyCancellable?
-    private var widthCancellable: AnyCancellable?
+    private var sizePresetCancellable: AnyCancellable?
     private var stacksItemsCancellable: AnyCancellable?
-    private var squarePresetCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
+    private var smartNamesCancellable: AnyCancellable?
+    private var routeSuggestionsCancellable: AnyCancellable?
+    private var smartPerchEnabledCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
+    private var edgeTabCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
+    private var arrivalNamesCancellable: AnyCancellable?
+    /// Coalesces asynchronous OCR/arrival label changes so the text can settle before
+    /// the outer panel smoothly adopts its new content-hugging width.
+    private var asynchronousNameResizeTask: Task<Void, Never>?
     /// Coalesces the several writes/renames produced by one browser download.
     private var arrivalRefreshTask: Task<Void, Never>?
     /// A shelf opened only to advertise a new arrival goes away again after a short
@@ -152,6 +181,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var dockTrackingTask: Task<Void, Never>?
 
     init() throws {
+        if let rawEdge = UserDefaults.standard.string(
+            forKey: Self.preferredEdgeKey
+        ), let storedEdge = ShelfEdge(rawValue: rawEdge) {
+            preferredEdge = storedEdge
+            shownEdge = storedEdge
+        }
         holding = try HoldingDirectory.standard()
         store = ItemStore(holding: holding)
         ledger = ProvenanceLedger(holding: holding)
@@ -162,7 +197,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
-        hostView = ShelfHostView(store: store, themeStore: themeStore, ledger: ledger, arrivals: arrivals)
+        hostView = ShelfHostView(
+            store: store,
+            themeStore: themeStore,
+            ledger: ledger,
+            arrivals: arrivals,
+            smartNames: smartNames,
+            routeSuggestions: routeSuggestions
+        )
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
         dropView.wantsLayer = true
@@ -179,6 +221,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             hostView.bottomAnchor.constraint(equalTo: dropView.bottomAnchor)
         ])
         panel.contentView = dropView
+
+        hostView.onRecordSuccessfulRoutes = { [weak self] routes in
+            self?.smart?.recordSuccessfulRoutes(routes)
+        }
 
         // "Close Shelf" in the context menu dismisses the free shelf without removing
         // any stored items.
@@ -249,6 +295,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.contextMenuDidClose()
         }
 
+        hostView.onAcceptFilenameSuggestion = { [weak self] item, suggestion in
+            self?.acceptFilenameSuggestion(suggestion, for: item)
+        }
+        hostView.onDismissFilenameSuggestion = { [weak self] item in
+            self?.dismissFilenameSuggestion(for: item)
+        }
+        hostView.onFileItemAtSuggestedRoute = { [weak self] item in
+            self?.fileItemAtSuggestedRoute(item)
+        }
+
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
@@ -263,14 +319,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         // Recent downloads can be adopted individually or as one temporal session.
-        hostView.onAdoptArrival = { [weak self] offer, _ in
-            self?.adoptArrival(offer)
+        hostView.onAdoptArrival = { [weak self] offer, session in
+            self?.adoptArrival(offer, from: session)
         }
         hostView.onAdoptArrivalSession = { [weak self] session in
             self?.adoptArrivalSession(session) ?? []
         }
         hostView.onExpandArrivalSession = { [weak self] session in
-            self?.arrivals.expand(session)
+            self?.expandArrivalSession(session)
         }
         hostView.onDismissArrival = { [weak self] ghost in
             self?.dismissArrival(ghost)
@@ -304,17 +360,64 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         edgeSettings.onChange = { [weak self] in
             self?.rebuildEdgeStrips()
         }
+
+        // Someone who already turned Smart Perch on keeps it, and needs the pane it lives
+        // in to still be reachable.
+        LabsAccess.unlockIfSmartPerchWasAlreadyOn()
+
+        // Build Smart Perch only if the user has it on. Everything above this line is the
+        // shelf, and works identically whether or not the feature exists. The stored
+        // shelf has not been loaded yet, so `start` does the initial read.
+        reconcileSmartPerchFeature(loadingExistingState: false)
+    }
+
+    /// Construct or tear down Smart Perch to match the master switch.
+    ///
+    /// Turning it off releases the event log and the OCR worker instead of leaving them
+    /// running behind a hidden UI, which is the whole point of the switch. Turning it on
+    /// re-reads what was learned previously — the database is kept on disk, so the
+    /// three-session count does not restart.
+    private func reconcileSmartPerchFeature(loadingExistingState: Bool = true) {
+        let shouldBeActive = SmartPerchSettings.isEnabled
+        guard shouldBeActive != (smart != nil) else { return }
+
+        guard shouldBeActive else {
+            smart?.shutDown()
+            smart = nil
+            smartNames.reset()
+            routeSuggestions.replace(with: [:])
+            arrivals.clearSmartNames()
+            hostView.routeLearningActive = false
+            scheduleAsynchronousNameResize()
+            return
+        }
+
+        smart = SmartPerchFeature(
+            databaseURL: holding.smartEventLogFile,
+            smartNames: smartNames,
+            routeSuggestions: routeSuggestions,
+            arrivals: arrivals,
+            currentItems: { [weak self] in self?.store.items ?? [] }
+        )
+        hostView.routeLearningActive = smart != nil
+        guard loadingExistingState else { return }
+        smart?.registerStoredScreenshotPresentations()
+        smart?.loadFilenameSuggestions()
+        smart?.refreshRouteSuggestions()
+        smart?.prepareArrivalSmartNames()
     }
 
     /// Build the windows, load the store, and start observing drags.
     func start() {
         do {
-            try store.load()
-            ledger.load()
+            try ShelfPersistenceLoader.load(store: store, ledger: ledger)
+            smart?.registerStoredScreenshotPresentations()
             NSLog("Perch loaded \(store.items.count) stored item(s)")
         } catch {
             NSLog("Perch failed to load stored items: \(error)")
         }
+        smart?.loadFilenameSuggestions()
+        smart?.refreshRouteSuggestions()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -331,34 +434,32 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             Task { @MainActor in self?.rebuildEdgeStrips() }
         }
 
-        // During a drag, show only the tab nearest the cursor; hide all when it ends.
-        // The drag also grows the empty drop target into a bigger, easier box.
+        // During a drag, advertise and reveal the shelf's established dock. Choosing a
+        // target from the drag's starting point made screenshot drags (which begin in
+        // the lower-right corner) pull a left-docked shelf across the screen.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
             self.setDragActive(active)
             if active {
                 if self.usesEdgeDock {
-                    self.showNearestTab(to: NSEvent.mouseLocation)
+                    self.showHomeTab()
                 } else {
                     self.setTabsShown(false)
                 }
                 if self.usesEdgeDock, self.revealOnDragStart {
-                    self.revealForDrag(to: NSEvent.mouseLocation)
+                    self.revealForDrag()
                 }
             } else {
                 self.setTabsShown(false)
                 self.dragDidEnd()
             }
         }
-        mouseMonitor.onDragMoved = { [weak self] point in
+        mouseMonitor.onDragMoved = { [weak self] _ in
             guard let self else { return }
             if self.usesEdgeDock {
-                self.showNearestTab(to: point)
+                self.showHomeTab()
             } else {
                 self.setTabsShown(false)
-            }
-            if self.usesEdgeDock, self.revealedForDrag {
-                self.followNearestEdge(to: point)
             }
         }
         // Shake the cursor to summon the shelf right where the pointer is (when enabled).
@@ -415,22 +516,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.resizeToFitVisible()
             }
 
-        // The height/width sliders stream values continuously while dragged — re-fit the
-        // window on each one, un-animated so the card tracks the thumb instead of
-        // lagging behind a queue of animations. Same willSet/next-pass dance as the
-        // others. Neither slider changes the content's natural height (the height floor
-        // is pure window frame), so the measured height stays valid.
-        heightCancellable = themeStore.$heightFraction
+        // Size is one discrete choice now rather than two sliders streaming values, so
+        // this re-fit animates: there is no thumb for the card to track. Changing it does
+        // not change the content's natural height (the height floor is pure window
+        // frame), so the measured height stays valid. Same willSet/next-pass dance as the
+        // others.
+        sizePresetCancellable = themeStore.$sizePreset
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.resizeToFitVisible(animated: false)
-            }
-        widthCancellable = themeStore.$widthScale
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.resizeToFitVisible(animated: false)
+                self?.resizeToFitVisible()
             }
         stacksItemsCancellable = themeStore.$stacksItems
             .dropFirst()
@@ -442,12 +537,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.measuredContentHeight = nil
                 self?.resizeToFitVisible()
             }
-        squarePresetCancellable = themeStore.$squarePresetSelected
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.resizeToFitVisible()
-            }
 
         // Toggling names on/off changes the card's width — re-fit the open window.
         // `@Published` emits on willSet, so hop to the next main-queue pass; resizing
@@ -457,6 +546,37 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.resizeToFitVisible()
+            }
+
+        // OCR/window-context names arrive after the item itself. Re-fit once the label
+        // projection changes so the panel follows the generated name instead of keeping
+        // the width of the temporary screenshot filename.
+        smartNamesCancellable = smartNames.$suggestionsByItemID
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.scheduleAsynchronousNameResize()
+            }
+
+        // Both Smart Perch switches live in UserDefaults (written by the settings pane's
+        // @AppStorage, like every other toggle). The master one builds or tears the
+        // feature down; the other only mirrors into the presentation stores so flipping
+        // it re-renders the rows immediately.
+        smartPerchEnabledCancellable = NotificationCenter.default
+            .publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.reconcileSmartPerchFeature()
+                self?.applySmartPerchEnabled()
+            }
+
+        // A learned route reserves a second trailing slot, so the card's width follows
+        // suggestions appearing and being resolved. Same deferred re-fit as Smart Names.
+        routeSuggestionsCancellable = routeSuggestions.$suggestionsByItemID
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.scheduleAsynchronousNameResize()
             }
 
         // Showing/hiding the grab handle changes the card's height by the handle strip —
@@ -483,13 +603,39 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.panel.hasShadow = shows
             }
 
+        // Flipping the edge tab off mid-drag must fade the handle out right away (and
+        // flipping it on must bring it back), so reconcile against the live drag state.
+        // Deferred to the next main pass because @Published emits before the new value
+        // is stored, and `showHomeTab`/`setTabsShown` read it.
+        edgeTabCancellable = themeStore.$showsEdgeTab
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.dragActive {
+                    self.showHomeTab()
+                } else {
+                    self.setTabsShown(false)
+                }
+            }
+
         // Ghost rows appearing/leaving change the card's height (and, when empty, its
         // width). Same willSet/next-pass dance as the toggles above.
         arrivalsCancellable = arrivals.$visibleGhosts
             .dropFirst()
+            .sink { [weak self] _ in
+                guard let self,
+                      !self.dragActive,
+                      !self.dropLayoutMutationInFlight else {
+                    return
+                }
+                self.resizeToFitVisible()
+            }
+        arrivalNamesCancellable = arrivals.$smartNamesByPath
+            .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.resizeToFitVisible()
+                self?.scheduleAsynchronousNameResize()
             }
 
     }
@@ -501,6 +647,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// mutations that change what should be offered.
     private func refreshArrivals(markRevealed: Bool = false) {
         arrivals.refresh(excluding: arrivalExclusions(), markRevealed: markRevealed)
+        smart?.prepareArrivalSmartNames()
     }
 
     /// A watched folder changed. Wait for Chrome's temporary download + rename burst
@@ -540,10 +687,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             try? await Task.sleep(for: .seconds(8))
             guard let self, !Task.isCancelled else { return }
             guard self.panel.isVisible,
-                  self.revealMode == .edge,
-                  self.store.items.isEmpty,
-                  !self.pointerInRegion,
-                  !self.hostView.isContextMenuOpen
+                  self.shouldAutomaticallyRetractEmptyShelf(
+                    pointerInKeepAliveRegion: self.pointerInRegion
+                  )
             else { return }
             self.hideShelf(animated: true)
             self.arrivalAutoHideTask = nil
@@ -572,9 +718,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     @discardableResult
     private func adoptArrival(
         _ offer: ArrivalOffer,
-        refreshAfterAdoption: Bool = true
+        from session: ArrivalSession,
+        refreshAfterAdoption: Bool = true,
+        recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
+        let prefetchedOCRResult = smart?.takeArrivalAnalysis(forPath: offer.id)
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
             return nil
@@ -617,7 +766,26 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         let item = StoredItem(metadata: metadata, directoryURL: directory.url)
+        registerScreenshotPresentationIfNeeded(for: item)
         store.insert(item, at: nil)
+        recordSmartDrop(
+            item,
+            context: DropRecordingContext(
+                batchID: session.id,
+                occurredAt: metadata.createdAt,
+                sourceApplication: nil
+            ),
+            payloadKind: .recentArrival,
+            screenshotCaptureContexts: [offer.screenshotCaptureContext],
+            prefetchedOCRResults: [prefetchedOCRResult]
+        )
+        if recordsInteraction {
+            recordArrivalSessionInteraction(
+                session,
+                action: .adoptedOne,
+                affectedFileCount: 1
+            )
+        }
         // The copy-fallback case leaves the original in the folder; the origin-path
         // exclusion keeps it from being re-offered.
         if refreshAfterAdoption {
@@ -631,19 +799,128 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Each individual insert goes to the front, so process oldest-first to leave
         // the session's newest-first presentation order intact on the shelf.
         let adopted = session.offers.reversed().compactMap { offer in
-            adoptArrival(offer, refreshAfterAdoption: false)
+            adoptArrival(
+                offer,
+                from: session,
+                refreshAfterAdoption: false,
+                recordsInteraction: false
+            )
         }
         refreshArrivals()
+        guard !adopted.isEmpty else { return [] }
+        recordArrivalSessionInteraction(
+            session,
+            action: .adoptedAll,
+            affectedFileCount: adopted.count
+        )
         return adopted
     }
 
+    private func expandArrivalSession(_ session: ArrivalSession) {
+        arrivals.expand(session)
+        smart?.prepareArrivalSmartNames()
+        recordArrivalSessionInteraction(
+            session,
+            action: .expanded,
+            affectedFileCount: 0
+        )
+    }
+
     private func dismissArrival(_ ghost: ArrivalGhost) {
+        let session = ghost.session
         switch ghost {
         case let .offer(offer, _):
             arrivals.dismiss(offer)
-        case let .summary(session, _):
+            recordArrivalSessionInteraction(
+                session,
+                action: .dismissedOne,
+                affectedFileCount: 1
+            )
+        case .summary:
             arrivals.dismiss(session)
+            recordArrivalSessionInteraction(
+                session,
+                action: .dismissedAll,
+                affectedFileCount: session.offers.count
+            )
         }
+    }
+
+    private func recordArrivalSessionInteraction(
+        _ session: ArrivalSession,
+        action: ArrivalSessionAction,
+        affectedFileCount: Int
+    ) {
+        smart?.recordArrivalSessionInteraction(
+            session,
+            action: action,
+            affectedFileCount: affectedFileCount
+        )
+    }
+
+    /// Take a generated name the user accepted. Smart Perch decides whether the rename is
+    /// still valid and records the outcome; the rename itself is the store's job, so the
+    /// two halves meet here rather than giving the feature a handle on the shelf.
+    private func acceptFilenameSuggestion(
+        _ proposedFilename: String,
+        for item: StoredItem
+    ) {
+        guard let smart,
+              let rename = smart.plannedRename(of: item, to: proposedFilename)
+        else {
+            return
+        }
+
+        do {
+            let renamedItem = try store.renameSingleBackingFile(
+                of: item,
+                to: proposedFilename
+            )
+            guard let acceptedFilename = renamedItem.metadata.backingFileNames.first else {
+                return
+            }
+            smart.didAcceptRename(rename, acceptedFilename: acceptedFilename)
+        } catch {
+            NSLog("Perch could not rename \(item.metadata.title) to \(proposedFilename): \(error)")
+        }
+    }
+
+    private func dismissFilenameSuggestion(for item: StoredItem) {
+        smart?.dismissFilenameSuggestion(for: item)
+    }
+
+    /// Carry out a learned route: move the item's files into the folder it has always
+    /// gone to, then let Smart Perch record the trip.
+    private func fileItemAtSuggestedRoute(_ item: StoredItem) {
+        guard let smart, let filing = smart.beginFilingAtSuggestedRoute(item) else {
+            return
+        }
+
+        let moved = store.fileItems([item], into: filing.folder)
+        guard !moved.isEmpty else {
+            smart.abandonFiling(filing)
+            return
+        }
+
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+        smart.didFileAtSuggestedRoute(filing)
+    }
+
+    /// Push the "Show suggestions" switch into the presentation stores. Learning keeps
+    /// running while it is off, so turning it on shows what was learned in the meantime.
+    /// The master switch is a different question — it decides whether Smart Perch was
+    /// built at all, and is handled where the feature is constructed.
+    private func applySmartPerchEnabled() {
+        let showsSuggestions = SmartPerchSettings.showsSuggestions
+        guard showsSuggestions != smartNames.isEnabled
+                || showsSuggestions != routeSuggestions.isEnabled
+        else {
+            // Any defaults write wakes this observer; only a real change costs a re-fit.
+            return
+        }
+        smartNames.isEnabled = showsSuggestions
+        routeSuggestions.isEnabled = showsSuggestions
+        scheduleAsynchronousNameResize()
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -652,6 +929,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// `contentHeightDidChange`.)
     private func shelfItemsDidChange(_ items: [StoredItem]) {
         let previousCount = lastItemCount
+        sizingItems = items
+        smart?.itemsDidChange(items, countChanged: items.count != previousCount)
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
@@ -660,35 +939,53 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // New content arriving cancels any in-flight removal shrink so the card can
             // grow for it right away.
             endRemovalResize()
-            scheduleInsertionResize()
+            if dropLayoutMutationInFlight {
+                dropInsertionResizePending = true
+            } else {
+                scheduleInsertionResize()
+            }
         }
         guard isEmpty != wasEmpty else { return }
         wasEmpty = isEmpty
         shelfContentDidChange(isEmpty: isEmpty)
     }
 
-    /// Grow from the exact fixed-row estimate whenever items are inserted. Previously
-    /// insertion growth depended solely on SwiftUI's natural-height preference. If the
-    /// old, shorter viewport briefly turned the row stack into an overflowing ScrollView,
-    /// that preference could remain constrained to the old viewport and never request a
-    /// larger window — leaving (for example) two rows inside a one-row scrolling card.
+    /// Grow smoothly from the exact fixed-row estimate whenever items are inserted.
+    /// Previously insertion growth either depended solely on SwiftUI's constrained
+    /// natural-height preference or snapped the panel directly to its new frame.
     ///
     /// Drops arrive in the drag event-tracking runloop mode, so perform the frame change
-    /// in the default mode just like measured-height changes. `lastItemCount` has already
-    /// received the new value and `fittedContentHeight()` floors stale measurements at
-    /// its exact per-row estimate.
+    /// in the default mode. While the one deliberate resize animates, measured-height
+    /// callbacks are suppressed so they cannot snap the panel to an intermediate frame.
     private func scheduleInsertionResize() {
+        insertionResizeGeneration &+= 1
+        let generation = insertionResizeGeneration
         RunLoop.main.perform(inModes: [.default]) { [weak self] in
             Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.resizeToFitVisible(animated: false)
-                // The old viewport may have acquired a scroll offset during the brief
-                // overflow. Clamp only after the window has reached its grown frame.
-                RunLoop.main.perform(inModes: [.default]) { [weak self] in
-                    Task { @MainActor in self?.hostView.clampScrollToTopIfContentFits() }
+                guard let self,
+                      self.insertionResizeGeneration == generation else {
+                    return
+                }
+                self.suppressMeasuredHeightResizes()
+                self.resizeToFitVisible(animated: true)
+                Task { @MainActor [weak self] in
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard !Task.isCancelled else { return }
+                    self?.hostView.clampScrollToTopIfContentFits()
                 }
             }
         }
+    }
+
+    private func beginDropLayoutMutation() {
+        dropLayoutMutationInFlight = true
+    }
+
+    private func endDropLayoutMutation() {
+        dropLayoutMutationInFlight = false
+        guard dropInsertionResizePending else { return }
+        dropInsertionResizePending = false
+        scheduleInsertionResize()
     }
 
     /// The SwiftUI content reported a new natural height — size the visible window to
@@ -712,7 +1009,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // default mode means the window grows a few ms after the drag ends instead.
         RunLoop.main.perform(inModes: [.default]) { [weak self] in
             Task { @MainActor [weak self] in
-                self?.resizeToFitVisible(animated: false)
+                guard let self, !self.removalResizeInFlight else { return }
+                self.resizeToFitVisible(animated: false)
             }
         }
     }
@@ -809,6 +1107,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Mid drag-to-pin the card is following the cursor — don't refit it to an edge
         // frame out from under the gesture.
         if dragOutDockedFrame != nil { return }
+        // Any animated frame change causes SwiftUI to emit intermediate natural-height
+        // measurements as its viewport moves. An immediate resize from one of those
+        // callbacks would jump the panel to the endpoint and visibly cut the animation
+        // short. Size from the exact row estimate during the motion, then true-up once
+        // after the content settles.
+        if animated, !removalResizeInFlight {
+            suppressMeasuredHeightResizes()
+        }
         if revealMode == .free {
             windowController.resize(to: freePanelFrame(), animated: animated)
             return
@@ -816,6 +1122,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard let screen = Self.liveScreen(shownScreen) else { return }
         let frame = panelFrame(for: screen, edge: shownEdge)
         windowController.resize(to: frame, animated: animated)
+    }
+
+    /// Smart Names arrive independently of the item row. Let the row's short label
+    /// transition finish before changing the containing window's width; doing both in
+    /// the same frame made screenshot rows appear to jerk sideways.
+    private func scheduleAsynchronousNameResize() {
+        guard !dragActive else { return }
+        asynchronousNameResizeTask?.cancel()
+        asynchronousNameResizeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(180))
+            guard let self, !Task.isCancelled, !self.dragActive else { return }
+            self.resizeToFitVisible()
+            self.asynchronousNameResizeTask = nil
+        }
     }
 
     /// Grow or collapse the handle lane while holding both the panel's bottom edge and
@@ -897,13 +1217,44 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if revealMode == .free {
             var target = freePanelFrame()
             target.origin.y = bottom
+            target = Self.clampedOnScreen(target, on: Self.screenForFrame(target))
             freeTopLeft = NSPoint(x: target.minX, y: target.maxY)
             return target
         }
         guard let screen = Self.liveScreen(shownScreen) else { return panel.frame }
         var target = panelFrame(for: screen, edge: shownEdge)
         target.origin.y = bottom
-        return target
+        return Self.clampedOnScreen(target, on: screen)
+    }
+
+    /// Keep a frame whose vertical position was pinned — to a held bottom edge, rather
+    /// than recomputed — fully on its screen.
+    ///
+    /// Holding the bottom while the card grows is deliberate (the body viewport must not
+    /// jump as the handle lane opens), but on its own it lets a tall card push its top
+    /// edge past the menu bar, which is how the first rows ended up off-screen. Clamping
+    /// afterwards keeps the contract for every size that fits and gives up the pin only
+    /// when honoring it would put content where it cannot be seen. Mirrors the clamp in
+    /// `removalFrameKeepingTop`.
+    private static func clampedOnScreen(_ frame: NSRect, on screen: NSScreen?) -> NSRect {
+        guard let screen else { return frame }
+        let visible = screen.visibleFrame
+        var result = frame
+        result.size.height = min(result.height, visible.height - 24)
+        let lowerBound = visible.minY + 12
+        let upperBound = visible.maxY - result.height - 12
+        result.origin.y = min(max(result.minY, lowerBound), max(lowerBound, upperBound))
+        return result
+    }
+
+    /// The screen a free-floating card is mostly on, so it is clamped against the display
+    /// it actually occupies rather than whichever one the shelf last docked to.
+    private static func screenForFrame(_ frame: NSRect) -> NSScreen? {
+        let overlap: (NSScreen) -> CGFloat = {
+            let r = $0.frame.intersection(frame)
+            return r.isNull ? 0 : r.width * r.height
+        }
+        return NSScreen.screens.max { overlap($0) < overlap($1) } ?? NSScreen.main
     }
 
     private func resizeToFitVisible(keepingBottomAt bottom: CGFloat, animated: Bool) {
@@ -912,6 +1263,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func setTabsShown(_ shown: Bool) {
+        let shown = shown && themeStore.showsEdgeTab
         for strip in edgeStrips {
             strip.showsTab = shown
         }
@@ -919,31 +1271,69 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func setDragActive(_ active: Bool) {
         dragActive = active
+        // A retract scheduled just before the drag pasteboard became active must not
+        // win the next main-loop turn and hide the drop target mid-gesture.
+        if active {
+            cancelRetract()
+        }
         // Ghost rows hide for the drag's duration so the drop geometry never shifts
         // under the cursor.
-        arrivals.suppressed = active
-        if store.items.isEmpty {
-            measuredContentHeight = nil
-        }
+        setArrivalsSuppressed(active)
         hostView.setDropTarget(active)
         // The drag ended somewhere off the shelf; make sure the outline is cleared even
         // if no draggingExited arrived.
         if !active {
             hostView.setDragOverShelf(false)
         }
-        resizeToFitVisible()
+        // Keep the panel frame fixed for the whole gesture. In particular, hiding
+        // recent-arrival rows must not stack a resize onto the reveal animation.
+        // `dragDidEnd` performs one reconciled resize after the visibility hold ends.
     }
 
-    /// Show only the tab whose catch zone is nearest the cursor.
-    private func showNearestTab(to point: NSPoint) {
-        guard usesEdgeDock else {
+    /// Hide (or restore) the ghost rows for a drag. Offers left over from a reveal the
+    /// user ignored are still in the model when the shelf retracts, so a drag that
+    /// re-reveals the shelf is sized while they are on their way out: the last measured
+    /// height still counts them, and it *wins* over the estimate in `fittedContentHeight`
+    /// because it is the larger of the two — the card would open at the ghosts' height
+    /// and then snap down mid-reveal. Drop the measurement whenever suppression actually
+    /// changes what is on the shelf. (The rows themselves leave without animating; see
+    /// ShelfContentView's ghost animation.)
+    private func setArrivalsSuppressed(_ suppressed: Bool) {
+        let changesGhostVisibility = arrivals.suppressed != suppressed
+            && !arrivals.visibleGhosts.isEmpty
+        if changesGhostVisibility || store.items.isEmpty {
+            measuredContentHeight = nil
+        }
+        arrivals.suppressed = suppressed
+    }
+
+    /// Show only the tab belonging to the shelf's established dock. The pointer may
+    /// begin a drag anywhere on the desktop; it does not get to relocate the shelf.
+    private func showHomeTab() {
+        guard usesEdgeDock, themeStore.showsEdgeTab else {
             setTabsShown(false)
             return
         }
-        guard let nearest = nearestStrip(to: point) else { return }
+        guard let home = homeStrip() else { return }
         for strip in edgeStrips {
-            strip.showsTab = (strip === nearest)
+            strip.showsTab = (strip === home)
         }
+    }
+
+    private func homeStrip() -> EdgeStripWindow? {
+        let targetEdge = panel.isVisible ? shownEdge : preferredEdge
+        let targetScreen = panel.isVisible ? shownScreen : preferredScreen
+        let matchingEdge = edgeStrips.filter { $0.edge == targetEdge }
+        if let targetScreen,
+           let exact = matchingEdge.first(where: {
+               $0.pinnedScreen == targetScreen
+           }) {
+            return exact
+        }
+        return matchingEdge.min(by: {
+            Self.distance(from: panel.frame.origin, to: $0.frame)
+                < Self.distance(from: panel.frame.origin, to: $1.frame)
+        }) ?? resolvedPreferredStrip()
     }
 
     /// The enabled edge tab whose catch zone is nearest the cursor.
@@ -953,35 +1343,36 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         })
     }
 
-    /// "Reveal while dragging": open the shelf at the nearest enabled edge as the drag
-    /// begins. Only flagged as drag-revealed if it wasn't already open, so a persistent
-    /// (full) shelf is left where it is.
-    private func revealForDrag(to point: NSPoint) {
+    /// "Reveal while dragging": open at the shelf's existing/home dock. Only flagged as
+    /// drag-revealed if it wasn't already open, so a persistent full shelf is untouched.
+    private func revealForDrag() {
         guard usesEdgeDock else { return }
-        guard let strip = nearestStrip(to: point) else { return }
         if !panel.isVisible { revealedForDrag = true }
-        preferredScreen = strip.pinnedScreen
-        preferredEdge = strip.edge
+        if let shownScreen, edgeSettings.isEnabled(shownEdge) {
+            preferredScreen = shownScreen
+            preferredEdge = shownEdge
+        }
         revealIfNeeded()
     }
 
-    /// While a drag-revealed shelf is open, move it to whichever enabled edge the cursor
-    /// is now nearest, so it tracks the pointer across edges/screens.
-    private func followNearestEdge(to point: NSPoint) {
-        guard usesEdgeDock else { return }
-        guard let strip = nearestStrip(to: point),
-              strip.edge != preferredEdge || strip.pinnedScreen != preferredScreen else { return }
-        preferredScreen = strip.pinnedScreen
-        preferredEdge = strip.edge
-        revealAtPreferredEdge()
-    }
-
-    /// End of a drag: if it was the drag that opened the shelf and nothing landed on it
-    /// (the cursor isn't over the shelf corridor), retract it back to the tab.
+    /// End of a drag: release the global visibility hold, rebuild pointer ownership
+    /// from the real cursor, and only then allow an empty edge shelf to retract.
     private func dragDidEnd() {
-        guard revealedForDrag else { return }
         revealedForDrag = false
-        if pointerOverShelfOrTab(NSEvent.mouseLocation) { return }
+        guard panel.isVisible else { return }
+        guard revealMode == .edge else {
+            resizeToFitVisible()
+            return
+        }
+
+        let pointerIsOverShelf = pointerOverShelfOrTab(NSEvent.mouseLocation)
+        pointerInRegion = pointerIsOverShelf
+        guard shouldAutomaticallyRetractEmptyShelf(
+            pointerInKeepAliveRegion: pointerIsOverShelf
+        ) else {
+            resizeToFitVisible()
+            return
+        }
         hostView.resetInteraction()
         windowController.hide(animated: true)
     }
@@ -1358,6 +1749,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         shownScreen = target.screen
         preferredEdge = edge
         shownEdge = edge
+        persistPreferredEdge()
         revealedForDrag = false
         dragOutDockedFrame = nil
         pointerInRegion = false
@@ -1424,13 +1816,28 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         NSLog("Perch snapped free shelf beside the Dock")
     }
 
+    /// Fast enough to ride the Dock's auto-hide animation frame for frame.
+    private static let dockTrackingActiveInterval: Duration = .milliseconds(16)
+    /// A Dock the cursor is nowhere near cannot start animating, so it can be sampled
+    /// far more cheaply — each sample is a synchronous cross-process Accessibility read
+    /// on the main actor.
+    private static let dockTrackingIdleInterval: Duration = .milliseconds(200)
+    /// Keep sampling fast for a beat after the last movement so the tail of an
+    /// animation is never truncated by an early back-off.
+    private static let dockTrackingCoastTicks = 40
+    /// How close the cursor must come to the Dock's shown position to re-arm fast
+    /// sampling — generous, because the reveal begins before the pointer lands.
+    private static let dockTrackingWakeDistance: CGFloat = 260
+
     private func startSystemDockTracking() {
         dockTrackingTask?.cancel()
         guard let attachment = dockAttachment else { return }
         dockTrackingTask = Task { @MainActor [weak self] in
+            var lastOrigin: NSPoint?
+            var coastingTicks = 0
             while !Task.isCancelled {
                 guard let self, self.dockAttachment == attachment else { return }
-                if !UserDefaults.standard.bool(forKey: DockGeometryReader.enabledKey) {
+                if !UserDefaults.standard.bool(forKey: PerchSettings.snapBesideDock) {
                     self.detachFromSystemDock(makeVisible: true)
                     return
                 }
@@ -1438,13 +1845,40 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     for: self.panel.frame.size,
                     followsVisibility: true
                 ).first(where: { $0.kind == attachment }) {
-                    // Direct origin updates preserve the Dock's live timing instead of
-                    // layering a second AppKit animation on top of it.
-                    self.panel.setFrameOrigin(placement.frame.origin)
+                    if placement.frame.origin != lastOrigin {
+                        lastOrigin = placement.frame.origin
+                        coastingTicks = Self.dockTrackingCoastTicks
+                        // Direct origin updates preserve the Dock's live timing instead
+                        // of layering a second AppKit animation on top of it.
+                        self.panel.setFrameOrigin(placement.frame.origin)
+                    } else if coastingTicks > 0 {
+                        coastingTicks -= 1
+                    }
                 }
-                try? await Task.sleep(for: .milliseconds(16))
+                try? await Task.sleep(
+                    for: coastingTicks > 0 || self.cursorCouldWakeSystemDock(attachment)
+                        ? Self.dockTrackingActiveInterval
+                        : Self.dockTrackingIdleInterval
+                )
             }
         }
+    }
+
+    /// Whether the cursor is near enough to the Dock's *shown* frame to trigger a
+    /// reveal. The shown frame — not the panel's current position — is the anchor: a
+    /// hidden Dock has carried the panel off-screen, and the cursor approaching the
+    /// screen edge is exactly the moment fast sampling has to resume.
+    private func cursorCouldWakeSystemDock(_ attachment: DockSnapTargetKind) -> Bool {
+        // Reads through DockGeometryReader's short cache, which the live sample above
+        // has just refreshed — no extra Accessibility round trip.
+        guard let shown = systemDockFrames(
+            for: panel.frame.size,
+            followsVisibility: false
+        ).first(where: { $0.kind == attachment })?.frame else {
+            return true
+        }
+        return Self.distance(from: NSEvent.mouseLocation, to: shown)
+            <= Self.dockTrackingWakeDistance
     }
 
     /// Stop following the Dock. A user-initiated drag keeps the current presentation
@@ -1567,9 +2001,26 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         let beforeCount = store.items.count
+        let batchID = UUID()
+        let droppedAt = Date()
+        let sourceApplication = SourceApplicationCapture.current()
 
         do {
+            beginDropLayoutMutation()
+            defer { endDropLayoutMutation() }
+
             let results = try snapshotter.snapshot(pasteboard, into: store)
+            for result in results {
+                registerScreenshotPresentationIfNeeded(for: result.item)
+            }
+            let movedSourcePaths = results.flatMap { result -> [String] in
+                guard let origins = result.item.metadata.originPaths else {
+                    return []
+                }
+                return Array(origins.values)
+            }
+            arrivals.excludePermanently(movedSourcePaths)
+
             let afterCount = store.items.count
             let backingFiles = results.flatMap { $0.item.backingFileURLs() }.map(\.lastPathComponent).joined(separator: ",")
 
@@ -1577,16 +2028,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 "Perch drop stored \(results.count) item(s); count \(beforeCount)->\(afterCount); files [\(backingFiles)]"
             )
 
-            for result in results where !result.pendingPromises.isEmpty {
-                materializePendingPromises(
-                    for: result.item,
-                    receivers: result.pendingPromises,
-                    initialCount: beforeCount
+            for result in results {
+                let recordingContext = DropRecordingContext(
+                    batchID: batchID,
+                    occurredAt: droppedAt,
+                    sourceApplication: sourceApplication
                 )
-            }
-
-            for result in results where !result.pendingCopies.isEmpty {
-                performDeferredCopies(result.pendingCopies, for: result.item)
+                finalizeDrop(
+                    result,
+                    initialCount: beforeCount,
+                    recordingContext: recordingContext
+                )
             }
 
             // Keep the shelf open after a drop (the pointer is over it); it closes
@@ -1620,18 +2072,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             setTabsShown(false)
             return
         }
-        // Open the shelf on whichever screen + edge's tab was used.
+        if viaDrag {
+            // Hidden edge windows still receive AppKit drag-entry events even when
+            // their tab is not drawn. Ignore every dock except the one we deliberately
+            // advertised, or crossing the desktop can teleport the live shelf.
+            guard homeStrip() === strip else { return }
+            enterRegion(immediate: true)
+            return
+        }
+
+        // A deliberate ordinary hover selects this as the shelf's future home.
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
-        // A drag reaching a tab while the shelf is open at a different edge means the
-        // user is aiming for *this* perch — bring the shelf over to it.
-        if viaDrag, panel.isVisible, revealMode == .edge,
-           strip.edge != shownEdge || strip.pinnedScreen != shownScreen {
-            revealAtPreferredEdge()
-        }
-        // Drags open immediately; a plain hover waits briefly so brushing past the
-        // edge does not pop the shelf open.
-        enterRegion(immediate: viaDrag)
+        persistPreferredEdge()
+        enterRegion(immediate: false)
     }
 
     func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
@@ -1690,10 +2144,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         )
     }
 
-    /// The Square preset becomes a true square deck when stacking is enabled. Custom
-    /// slider dimensions still stack without being forced to a preset aspect ratio.
+    /// The Square size becomes a true square deck when stacking is on. The other sizes
+    /// stack as well; they simply keep their own proportions rather than being forced
+    /// to a square.
     private var usesSquareStack: Bool {
-        themeStore.stacksItems && themeStore.squarePresetSelected
+        themeStore.stacksItems && themeStore.sizePreset == .square
     }
 
     /// The content height with the user's Height slider applied: a floor at that
@@ -1720,17 +2175,69 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return max(measuredContentHeight ?? estimate, estimate)
     }
 
-    /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip
-    /// just wide enough for an icon; once it holds items *and* names are shown it grows to
-    /// a comfortable list width.
+    /// The card's width on a given edge. Empty (and icons-only) it stays a compact strip.
+    /// Named item rows hug the widest visible title; the Width setting is their ceiling
+    /// rather than a fixed amount of empty card.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
-        // An empty shelf showing ghost rows needs the full list width for their names.
         let showsGhosts = !arrivals.suppressed && !arrivals.visibleGhosts.isEmpty
-        if store.items.isEmpty && !showsGhosts {
+        if sizingItems.isEmpty && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }
         guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
-        return (edge == .notch ? 360 : 300) * themeStore.widthScale
+
+        let maximumListWidth = (edge == .notch ? 360 : 300)
+            * themeStore.widthScale
+        let theme = themeStore.theme
+        var usesStabilizedNameWidth = false
+        let itemRows = sizingItems.compactMap { item
+            -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
+            let name = smartNames.presentation(
+                for: item.id,
+                originalTitle: item.metadata.title
+            )
+            if name.usesStableWidth {
+                usesStabilizedNameWidth = true
+                return nil
+            }
+            return (
+                title: name.title,
+                showsAction: theme.showsDeleteButton,
+                showsRouteAction: routeSuggestions.suggestion(for: item.id) != nil
+            )
+        }
+        let ghostRows = showsGhosts ? arrivals.visibleGhosts.compactMap {
+            ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
+            if smartNames.isEnabled, ghost.offer?.usesStableScreenshotName == true {
+                usesStabilizedNameWidth = true
+                return nil
+            }
+            return (
+                title: ghost.displayTitle(
+                    smartName: smartNames.isEnabled
+                        ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
+                        : nil,
+                    usesScreenshotPlaceholder: smartNames.isEnabled
+                ),
+                // Match an adopted row's stable trailing slot. The ghost does not draw
+                // the arrow yet, but reserving its room prevents title truncation and
+                // keeps the card from changing width when clicked.
+                showsAction: theme.showsDeleteButton,
+                // A ghost has no drop record yet, so it can never carry a learned route.
+                showsRouteAction: false
+            )
+        } : []
+        let contentWidth = RowMetrics.contentHuggingCardWidth(
+            rows: itemRows + ghostRows,
+            theme: theme,
+            maximumWidth: maximumListWidth
+        )
+        guard usesStabilizedNameWidth else { return contentWidth }
+        return max(
+            contentWidth,
+            RowMetrics.stabilizedSmartNameCardWidth(
+                maximumWidth: maximumListWidth
+            )
+        )
     }
 
     /// Width of the empty drop tile at 100% size. Style-independent — the tile's artwork
@@ -1965,7 +2472,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // A fast drag-to-pin can outrun the card between drag events; don't let the
         // momentary exit retract an empty card mid-gesture.
         if dragOutDockedFrame != nil { return }
-        if duringDrag { return }
+        // Tracking areas can report an ordinary mouse exit while AppKit is actually
+        // routing a system drag. The controller's global drag state is authoritative.
+        if duringDrag || dragActive { return }
         pointerInRegion = false
         // A context menu open over the shelf keeps it alive even as the pointer wanders
         // into submenus outside the card.
@@ -1995,20 +2504,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 // healContentViewShear) no matter what produced it.
                 self.hostView.clampScrollToTopIfContentFits()
                 self.windowController.healContentViewShear()
-                // Don't pull the shelf out from under an open context menu — submenus
-                // extend past the card, so the pointer reads as "left the shelf".
-                if self.hostView.isContextMenuOpen { continue }
-                // A free-floating shelf never auto-retracts on pointer-out.
-                if self.revealMode == .free { continue }
-                // The card follows the cursor during drag-to-pin; a momentary lag
-                // behind a fast drag must not read as pointer-out.
-                if self.dragOutDockedFrame != nil { continue }
-                // While a drag is holding the shelf open ("reveal while dragging"), keep
-                // it up regardless of pointer position; drag-end decides whether to close.
-                if self.revealedForDrag { continue }
-                // Persistent while full; only an empty shelf retracts on pointer-out.
-                guard self.store.items.isEmpty else { continue }
-                if self.pointerOverShelfOrTab(NSEvent.mouseLocation) { continue }
+                let pointerIsOverShelf = self.pointerOverShelfOrTab(
+                    NSEvent.mouseLocation
+                )
+                guard self.shouldAutomaticallyRetractEmptyShelf(
+                    pointerInKeepAliveRegion: pointerIsOverShelf
+                ) else {
+                    continue
+                }
                 self.hostView.resetInteraction()
                 self.windowController.hide(animated: true)
                 return
@@ -2089,6 +2592,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
+        persistPreferredEdge()
         clearSystemDockAttachment()
 
         // Docking at an edge clears any leftover free-mode layout, including the lock.
@@ -2103,9 +2607,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         shownScreen = screen
         shownEdge = preferredEdge
         let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
-        // Drag reveals slide in from the edge (the shelf chases the drag); hover reveals
-        // just fade in place.
-        windowController.reveal(animated: true, targetFrame: frame, edge: preferredEdge, slides: dragActive)
+        windowController.reveal(
+            animated: true,
+            targetFrame: frame,
+            edge: preferredEdge
+        )
     }
 
     /// Preserve the current preference when it still names an installed dock. If its
@@ -2129,6 +2635,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return nearestStrip(to: point)
     }
 
+    private func persistPreferredEdge() {
+        UserDefaults.standard.set(
+            preferredEdge.rawValue,
+            forKey: Self.preferredEdgeKey
+        )
+    }
+
     private func cancelOpen() {
         openTask?.cancel()
         openTask = nil
@@ -2150,13 +2663,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 try? await Task.sleep(nanoseconds: 130_000_000)
             }
             guard let self, !Task.isCancelled else { return }
-            // Re-check: content may have arrived, the pointer re-entered, or a context
-            // menu opened.
-            guard self.store.items.isEmpty, !self.pointerInRegion, !self.hostView.isContextMenuOpen else { return }
+            // Re-check every visibility hold, including a system drag that may have
+            // begun after this task was scheduled.
+            guard self.shouldAutomaticallyRetractEmptyShelf(
+                pointerInKeepAliveRegion: self.pointerInRegion
+            ) else {
+                self.retractTask = nil
+                return
+            }
             self.hostView.resetInteraction()
             self.windowController.hide(animated: true)
             self.retractTask = nil
         }
+    }
+
+    private func shouldAutomaticallyRetractEmptyShelf(
+        pointerInKeepAliveRegion: Bool
+    ) -> Bool {
+        ShelfRetractionPolicy.shouldRetractEmptyShelf(
+            dragActive: dragActive,
+            shelfDragActive: dragOutDockedFrame != nil,
+            isFreeFloating: revealMode == .free,
+            isEmpty: store.items.isEmpty,
+            pointerInKeepAliveRegion: pointerInKeepAliveRegion,
+            contextMenuOpen: hostView.isContextMenuOpen
+        )
     }
 
     private func hideShelf(animated: Bool) {
@@ -2166,15 +2697,63 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         windowController.hide(animated: animated)
     }
 
-    /// Copy-fallback files the snapshotter deferred (the move was refused, e.g. a
-    /// cross-volume source). The item is already on the shelf with these file names
-    /// recorded; the bulk copy runs off the main thread so a large external-volume
-    /// drop can't beachball the app. If a copy fails the file never arrives, leaving
-    /// a dead row (nothing to vend or preview) — take the item back off the shelf,
-    /// matching the old synchronous behavior where the drop failed outright.
+    /// Wait for every asynchronous part of a stored item before recording it. This
+    /// prevents the log from observing promise placeholders, half-copied files, or a
+    /// fallback copy that is about to fail and remove its shelf row.
+    private func finalizeDrop(
+        _ result: PasteboardSnapshotResult,
+        initialCount: Int,
+        recordingContext: DropRecordingContext
+    ) {
+        let hasPromises = !result.pendingPromises.isEmpty
+        let hasCopies = !result.pendingCopies.isEmpty
+        let payloadKind: DropPayloadKind
+
+        if hasPromises && (hasCopies || !result.item.backingFileURLs().isEmpty) {
+            payloadKind = .mixed
+        } else if hasPromises {
+            payloadKind = .filePromise
+        } else if result.item.backingFileURLs().isEmpty {
+            payloadKind = .clipping
+        } else {
+            payloadKind = .file
+        }
+
+        let finishAfterCopies: @MainActor (Bool) -> Void = { [weak self] copiesSucceeded in
+            guard let self, copiesSucceeded else { return }
+
+            if hasPromises {
+                self.materializePendingPromises(
+                    for: result.item,
+                    receivers: result.pendingPromises,
+                    initialCount: initialCount,
+                    recordingContext: recordingContext,
+                    payloadKind: payloadKind
+                )
+            } else {
+                self.recordSmartDrop(
+                    result.item,
+                    context: recordingContext,
+                    payloadKind: payloadKind
+                )
+            }
+        }
+
+        if hasCopies {
+            performDeferredCopies(
+                result.pendingCopies,
+                for: result.item,
+                completion: finishAfterCopies
+            )
+        } else {
+            finishAfterCopies(true)
+        }
+    }
+
     private func performDeferredCopies(
         _ copies: [(source: URL, destination: URL)],
-        for item: StoredItem
+        for item: StoredItem,
+        completion: @escaping @MainActor (Bool) -> Void
     ) {
         Task.detached(priority: .userInitiated) { [weak self] in
             var failed = false
@@ -2186,9 +2765,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     failed = true
                 }
             }
-            guard failed, let self else { return }
+            let copiesSucceeded = !failed
+            guard let self else { return }
             await MainActor.run {
-                self.store.remove(item)
+                if !copiesSucceeded {
+                    self.store.remove(item)
+                }
+                completion(copiesSucceeded)
             }
         }
     }
@@ -2196,26 +2779,57 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func materializePendingPromises(
         for item: StoredItem,
         receivers: [NSFilePromiseReceiver],
-        initialCount: Int
+        initialCount: Int,
+        recordingContext: DropRecordingContext,
+        payloadKind: DropPayloadKind
     ) {
         let filesDir = item.directoryURL.appendingPathComponent("files", isDirectory: true)
+        let reconciliation = PromiseMaterializationReconciler()
 
-        promiseMaterializer.materialize(receivers, into: filesDir) { [weak self] materializedURLs in
+        promiseMaterializer.materialize(
+            receivers,
+            into: filesDir,
+            lateDelivery: { [weak self] fileURL in
+                Task { @MainActor [weak self] in
+                    guard let self,
+                          let reconciledURL = reconciliation.reconcileLate(fileURL)
+                    else { return }
+                    self.appendLateMaterializedFile(
+                        reconciledURL,
+                        toItemID: item.id,
+                        droppedAt: recordingContext.occurredAt
+                    )
+                }
+            }
+        ) { [weak self] materializedURLs in
             Task { @MainActor [weak self] in
+                let reconciledURLs = reconciliation.reconcileInitial(materializedURLs)
                 guard let self else { return }
 
                 let beforeInsertMainThread = pthread_main_np() == 1
                 do {
                     let finalItem = try self.itemByAppendingMaterializedFiles(
-                        materializedURLs,
+                        reconciledURLs,
                         to: item
                     )
+                    self.beginDropLayoutMutation()
+                    defer { self.endDropLayoutMutation() }
+                    self.arrivals.excludeRecentlyMatchingCopies(
+                        of: reconciledURLs,
+                        droppedAt: recordingContext.occurredAt
+                    )
+                    self.registerScreenshotPresentationIfNeeded(for: finalItem)
                     self.store.insert(finalItem, at: nil)
 
                     let repTypes = finalItem.metadata.representations.map(\.typeIdentifier).joined(separator: ",")
                     let backingFiles = finalItem.backingFileURLs().map(\.lastPathComponent).joined(separator: ",")
                     NSLog(
                         "Perch promise materialization stored item \(finalItem.id.uuidString); count \(initialCount)->\(self.store.items.count); reps [\(repTypes)]; files [\(backingFiles)]; mainThread \(beforeInsertMainThread)"
+                    )
+                    self.recordSmartDrop(
+                        finalItem,
+                        context: recordingContext,
+                        payloadKind: payloadKind
                     )
                 } catch {
                     NSLog("Perch promise materialization failed for item \(item.id.uuidString): \(error)")
@@ -2225,15 +2839,59 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    /// Append a promise that arrived after the timeout-created row was inserted. If
+    /// the user has already removed or vended the row, delete only the untracked late
+    /// file so it cannot become an orphan in the retained item directory.
+    private func appendLateMaterializedFile(
+        _ fileURL: URL,
+        toItemID itemID: UUID,
+        droppedAt: Date
+    ) {
+        guard let currentItem = store.items.first(where: { $0.id == itemID }) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return
+        }
+        guard !currentItem.metadata.backingFileNames.contains(fileURL.lastPathComponent)
+        else { return }
+
+        do {
+            let updatedItem = try itemByAppendingMaterializedFiles(
+                [fileURL],
+                to: currentItem
+            )
+            guard store.replace(updatedItem) else {
+                try? FileManager.default.removeItem(at: fileURL)
+                return
+            }
+            arrivals.excludeRecentlyMatchingCopies(
+                of: [fileURL],
+                droppedAt: droppedAt
+            )
+            registerScreenshotPresentationIfNeeded(for: updatedItem)
+            NSLog(
+                "Perch appended late promise delivery \(fileURL.lastPathComponent) to item \(itemID.uuidString)"
+            )
+        } catch {
+            NSLog(
+                "Perch could not append late promise delivery \(fileURL.path): \(error)"
+            )
+            try? FileManager.default.removeItem(at: fileURL)
+        }
+    }
+
     private func itemByAppendingMaterializedFiles(
         _ materializedURLs: [URL],
         to item: StoredItem
     ) throws -> StoredItem {
         var metadata = item.metadata
-        let existingFileNames = Set(metadata.backingFileNames)
-        let newFileNames = materializedURLs
-            .map(\.lastPathComponent)
-            .filter { !$0.isEmpty && !existingFileNames.contains($0) }
+        var knownFileNames = Set(metadata.backingFileNames)
+        let newFileNames = materializedURLs.compactMap { url -> String? in
+            let fileName = url.lastPathComponent
+            guard !fileName.isEmpty, knownFileNames.insert(fileName).inserted else {
+                return nil
+            }
+            return fileName
+        }
 
         metadata.backingFileNames.append(contentsOf: newFileNames)
         if metadata.backingFileNames.count == newFileNames.count,
@@ -2245,5 +2903,28 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
 
         return StoredItem(metadata: metadata, directoryURL: item.directoryURL)
+    }
+
+    private func recordSmartDrop(
+        _ item: StoredItem,
+        context: DropRecordingContext,
+        payloadKind: DropPayloadKind,
+        screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil,
+        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
+    ) {
+        smart?.recordDrop(
+            item,
+            context: context,
+            payloadKind: payloadKind,
+            screenshotCaptureContexts: screenshotCaptureContexts,
+            prefetchedOCRResults: prefetchedOCRResults
+        )
+    }
+
+    @discardableResult
+    private func registerScreenshotPresentationIfNeeded(
+        for item: StoredItem
+    ) -> Bool {
+        smart?.registerScreenshotPresentationIfNeeded(for: item) ?? false
     }
 }

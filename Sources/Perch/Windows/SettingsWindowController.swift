@@ -6,9 +6,24 @@ import SwiftUI
 /// window also activates the app so it can come forward and accept focus.
 @MainActor
 final class SettingsWindowController {
+    /// The pane that carries the appearance controls, and therefore the one that summons
+    /// the live preview shelf.
+    private static let advancedPaneLabel = "Advanced"
+    private static let labsPaneLabel = "Labs"
+
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
     private var window: NSWindow?
+    private var labsObserver: NSObjectProtocol?
+    /// Which tab is up, and which half of Advanced it is showing. The preview shelf is
+    /// only right for the Look half, and neither piece of state can be derived from the
+    /// other — the tab bar cannot see inside the pane, and the pane is rebuilt often
+    /// enough that it cannot be trusted to re-announce itself on every tab switch.
+    private var selectedPaneLabel: String?
+    private var advancedSection: AdvancedSettingsPane.Section = .look
+    /// Held so the pane can be resized when its section changes; the three lists are
+    /// different lengths and one shared height suits none of them.
+    private weak var advancedPane: NSViewController?
 
     /// Fires when the Appearance pane comes up, with the settings window's frame.
     /// The shelf controller pops the real shelf out beside the window so the
@@ -41,29 +56,37 @@ final class SettingsWindowController {
         tabs.tabStyle = .toolbar
         tabs.onPaneSelected = { [weak self] label in
             guard let self else { return }
-            if label == "Appearance" {
-                guard let frame = self.window?.frame else { return }
-                self.onAppearancePaneSelected?(frame)
-            } else {
-                self.onAppearancePaneDeselected?()
-            }
+            self.selectedPaneLabel = label
+            self.reconcileAppearancePreview()
         }
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 560, height: 200),
+            size: NSSize(width: 560, height: 340),
             view: GeneralSettingsPane()
         )
-        addPane(
-            to: tabs, label: "Appearance", symbol: "paintbrush",
-            size: NSSize(width: 560, height: 330),
-            view: AppearanceSettingsPane(themeStore: themeStore)
+        let advanced = NSHostingController(
+            rootView: AdvancedSettingsPane(
+                themeStore: themeStore,
+                edgeSettings: edgeSettings,
+                onSectionChanged: { [weak self] section in
+                    guard let self else { return }
+                    self.advancedSection = section
+                    self.advancedPane?.preferredContentSize = NSSize(
+                        width: 560,
+                        height: section.preferredHeight
+                    )
+                    self.reconcileAppearancePreview()
+                }
+            )
         )
+        advancedPane = advanced
         addPane(
-            to: tabs, label: "Behavior", symbol: "cursorarrow.motionlines",
-            size: NSSize(width: 560, height: 660),
-            view: BehaviorSettingsPane(themeStore: themeStore, edgeSettings: edgeSettings)
+            to: tabs, label: Self.advancedPaneLabel, symbol: "slider.horizontal.3",
+            size: NSSize(width: 560, height: advancedSection.preferredHeight),
+            controller: advanced
         )
+        syncLabsPane(in: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -81,18 +104,68 @@ final class SettingsWindowController {
             }
         }
 
+        // Unlocking happens in the General pane and hiding happens in the Labs pane;
+        // neither can reach the tab bar. Watch the flag instead so the tab appears on the
+        // fifth click and disappears on Hide, rather than at the next launch.
+        labsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self, weak tabs] _ in
+            MainActor.assumeIsolated {
+                guard let self, let tabs else { return }
+                self.syncLabsPane(in: tabs)
+            }
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Reopening the window on a still-selected Appearance tab must re-summon the
+    /// Adds or removes the Labs tab to match the unlock flag.
+    private func syncLabsPane(in tabs: NSTabViewController) {
+        let existing = tabs.tabViewItems.firstIndex { $0.label == Self.labsPaneLabel }
+
+        guard LabsAccess.isUnlocked else {
+            guard let existing else { return }
+            // Removing the selected tab would leave the tab view with no selection and a
+            // stale window title, so step back to General first.
+            if tabs.selectedTabViewItemIndex == existing {
+                tabs.selectedTabViewItemIndex = 0
+            }
+            tabs.removeTabViewItem(tabs.tabViewItems[existing])
+            return
+        }
+
+        guard existing == nil else { return }
+        addPane(
+            to: tabs, label: Self.labsPaneLabel, symbol: "flask",
+            size: NSSize(width: 560, height: 380),
+            view: LabsSettingsPane(themeStore: themeStore)
+        )
+    }
+
+    /// Summon or dismiss the preview shelf for the current tab and section. The preview
+    /// exists so appearance options visibly tweak the real card, so it belongs to
+    /// Advanced ▸ Look and nowhere else — it used to appear for the whole Advanced tab,
+    /// including while the user was toggling shake-to-summon.
+    private func reconcileAppearancePreview() {
+        guard selectedPaneLabel == Self.advancedPaneLabel,
+              advancedSection == .look,
+              let frame = window?.frame
+        else {
+            onAppearancePaneDeselected?()
+            return
+        }
+        onAppearancePaneSelected?(frame)
+    }
+
+    /// Reopening the window on a still-selected Advanced ▸ Look must re-summon the
     /// preview shelf; tab-switch callbacks alone would miss it.
     private func notifyIfAppearanceSelected() {
         guard let window, let tabs = window.contentViewController as? NSTabViewController,
-              tabs.tabViewItems.indices.contains(tabs.selectedTabViewItemIndex),
-              tabs.tabViewItems[tabs.selectedTabViewItemIndex].label == "Appearance"
+              tabs.tabViewItems.indices.contains(tabs.selectedTabViewItemIndex)
         else { return }
-        onAppearancePaneSelected?(window.frame)
+        selectedPaneLabel = tabs.tabViewItems[tabs.selectedTabViewItemIndex].label
+        reconcileAppearancePreview()
     }
 
     /// Each pane keeps a fixed preferred size so the toolbar tab style can animate the
@@ -100,7 +173,22 @@ final class SettingsWindowController {
     private func addPane<V: View>(
         to tabs: NSTabViewController, label: String, symbol: String, size: NSSize, view: V
     ) {
-        let hosting = NSHostingController(rootView: view)
+        addPane(
+            to: tabs,
+            label: label,
+            symbol: symbol,
+            size: size,
+            controller: NSHostingController(rootView: view)
+        )
+    }
+
+    private func addPane(
+        to tabs: NSTabViewController,
+        label: String,
+        symbol: String,
+        size: NSSize,
+        controller hosting: NSViewController
+    ) {
         hosting.preferredContentSize = size
         // NSTabViewController propagates the selected child's title up to the window;
         // untitled children would blank it to "Untitled" on every tab switch.

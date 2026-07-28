@@ -33,6 +33,10 @@ struct HoldingDirectory {
         root.appendingPathComponent("ledger.json", isDirectory: false)
     }
 
+    var smartEventLogFile: URL {
+        root.appendingPathComponent("smart-perch.sqlite", isDirectory: false)
+    }
+
     func itemDir(_ id: UUID) -> URL {
         itemsDir.appendingPathComponent(id.uuidString, isDirectory: true)
     }

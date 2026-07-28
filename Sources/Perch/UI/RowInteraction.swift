@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import CoreGraphics
 import Foundation
@@ -65,10 +66,25 @@ final class RowInteractionState: ObservableObject {
 /// and the AppKit hit-testing (`ShelfHostView`) so the drawn button and its clickable
 /// rect line up. Row height/spacing/padding live on `ShelfTheme`.
 enum RowMetrics {
+    /// Horizontal breathing room inside a labeled item chip.
+    static let labeledRowHorizontalPadding: CGFloat = 10
+    /// Gap between the file preview and its label.
+    static let labeledRowSpacing: CGFloat = 10
     /// Delete button diameter.
     static let deleteDiameter: CGFloat = 20
     /// Trailing inset of the delete button from the row's right edge.
     static let deleteTrailingInset: CGFloat = 7
+    /// Gap between the two trailing buttons when a row also offers a learned route.
+    static let trailingActionSpacing: CGFloat = 4
+
+    /// Distance from the row's trailing edge to the center of trailing button
+    /// `index` (0 is the outermost — the delete button). Shared by the SwiftUI
+    /// rendering and the AppKit hit math.
+    static func trailingActionCenterInset(index: Int) -> CGFloat {
+        deleteTrailingInset
+            + deleteDiameter / 2
+            + CGFloat(index) * (deleteDiameter + trailingActionSpacing)
+    }
     /// Total height of the grab-handle strip drawn above the rows when the shelf holds
     /// items. Part of the row-geometry contract: the SwiftUI layout, the AppKit hit
     /// math, and the controller's height estimate all include it.
@@ -79,6 +95,80 @@ enum RowMetrics {
     /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
     /// window-size estimate.
     static let emptyTileHeight: CGFloat = 64
+    /// Smart screenshot labels occupy a predictable compact card width. The placeholder
+    /// and generated name both live in this same lane, so OCR completion changes text
+    /// without moving the outer window.
+    static let stableSmartNameCardWidth: CGFloat = 240
+
+    static func stabilizedSmartNameCardWidth(maximumWidth: CGFloat) -> CGFloat {
+        min(max(0, maximumWidth), stableSmartNameCardWidth)
+    }
+
+    /// A labeled item is a compact chip instead of a bar spanning the row lane. The
+    /// width follows its visible title, remains capped by the available lane, and only
+    /// grows enough to hold the trailing action while that action is visible.
+    static func itemRowWidth(
+        title: String,
+        theme: ShelfTheme,
+        showsLabels: Bool,
+        showsAction: Bool,
+        showsRouteAction: Bool = false,
+        maximumWidth: CGFloat
+    ) -> CGFloat {
+        let boundedMaximum = max(0, maximumWidth)
+        guard showsLabels else { return boundedMaximum }
+
+        let fontWeight: NSFont.Weight = theme.style == .glass ? .medium : .regular
+        let font = NSFont.systemFont(ofSize: theme.titleSize, weight: fontWeight)
+        let titleWidth = ceil(
+            (title as NSString).size(withAttributes: [.font: font]).width
+        )
+        // The route button is only drawn on hover, but its room is reserved the whole
+        // time: a card that widened under the pointer would shift every other row. A
+        // theme with no trailing actions at all keeps none of this space.
+        var actionWidth: CGFloat = 0
+        if showsAction {
+            actionWidth = deleteDiameter + deleteTrailingInset
+            if showsRouteAction {
+                actionWidth += deleteDiameter + trailingActionSpacing
+            }
+        }
+        let desiredWidth =
+            labeledRowHorizontalPadding * 2
+            + theme.iconSize
+            + labeledRowSpacing
+            + titleWidth
+            + actionWidth
+        return min(boundedMaximum, desiredWidth)
+    }
+
+    /// Width of a populated card whose rows hug their titles. The user's Width setting
+    /// supplies `maximumWidth`; it is a truncation ceiling, not forced empty space.
+    static func contentHuggingCardWidth(
+        rows: [(title: String, showsAction: Bool, showsRouteAction: Bool)],
+        theme: ShelfTheme,
+        maximumWidth: CGFloat
+    ) -> CGFloat {
+        let boundedMaximum = max(0, maximumWidth)
+        let maximumRowWidth = max(
+            0,
+            boundedMaximum - theme.contentPadding * 2
+        )
+        let widestRow = rows.map {
+            itemRowWidth(
+                title: $0.title,
+                theme: theme,
+                showsLabels: true,
+                showsAction: $0.showsAction,
+                showsRouteAction: $0.showsRouteAction,
+                maximumWidth: maximumRowWidth
+            )
+        }.max() ?? 0
+        return min(
+            boundedMaximum,
+            widestRow + theme.contentPadding * 2
+        )
+    }
 
     /// Keep rows at the width they have at the standard (100%) card size when the
     /// card itself is widened. The extra width belongs to the card as breathing room,

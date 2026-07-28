@@ -127,24 +127,74 @@ struct ShelfTheme {
     }
 }
 
+/// The card's size, as one choice instead of two sliders.
+///
+/// Width and height used to be continuous and were *also* driven by three preset buttons,
+/// so the same state had two editors that had to be kept in sync — and a third persisted
+/// flag existed purely to remember which preset the numbers had come from. One enum
+/// removes all of that; the geometry code still reads a width multiplier and a height
+/// fraction, it just no longer has to wonder where they came from.
+enum ShelfSizePreset: String, CaseIterable {
+    case standard, square, tall, full
+
+    var displayName: String {
+        switch self {
+        case .standard: return "Standard"
+        case .square: return "Square"
+        case .tall: return "Tall"
+        case .full: return "Full"
+        }
+    }
+
+    /// Multiplier on the design width. Full is Tall's height at Square's width.
+    var widthScale: CGFloat {
+        switch self {
+        case .standard, .tall: return 1
+        case .square, .full: return 1.5
+        }
+    }
+
+    /// Minimum height as a fraction of the screen's usable height. Zero hugs the content;
+    /// anything above floors the card taller, the extra space acting as a drop target.
+    var heightFraction: CGFloat {
+        switch self {
+        case .standard: return 0
+        case .square: return Self.squareHeightFraction
+        case .tall, .full: return 0.8
+        }
+    }
+
+    /// The only preset whose height depends on the display. The empty card is 80pt wide
+    /// at 100%, so Square's 150% makes it 120pt, and the height floor has to resolve to
+    /// that same 120pt for the card to actually read as a square.
+    private static var squareHeightFraction: CGFloat {
+        let usableHeight = max(1, (NSScreen.main?.visibleFrame.height ?? 924) - 24)
+        return min(120 / usableHeight, 1)
+    }
+
+    /// Maps a stored width/height pair onto the closest preset, for installs upgrading
+    /// from the sliders.
+    static func nearest(widthScale: CGFloat, heightFraction: CGFloat) -> ShelfSizePreset {
+        let isWide = widthScale >= 1.25
+        if heightFraction >= 0.4 { return isWide ? .full : .tall }
+        return isWide ? .square : .standard
+    }
+}
+
 /// Holds the active style, persists it, and publishes changes so SwiftUI views and the
 /// AppKit edge tab can react live.
 @MainActor
 final class ThemeStore: ObservableObject {
-    private static let key = "Perch.ShelfStyle"
-    private static let labelsKey = "Perch.ShowsLabels"
-    private static let grabHandleKey = "Perch.ShowsGrabHandle"
-    private static let shadowKey = "Perch.ShowsShadow"
-    private static let widthScaleKey = "Perch.WidthScale"
-    private static let heightFractionKey = "Perch.HeightFraction"
-    private static let stacksItemsKey = "Perch.StacksItems"
-    private static let squarePresetKey = "Perch.SquarePresetSelected"
-
-    /// Bounds of the width slider (75%–200% of the design width).
-    static let widthScaleRange: ClosedRange<CGFloat> = 0.75...2
-    /// Bounds of the height slider: 0 = hug the content (the default), 1 = fill the
-    /// screen's usable height.
-    static let heightFractionRange: ClosedRange<CGFloat> = 0...1
+    private static let key = PerchSettings.shelfStyle
+    private static let labelsKey = PerchSettings.showsLabels
+    private static let grabHandleKey = PerchSettings.showsGrabHandle
+    private static let shadowKey = PerchSettings.showsShadow
+    private static let edgeTabKey = PerchSettings.showsEdgeTab
+    private static let sizePresetKey = PerchSettings.sizePreset
+    private static let stacksItemsKey = PerchSettings.stacksItems
+    // Legacy, read once to migrate an install off the sliders and then left alone.
+    private static let widthScaleKey = PerchSettings.widthScale
+    private static let heightFractionKey = PerchSettings.heightFraction
 
     @Published var style: ShelfStyle {
         didSet {
@@ -181,31 +231,27 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// The card's width multiplier, applied by the controller's width math. Driven live
-    /// by the Settings window's Width slider; callers keep it within `widthScaleRange` (the
-    /// slider is bounded, and the loaded value is clamped in init). Never reassign it
-    /// in here — on a @Published property that re-enters didSet and recurses to a crash.
-    @Published var widthScale: CGFloat {
+    /// Whether the accent handle at the shelf's dock is drawn while a drag is in
+    /// progress. Off leaves the tab invisible; its catch zone stays live, so dragging to
+    /// the edge still reveals the shelf.
+    @Published var showsEdgeTab: Bool {
         didSet {
-            guard widthScale != oldValue else { return }
-            UserDefaults.standard.set(Double(widthScale), forKey: Self.widthScaleKey)
+            guard showsEdgeTab != oldValue else { return }
+            UserDefaults.standard.set(showsEdgeTab, forKey: Self.edgeTabKey)
         }
     }
 
-    /// The card's minimum height, as a fraction of the screen's usable height. Zero
-    /// hugs the content (the original behavior); anything above floors the card taller,
-    /// with the extra space acting as a bigger drop target. Same didSet rules as
-    /// `widthScale`.
-    @Published var heightFraction: CGFloat {
+    /// The card's size.
+    @Published var sizePreset: ShelfSizePreset {
         didSet {
-            guard heightFraction != oldValue else { return }
-            UserDefaults.standard.set(Double(heightFraction), forKey: Self.heightFractionKey)
+            guard sizePreset != oldValue else { return }
+            UserDefaults.standard.set(sizePreset.rawValue, forKey: Self.sizePresetKey)
         }
     }
 
     /// Whether multiple entries overlap like a deck instead of making the shelf grow
-    /// vertically. Intended for square cards, but kept independent of the size sliders
-    /// so custom square dimensions work just as well as the preset.
+    /// vertically. Combined with the Square size it becomes a true square deck; the other
+    /// sizes stack too, they just keep their own proportions.
     @Published var stacksItems: Bool {
         didSet {
             guard stacksItems != oldValue else { return }
@@ -213,15 +259,11 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// Tracks the semantic Square preset separately from its slider values. The card's
-    /// width depends on whether it currently contains labeled rows, so fixed width and
-    /// height slider values alone cannot keep every populated state truly square.
-    @Published var squarePresetSelected: Bool {
-        didSet {
-            guard squarePresetSelected != oldValue else { return }
-            UserDefaults.standard.set(squarePresetSelected, forKey: Self.squarePresetKey)
-        }
-    }
+    /// Multiplier on the design width, applied by the controller's width math.
+    var widthScale: CGFloat { sizePreset.widthScale }
+
+    /// Minimum height as a fraction of the screen's usable height. Zero hugs the content.
+    var heightFraction: CGFloat { sizePreset.heightFraction }
 
     var theme: ShelfTheme { ShelfTheme.resolve(style) }
 
@@ -235,24 +277,25 @@ final class ThemeStore: ObservableObject {
         }
         showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
         showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? false
-        let clamp: (Double, ClosedRange<CGFloat>) -> CGFloat = {
-            min(max(CGFloat($0), $1.lowerBound), $1.upperBound)
-        }
-        let loadedWidthScale = (UserDefaults.standard.object(forKey: Self.widthScaleKey) as? Double)
-            .map { clamp($0, Self.widthScaleRange) } ?? 1
-        let loadedHeightFraction = (UserDefaults.standard.object(forKey: Self.heightFractionKey) as? Double)
-            .map { clamp($0, Self.heightFractionRange) } ?? 0
-        widthScale = loadedWidthScale
-        heightFraction = loadedHeightFraction
+        showsEdgeTab = UserDefaults.standard.object(forKey: Self.edgeTabKey) as? Bool ?? true
         stacksItems = UserDefaults.standard.bool(forKey: Self.stacksItemsKey)
-        if UserDefaults.standard.object(forKey: Self.squarePresetKey) != nil {
-            squarePresetSelected = UserDefaults.standard.bool(forKey: Self.squarePresetKey)
+
+        if let raw = UserDefaults.standard.string(forKey: Self.sizePresetKey),
+           let stored = ShelfSizePreset(rawValue: raw) {
+            sizePreset = stored
         } else {
-            // Migrate an existing Square selection from releases that stored only the
-            // preset's slider values (150% width plus a small nonzero height floor).
-            squarePresetSelected = abs(loadedWidthScale - 1.5) < 0.001
-                && loadedHeightFraction > 0
-                && loadedHeightFraction < 0.3
+            // Upgrading from the sliders: land on whichever preset the stored width and
+            // height were closest to, and write it so this runs exactly once.
+            let loadedWidthScale = (UserDefaults.standard.object(forKey: Self.widthScaleKey) as? Double)
+                .map { CGFloat($0) } ?? 1
+            let loadedHeightFraction = (UserDefaults.standard.object(forKey: Self.heightFractionKey) as? Double)
+                .map { CGFloat($0) } ?? 0
+            let migrated = ShelfSizePreset.nearest(
+                widthScale: loadedWidthScale,
+                heightFraction: loadedHeightFraction
+            )
+            sizePreset = migrated
+            UserDefaults.standard.set(migrated.rawValue, forKey: Self.sizePresetKey)
         }
     }
 

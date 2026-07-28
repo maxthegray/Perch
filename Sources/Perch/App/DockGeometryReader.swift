@@ -7,7 +7,7 @@ import ApplicationServices
 /// Perch access. Permission is requested only from the Settings toggle.
 @MainActor
 enum DockGeometryReader {
-    static let enabledKey = "Perch.SnapBesideDock"
+    static let enabledKey = PerchSettings.snapBesideDock
 
     struct Geometry {
         enum Orientation { case horizontal, vertical }
