@@ -363,6 +363,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.rebuildEdgeStrips()
         }
 
+        // Someone who already turned Smart Perch on keeps it, and needs the pane it lives
+        // in to still be reachable.
+        LabsAccess.unlockIfSmartPerchWasAlreadyOn()
+
         // Build Smart Perch only if the user has it on. Everything above this line is the
         // shelf, and works identically whether or not the feature exists. The stored
         // shelf has not been loaded yet, so `start` does the initial read.

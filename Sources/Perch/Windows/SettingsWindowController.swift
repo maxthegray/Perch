@@ -9,10 +9,12 @@ final class SettingsWindowController {
     /// The pane that carries the appearance controls, and therefore the one that summons
     /// the live preview shelf.
     private static let advancedPaneLabel = "Advanced"
+    private static let labsPaneLabel = "Labs"
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
     private var window: NSWindow?
+    private var labsObserver: NSObjectProtocol?
 
     /// Fires when the Appearance pane comes up, with the settings window's frame.
     /// The shelf controller pops the real shelf out beside the window so the
@@ -63,11 +65,7 @@ final class SettingsWindowController {
             size: NSSize(width: 560, height: 820),
             view: AdvancedSettingsPane(themeStore: themeStore)
         )
-        addPane(
-            to: tabs, label: "Labs", symbol: "flask",
-            size: NSSize(width: 560, height: 300),
-            view: LabsSettingsPane(themeStore: themeStore)
-        )
+        addLabsPaneIfUnlocked(to: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -85,8 +83,36 @@ final class SettingsWindowController {
             }
         }
 
+        // The unlock happens inside the General pane, which cannot reach the tab bar.
+        // Watch the flag instead so the pane appears on the fifth click rather than on
+        // the next launch.
+        labsObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification, object: nil, queue: .main
+        ) { [weak self, weak tabs] _ in
+            MainActor.assumeIsolated {
+                guard let self, let tabs else { return }
+                self.addLabsPaneIfUnlocked(to: tabs)
+            }
+        }
+
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Adds the Labs tab once unlocked. Locking is not undone here: the flag is only ever
+    /// set, and a pane that vanished under the user mid-session would be worse than one
+    /// that stays until the next launch.
+    private func addLabsPaneIfUnlocked(to tabs: NSTabViewController) {
+        guard LabsAccess.isUnlocked,
+              !tabs.tabViewItems.contains(where: { $0.label == Self.labsPaneLabel })
+        else {
+            return
+        }
+        addPane(
+            to: tabs, label: Self.labsPaneLabel, symbol: "flask",
+            size: NSSize(width: 560, height: 340),
+            view: LabsSettingsPane(themeStore: themeStore)
+        )
     }
 
     /// Reopening the window on a still-selected Advanced tab must re-summon the

@@ -60,6 +60,8 @@ enum PerchSettings {
     /// Whether Smart Perch displays what it has learned. Only meaningful while the master
     /// switch is on; off means it keeps learning with nothing on screen.
     static let smartPerchShowsSuggestions = "Perch.SmartPerchShowsSuggestions"
+    /// Whether the Labs pane is visible at all. Off until the user asks for it.
+    static let labsUnlocked = "Perch.LabsUnlocked"
 
     // MARK: - Internal state (not user-facing)
 

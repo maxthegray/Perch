@@ -12,6 +12,8 @@ struct GeneralSettingsPane: View {
 
     private let loginItem = LoginItemController()
     @State private var launchAtLogin = false
+    @State private var versionClicks = 0
+    @State private var showsUnlockConfirmation = false
 
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
 
@@ -53,12 +55,31 @@ struct GeneralSettingsPane: View {
 
             Section {
                 LabeledContent("Version", value: appVersion)
+                    // The way into Labs. Deliberately undiscoverable: nothing about the
+                    // row suggests it, and the count resets whenever the pane goes away.
+                    .contentShape(Rectangle())
+                    .onTapGesture { registerVersionClick() }
+                if showsUnlockConfirmation {
+                    Text("Labs enabled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
             }
         }
         .formStyle(.grouped)
+        .onDisappear { versionClicks = 0 }
+    }
+
+    private func registerVersionClick() {
+        guard !LabsAccess.isUnlocked else { return }
+        versionClicks += 1
+        guard versionClicks >= LabsAccess.unlockClickCount else { return }
+        versionClicks = 0
+        LabsAccess.unlock()
+        showsUnlockConfirmation = true
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.
