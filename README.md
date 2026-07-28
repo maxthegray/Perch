@@ -35,18 +35,21 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 
 ## Make it yours
 
-Settings are split into a few simple groups:
+**General** keeps the handful of choices that actually change what happens to your files: launch at login, whether dragging an item out moves it or leaves a copy, and which edges the shelf docks to. At least one edge always stays enabled.
 
-- Choose the Glass or Minimal style, show or hide names and shadows, and adjust the shelf's width and height.
-- Dock on the left, right, or beneath the notch. At least one edge always stays enabled.
-- Toggle shake-to-summon, automatic drag reveals, recent-download suggestions, movable shelves, and whether an empty floating shelf stays open.
-- Choose whether dragging an item out moves it or copies it.
+**Advanced** is everything else — the Glass or Minimal style, names and shadows, the shelf's width and height, shake-to-summon, automatic drag reveals, recent-download suggestions, how you move a floating shelf, and whether an empty one stays open.
 
 Perch remembers these choices between launches and can check for updates through Sparkle.
 
 ## Your files stay yours
 
 Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
+
+## Labs
+
+There is a third settings pane that ships hidden, holding an experiment called **Smart Perch**: it reads screenshots you drop so it can name them from their contents, and it remembers which folder you usually file a kind of item in so it can offer to put the next one there for you.
+
+It is off, and none of it runs until you turn it on — no database is created and no text recognition happens. Everything it learns is kept in a file on your Mac and never leaves it. If you want to look, click the version number in General five times.
 
 ## License
 
