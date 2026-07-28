@@ -13,10 +13,7 @@ import UniformTypeIdentifiers
 /// makes "off" mean no database file, no OCR, and nothing recorded, instead of merely
 /// hiding the results.
 ///
-/// The two presentation stores stay on the controller rather than in here: they are inert
-/// view-models that the SwiftUI content and the AppKit host bind to once at launch, and
-/// rebuilding this object when the switch flips must not pull those bindings out from
-/// under the view tree.
+/// The coordinator keeps the presentation stores stable while this feature is inactive.
 @MainActor
 final class SmartPerchFeature {
     private let recorder: SmartPerchDropRecorder
@@ -39,6 +36,8 @@ final class SmartPerchFeature {
     private var arrivalNameAnalysisByPath: [String: ArrivalNameAnalysis] = [:]
     private var arrivalNameTasksByPath: [String: Task<Void, Never>] = [:]
     private var attemptedArrivalNamePaths: Set<String> = []
+    private var backgroundTasks: [UUID: Task<Void, Never>] = [:]
+    private var isShuttingDown = false
 
     /// Fails when the user has Smart Perch off, and when the event log cannot be opened —
     /// a damaged or unwritable log must never stop the shelf itself from launching and
@@ -66,13 +65,31 @@ final class SmartPerchFeature {
 
     /// Drop in-flight analysis when the feature is being torn down (the user switched it
     /// off). The published stores are cleared by the controller, which owns them.
-    func shutDown() {
-        for task in arrivalNameTasksByPath.values {
+    func shutDown() async {
+        isShuttingDown = true
+        let tasks = Array(backgroundTasks.values) + Array(arrivalNameTasksByPath.values)
+        for task in tasks {
             task.cancel()
         }
+        for task in tasks {
+            await task.value
+        }
+        backgroundTasks.removeAll()
         arrivalNameTasksByPath.removeAll()
         arrivalNameAnalysisByPath.removeAll()
         attemptedArrivalNamePaths.removeAll()
+    }
+
+    private func launchTask(
+        priority: TaskPriority = .utility,
+        operation: @escaping @MainActor @Sendable () async -> Void
+    ) {
+        guard !isShuttingDown else { return }
+        let id = UUID()
+        backgroundTasks[id] = Task(priority: priority) { [weak self] in
+            await operation()
+            self?.backgroundTasks[id] = nil
+        }
     }
 
     // MARK: - Drops
@@ -84,6 +101,7 @@ final class SmartPerchFeature {
         screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil,
         prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
     ) {
+        guard !isShuttingDown else { return }
         let shelfItemID = item.id
         let fileURLs = item.backingFileURLs()
         let expectsSmartName = registerScreenshotPresentationIfNeeded(for: item)
@@ -94,7 +112,7 @@ final class SmartPerchFeature {
             ScreenshotWindowContextCapture.captureFreshContext(for: $0)
         }
 
-        Task(priority: .utility) { [weak self] in
+        launchTask { [weak self] in
             guard let self else { return }
             defer {
                 if expectsSmartName {
@@ -128,9 +146,10 @@ final class SmartPerchFeature {
         action: ArrivalSessionAction,
         affectedFileCount: Int
     ) {
+        guard !isShuttingDown else { return }
         guard let location = session.offers.first?.location else { return }
 
-        Task(priority: .utility) { [recorder] in
+        launchTask { [recorder] in
             do {
                 try await recorder.recordArrivalSessionInteraction(
                     sessionID: session.id,
@@ -190,7 +209,7 @@ final class SmartPerchFeature {
     // MARK: - Filename suggestions
 
     func loadFilenameSuggestions() {
-        Task(priority: .utility) { [weak self, recorder] in
+        launchTask { [weak self, recorder] in
             do {
                 let suggestions = try await recorder.prepareFilenameSuggestions()
                 guard let self else { return }
@@ -240,7 +259,7 @@ final class SmartPerchFeature {
     func didAcceptRename(_ rename: AcceptedRename, acceptedFilename: String) {
         smartNames.remove(for: rename.itemID)
 
-        Task(priority: .utility) { [recorder] in
+        launchTask { [recorder] in
             do {
                 try await recorder.acceptFilenameSuggestion(
                     fileID: rename.fileID,
@@ -257,7 +276,7 @@ final class SmartPerchFeature {
     func dismissFilenameSuggestion(for item: StoredItem) {
         guard let suggestion = smartNames.remove(for: item.id) else { return }
 
-        Task(priority: .utility) { [recorder] in
+        launchTask { [recorder] in
             do {
                 try await recorder.dismissFilenameSuggestion(fileID: suggestion.fileID)
             } catch {
@@ -277,6 +296,7 @@ final class SmartPerchFeature {
     /// emits before `store.items` is replaced, so reading the property there would match
     /// against the shelf as it was a moment ago.
     func refreshRouteSuggestions(items: [StoredItem]? = nil) {
+        guard !isShuttingDown else { return }
         let shelfItems = items ?? currentItems()
         let shelfItemIDs = shelfItems.map(\.id)
         guard !shelfItemIDs.isEmpty else {
@@ -284,7 +304,7 @@ final class SmartPerchFeature {
             return
         }
 
-        Task(priority: .utility) { [weak self, recorder] in
+        launchTask { [weak self, recorder] in
             do {
                 let suggestions = try await recorder.fetchRouteSuggestions(
                     for: shelfItemIDs
@@ -304,7 +324,7 @@ final class SmartPerchFeature {
     }
 
     func recordSuccessfulRoutes(_ routes: [ItemRouteEvent]) {
-        Task { @MainActor [weak self] in
+        launchTask { [weak self] in
             guard let self else { return }
             do {
                 try await recorder.recordSuccessfulRoutes(routes)
@@ -372,7 +392,7 @@ final class SmartPerchFeature {
             origin: .acceptedSuggestion
         )
 
-        Task(priority: .utility) { [weak self, recorder] in
+        launchTask { [weak self, recorder] in
             do {
                 try await recorder.recordSuccessfulRoutes([route])
             } catch {

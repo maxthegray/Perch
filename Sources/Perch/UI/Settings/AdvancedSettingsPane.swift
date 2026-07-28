@@ -4,7 +4,7 @@ import SwiftUI
 /// Tier two: how the shelf looks, when it appears, and how it moves.
 ///
 /// One tab holding two short lists rather than one long scroll. The segmented switcher
-/// keeps the outer tab bar at three (four with Labs) while letting each half be seen at
+/// keeps the outer tab bar compact while letting each half be seen at
 /// once, and it tells the window which half is showing so the live preview shelf only
 /// appears for Look — where there is actually something to preview.
 struct AdvancedSettingsPane: View {

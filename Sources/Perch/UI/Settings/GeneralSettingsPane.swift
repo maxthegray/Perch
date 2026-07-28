@@ -9,9 +9,10 @@ import SwiftUI
 /// further in still.
 struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
+    @ObservedObject var smartPerch: SmartPerchCoordinator
     @State private var launchAtLogin = false
     @State private var versionClicks = 0
-    @State private var showsUnlockConfirmation = false
+    @State private var showsSmartPerchPrompt = false
 
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
 
@@ -49,15 +50,10 @@ struct GeneralSettingsPane: View {
 
             Section {
                 LabeledContent("Version", value: "\(productName) \(appVersion)")
-                    // The way into Labs. Deliberately undiscoverable: nothing about the
+                    // The way into Smart Perch. Nothing about the
                     // row suggests it, and the count resets whenever the pane goes away.
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionClick() }
-                if showsUnlockConfirmation {
-                    Text("Smart Perch enabled.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
@@ -65,15 +61,25 @@ struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .onDisappear { versionClicks = 0 }
+        .alert("Enable Smart Perch?", isPresented: $showsSmartPerchPrompt) {
+            Button("Enable Smart Perch") {
+                smartPerch.setEnabled(true)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Smart Perch reads screenshots to suggest names and remembers where "
+                    + "you put things. Everything stays on this Mac."
+            )
+        }
     }
 
     private func registerVersionClick() {
-        guard !LabsAccess.isUnlocked else { return }
+        guard !SmartPerchAccess.isUnlocked else { return }
         versionClicks += 1
-        guard versionClicks >= LabsAccess.unlockClickCount else { return }
+        guard versionClicks >= SmartPerchAccess.unlockClickCount else { return }
         versionClicks = 0
-        LabsAccess.unlock()
-        showsUnlockConfirmation = true
+        showsSmartPerchPrompt = true
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.
@@ -91,6 +97,6 @@ struct GeneralSettingsPane: View {
     }
 
     private var productName: String {
-        UpdateTrackStore().displayName
+        smartPerch.isEnabled ? "Smart Perch" : "Perch"
     }
 }

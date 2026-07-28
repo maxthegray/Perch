@@ -1,15 +1,9 @@
 import SwiftUI
 
-/// Tier three: the experiments.
-///
-/// Everything here ships off and stays off unless the user goes looking. The captions are
-/// deliberately blunt about what gets recorded — Perch's whole pitch is that it does not
-/// watch you, so the one feature that does has to say so in plain words rather than
-/// describe itself in terms of what it can do for you.
-struct LabsSettingsPane: View {
-    @ObservedObject var themeStore: ThemeStore
+/// Settings for the optional, local Smart Perch features.
+struct SmartPerchSettingsPane: View {
+    @ObservedObject var smartPerch: SmartPerchCoordinator
 
-    @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = false
     @State private var showsUninstallConfirmation = false
 
     var body: some View {
@@ -23,18 +17,12 @@ struct LabsSettingsPane: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 12)
-                    Toggle("Smart Perch", isOn: $smartPerchEnabled)
+                    Toggle("Smart Perch", isOn: smartPerchBinding)
                         .toggleStyle(.switch)
                         .labelsHidden()
+                        .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
                 }
                 .padding(.vertical, 2)
-                .onChange(of: smartPerchEnabled) { _, enabled in
-                    themeStore.showsLabels =
-                        SmartPerchNamePreference.settingAfterSmartPerchChange(
-                            enabled: enabled,
-                            currentlyShowsNames: themeStore.showsLabels
-                        )
-                }
             }
 
             Section {
@@ -45,26 +33,36 @@ struct LabsSettingsPane: View {
 
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    Button("Uninstall Smart Perch", role: .destructive) {
+                    Button("Remove Smart Perch and Delete Data", role: .destructive) {
                         showsUninstallConfirmation = true
                     }
+                    .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
                     Text("Returns to regular Perch and permanently deletes everything Smart Perch learned. Shelf items are not affected.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+
+            if let errorMessage = smartPerch.errorMessage {
+                Section {
+                    Text(errorMessage)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
         }
         .formStyle(.grouped)
-        .alert("Uninstall Smart Perch?", isPresented: $showsUninstallConfirmation) {
-            Button("Uninstall and Delete Data", role: .destructive) {
-                Updater.shared.leaveSmartPerchAndDeleteData()
+        .alert("Remove Smart Perch?", isPresented: $showsUninstallConfirmation) {
+            Button("Remove and Delete Data", role: .destructive) {
+                Task {
+                    await smartPerch.removeData()
+                }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "This turns Smart Perch off, leaves its update track, and deletes its "
-                    + "database from this Mac. Shelf items and regular Perch settings "
-                    + "will not be affected."
+                "This turns Smart Perch off and deletes its database from this Mac. "
+                    + "Shelf items and regular Perch settings will not be affected."
             )
         }
     }
@@ -72,8 +70,15 @@ struct LabsSettingsPane: View {
     /// Says what the switch actually does in each position. Off has to read as *nothing
     /// happens*, because that is now true: no database, no analysis, no history.
     private var smartPerchCaption: String {
-        smartPerchEnabled
+        smartPerch.isEnabled
             ? "Names screenshots and remembers where you usually put things."
             : "Off — nothing you drop is analyzed or remembered."
+    }
+
+    private var smartPerchBinding: Binding<Bool> {
+        Binding(
+            get: { smartPerch.isEnabled },
+            set: { smartPerch.setEnabled($0) }
+        )
     }
 }

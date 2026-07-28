@@ -9,12 +9,13 @@ final class SettingsWindowController {
     /// The pane that carries the appearance controls, and therefore the one that summons
     /// the live preview shelf.
     private static let advancedPaneLabel = "Advanced"
-    private static let labsPaneLabel = "Smart Perch"
+    private static let smartPerchPaneLabel = "Smart Perch"
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
+    private let smartPerch: SmartPerchCoordinator
     private var window: NSWindow?
-    private var labsObserver: NSObjectProtocol?
+    private var smartPerchObserver: NSObjectProtocol?
     /// Which tab is up, and which half of Advanced it is showing. The preview shelf is
     /// only right for the Look half, and neither piece of state can be derived from the
     /// other — the tab bar cannot see inside the pane, and the pane is rebuilt often
@@ -39,9 +40,14 @@ final class SettingsWindowController {
     var onWindowClosed: (() -> Void)?
     private var closeObserver: NSObjectProtocol?
 
-    init(themeStore: ThemeStore, edgeSettings: EdgeSettings) {
+    init(
+        themeStore: ThemeStore,
+        edgeSettings: EdgeSettings,
+        smartPerch: SmartPerchCoordinator
+    ) {
         self.themeStore = themeStore
         self.edgeSettings = edgeSettings
+        self.smartPerch = smartPerch
     }
 
     func show() {
@@ -63,7 +69,7 @@ final class SettingsWindowController {
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
             size: NSSize(width: 560, height: 340),
-            view: GeneralSettingsPane()
+            view: GeneralSettingsPane(smartPerch: smartPerch)
         )
         let advanced = NSHostingController(
             rootView: AdvancedSettingsPane(
@@ -86,7 +92,7 @@ final class SettingsWindowController {
             size: NSSize(width: 560, height: advancedSection.preferredHeight),
             controller: advanced
         )
-        syncLabsPane(in: tabs)
+        syncSmartPerchPane(in: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -104,15 +110,14 @@ final class SettingsWindowController {
             }
         }
 
-        // Unlocking happens in the General pane and hiding happens in the Labs pane;
-        // neither can reach the tab bar. Watch the flag instead so the tab appears on the
-        // fifth click and disappears on Hide, rather than at the next launch.
-        labsObserver = NotificationCenter.default.addObserver(
+        // The activation prompt and removal action cannot reach the tab controller.
+        // Watch the persisted access flag so its pane appears and disappears immediately.
+        smartPerchObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self, weak tabs] _ in
             MainActor.assumeIsolated {
                 guard let self, let tabs else { return }
-                self.syncLabsPane(in: tabs)
+                self.syncSmartPerchPane(in: tabs)
             }
         }
 
@@ -120,11 +125,13 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Adds or removes the Labs tab to match the unlock flag.
-    private func syncLabsPane(in tabs: NSTabViewController) {
-        let existing = tabs.tabViewItems.firstIndex { $0.label == Self.labsPaneLabel }
+    /// Adds or removes the Smart Perch tab to match its access flag.
+    private func syncSmartPerchPane(in tabs: NSTabViewController) {
+        let existing = tabs.tabViewItems.firstIndex {
+            $0.label == Self.smartPerchPaneLabel
+        }
 
-        guard LabsAccess.isUnlocked else {
+        guard SmartPerchAccess.isUnlocked else {
             guard let existing else { return }
             // Removing the selected tab would leave the tab view with no selection and a
             // stale window title, so step back to General first.
@@ -137,9 +144,9 @@ final class SettingsWindowController {
 
         guard existing == nil else { return }
         addPane(
-            to: tabs, label: Self.labsPaneLabel, symbol: "sparkles",
+            to: tabs, label: Self.smartPerchPaneLabel, symbol: "sparkles",
             size: NSSize(width: 560, height: 330),
-            view: LabsSettingsPane(themeStore: themeStore)
+            view: SmartPerchSettingsPane(smartPerch: smartPerch)
         )
     }
 

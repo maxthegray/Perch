@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         SmartPerchDataRemoval.completeIfPending()
-        SmartPerchEnrollment.completeIfPending()
+        LegacySmartPerchMigration.run()
         do {
             let controller = try ShelfController()
             self.controller = controller

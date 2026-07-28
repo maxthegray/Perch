@@ -3,34 +3,8 @@ import Foundation
 enum SmartPerchDataRemoval {
     static let pendingKey = "Perch.SmartPerchDataRemovalPending"
 
-    private static let enabledKey = "Perch.SmartPerchEnabled"
-    private static let suggestionsKey = "Perch.SmartPerchShowsSuggestions"
-    private static let paneUnlockedKey = "Perch.LabsUnlocked"
-    private static let showsLabelsKey = "Perch.ShowsLabels"
-
-    static func request(
-        defaults: UserDefaults = .standard,
-        fileManager: FileManager = .default,
-        databaseURL: URL? = nil
-    ) {
-        UpdateTrackStore(defaults: defaults, bundledTrack: .smart).leaveSmartPerch()
-        defaults.set(false, forKey: enabledKey)
-        defaults.removeObject(forKey: suggestionsKey)
-        defaults.set(false, forKey: paneUnlockedKey)
-        let showsLabels = defaults.object(forKey: showsLabelsKey) as? Bool ?? true
-        defaults.set(
-            SmartPerchNamePreference.settingAfterSmartPerchChange(
-                enabled: false,
-                currentlyShowsNames: showsLabels,
-                defaults: defaults
-            ),
-            forKey: showsLabelsKey
-        )
+    static func markPending(defaults: UserDefaults = .standard) {
         defaults.set(true, forKey: pendingKey)
-
-        if let databaseURL = databaseURL ?? defaultDatabaseURL(fileManager: fileManager) {
-            try? removeData(at: databaseURL, fileManager: fileManager)
-        }
     }
 
     static func completeIfPending(
@@ -39,17 +13,27 @@ enum SmartPerchDataRemoval {
         databaseURL: URL? = nil
     ) {
         guard defaults.bool(forKey: pendingKey) else { return }
-        guard let databaseURL = databaseURL ?? defaultDatabaseURL(fileManager: fileManager)
-        else {
+        guard let databaseURL = databaseURL ?? defaultDatabaseURL(fileManager: fileManager) else {
+            finishPreferences(defaults: defaults)
             return
         }
 
         do {
-            try removeData(at: databaseURL, fileManager: fileManager)
-            defaults.removeObject(forKey: pendingKey)
+            try removeNow(databaseURL: databaseURL, fileManager: fileManager)
+            finishPreferences(defaults: defaults)
         } catch {
             NSLog("Perch could not finish removing Smart Perch data: \(error)")
         }
+    }
+
+    static func finishPreferences(defaults: UserDefaults = .standard) {
+        defaults.set(false, forKey: PerchSettings.smartPerchEnabled)
+        defaults.set(false, forKey: PerchSettings.smartPerchUnlocked)
+        defaults.removeObject(forKey: PerchSettings.smartPerchAutoEnabledNames)
+        defaults.removeObject(forKey: "Perch.SmartPerchShowsSuggestions")
+        defaults.removeObject(forKey: LegacySmartPerchMigration.selectionKey)
+        defaults.removeObject(forKey: LegacySmartPerchMigration.enrollmentPendingKey)
+        defaults.removeObject(forKey: pendingKey)
     }
 
     private static func defaultDatabaseURL(fileManager: FileManager) -> URL? {
@@ -63,7 +47,10 @@ enum SmartPerchDataRemoval {
         .appendingPathComponent("smart-perch.sqlite", isDirectory: false)
     }
 
-    private static func removeData(at databaseURL: URL, fileManager: FileManager) throws {
+    static func removeNow(
+        databaseURL: URL,
+        fileManager: FileManager = .default
+    ) throws {
         let paths = [
             databaseURL,
             URL(fileURLWithPath: databaseURL.path + "-wal"),

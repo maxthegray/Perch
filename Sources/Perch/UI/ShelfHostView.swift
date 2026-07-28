@@ -1338,7 +1338,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(settings)
 
         menu.addItem(.separator())
-        let productName = UpdateTrackStore().displayName
+        let productName = PerchProductIdentity.displayName
         let quit = NSMenuItem(
             title: "Quit \(productName)",
             action: #selector(quitAction(_:)),
@@ -1367,7 +1367,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         case let .summary(session, .addAll):
             return "Add All \(session.offers.count) Downloads"
         case .offer:
-            return "Add to \(UpdateTrackStore().displayName)"
+            return "Add to \(PerchProductIdentity.displayName)"
         }
     }
 

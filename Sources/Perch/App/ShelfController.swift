@@ -18,14 +18,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
-    /// Smart Perch, or `nil` when the user has it switched off (and when its event log
-    /// cannot be opened — a damaged log must not stop the shelf from launching). Nil is
-    /// the whole feature being absent: no database, no OCR, nothing recorded.
-    private var smart: SmartPerchFeature?
-    /// Inert view-models when `smart` is nil. They stay on the controller so rebuilding
-    /// the feature on a toggle cannot pull the bindings out from under the view tree.
-    private let smartNames = SmartNameStore()
-    private let routeSuggestions = RouteSuggestionStore()
+    private let smartPerch: SmartPerchCoordinator
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let dockSnapPreview = DockSnapPreviewWindow()
@@ -127,7 +120,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var labelsCancellable: AnyCancellable?
     private var smartNamesCancellable: AnyCancellable?
     private var routeSuggestionsCancellable: AnyCancellable?
-    private var smartPerchEnabledCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
     private var edgeTabCancellable: AnyCancellable?
@@ -191,7 +183,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         store = ItemStore(holding: holding)
         ledger = ProvenanceLedger(holding: holding)
         historyWindow = HistoryWindowController(ledger: ledger)
-        settingsWindow = SettingsWindowController(themeStore: themeStore, edgeSettings: edgeSettings)
+        smartPerch = SmartPerchCoordinator(
+            databaseURL: holding.smartEventLogFile,
+            arrivals: arrivals,
+            store: store,
+            themeStore: themeStore
+        )
+        settingsWindow = SettingsWindowController(
+            themeStore: themeStore,
+            edgeSettings: edgeSettings,
+            smartPerch: smartPerch
+        )
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
@@ -202,8 +204,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             themeStore: themeStore,
             ledger: ledger,
             arrivals: arrivals,
-            smartNames: smartNames,
-            routeSuggestions: routeSuggestions
+            smartNames: smartPerch.smartNames,
+            routeSuggestions: smartPerch.routeSuggestions
         )
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
@@ -223,7 +225,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel.contentView = dropView
 
         hostView.onRecordSuccessfulRoutes = { [weak self] routes in
-            self?.smart?.recordSuccessfulRoutes(routes)
+            self?.smartPerch.recordSuccessfulRoutes(routes)
         }
 
         // "Close Shelf" in the context menu dismisses the free shelf without removing
@@ -361,70 +363,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.rebuildEdgeStrips()
         }
 
-        // Someone who already turned Smart Perch on keeps it, and needs the pane it lives
-        // in to still be reachable.
-        LabsAccess.unlockIfSmartPerchWasAlreadyOn()
-
-        // Build Smart Perch only if the user has it on. Everything above this line is the
-        // shelf, and works identically whether or not the feature exists. The stored
-        // shelf has not been loaded yet, so `start` does the initial read.
-        reconcileSmartPerchFeature(loadingExistingState: false)
-    }
-
-    /// Construct or tear down Smart Perch to match the master switch.
-    ///
-    /// Turning it off releases the event log and the OCR worker instead of leaving them
-    /// running behind a hidden UI, which is the whole point of the switch. Turning it on
-    /// re-reads what was learned previously — the database is kept on disk, so the
-    /// three-session count does not restart.
-    private func reconcileSmartPerchFeature(loadingExistingState: Bool = true) {
-        let shouldBeActive = SmartPerchSettings.isEnabled
-        let presentationChanged = smartNames.isEnabled != shouldBeActive
-            || routeSuggestions.isEnabled != shouldBeActive
-        smartNames.isEnabled = shouldBeActive
-        routeSuggestions.isEnabled = shouldBeActive
-        if presentationChanged {
-            scheduleAsynchronousNameResize()
+        smartPerch.onPresentationChanged = { [weak self] in
+            self?.scheduleAsynchronousNameResize()
         }
-        guard shouldBeActive != (smart != nil) else { return }
-
-        guard shouldBeActive else {
-            smart?.shutDown()
-            smart = nil
-            smartNames.reset()
-            routeSuggestions.replace(with: [:])
-            arrivals.clearSmartNames()
-            hostView.routeLearningActive = false
-            scheduleAsynchronousNameResize()
-            return
+        smartPerch.onActivityChanged = { [weak self] active in
+            self?.hostView.routeLearningActive = active
         }
-
-        smart = SmartPerchFeature(
-            databaseURL: holding.smartEventLogFile,
-            smartNames: smartNames,
-            routeSuggestions: routeSuggestions,
-            arrivals: arrivals,
-            currentItems: { [weak self] in self?.store.items ?? [] }
-        )
-        hostView.routeLearningActive = smart != nil
-        guard loadingExistingState else { return }
-        smart?.registerStoredScreenshotPresentations()
-        smart?.loadFilenameSuggestions()
-        smart?.refreshRouteSuggestions()
-        smart?.prepareArrivalSmartNames()
+        smartPerch.bootstrap()
     }
 
     /// Build the windows, load the store, and start observing drags.
     func start() {
         do {
             try ShelfPersistenceLoader.load(store: store, ledger: ledger)
-            smart?.registerStoredScreenshotPresentations()
             NSLog("Perch loaded \(store.items.count) stored item(s)")
         } catch {
             NSLog("Perch failed to load stored items: \(error)")
         }
-        smart?.loadFilenameSuggestions()
-        smart?.refreshRouteSuggestions()
+        smartPerch.loadExistingState()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -554,25 +510,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // OCR/window-context names arrive after the item itself. Re-fit once the label
         // projection changes so the panel follows the generated name instead of keeping
         // the width of the temporary screenshot filename.
-        smartNamesCancellable = smartNames.$suggestionsByItemID
+        smartNamesCancellable = smartPerch.smartNames.$suggestionsByItemID
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.scheduleAsynchronousNameResize()
             }
 
-        // The Smart Perch switch lives in UserDefaults, like every other toggle. It
-        // builds or tears down the complete feature whenever the setting changes.
-        smartPerchEnabledCancellable = NotificationCenter.default
-            .publisher(for: UserDefaults.didChangeNotification)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.reconcileSmartPerchFeature()
-            }
-
         // A learned route reserves a second trailing slot, so the card's width follows
         // suggestions appearing and being resolved. Same deferred re-fit as Smart Names.
-        routeSuggestionsCancellable = routeSuggestions.$suggestionsByItemID
+        routeSuggestionsCancellable = smartPerch.routeSuggestions.$suggestionsByItemID
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
@@ -645,7 +592,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// mutations that change what should be offered.
     private func refreshArrivals(markRevealed: Bool = false) {
         arrivals.refresh(excluding: arrivalExclusions(), markRevealed: markRevealed)
-        smart?.prepareArrivalSmartNames()
+        smartPerch.prepareArrivalSmartNames()
     }
 
     /// A watched folder changed. Wait for Chrome's temporary download + rename burst
@@ -721,7 +668,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
-        let prefetchedOCRResult = smart?.takeArrivalAnalysis(forPath: offer.id)
+        let prefetchedOCRResult = smartPerch.takeArrivalAnalysis(forPath: offer.id)
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
             return nil
@@ -816,7 +763,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func expandArrivalSession(_ session: ArrivalSession) {
         arrivals.expand(session)
-        smart?.prepareArrivalSmartNames()
+        smartPerch.prepareArrivalSmartNames()
         recordArrivalSessionInteraction(
             session,
             action: .expanded,
@@ -849,7 +796,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         action: ArrivalSessionAction,
         affectedFileCount: Int
     ) {
-        smart?.recordArrivalSessionInteraction(
+        smartPerch.recordArrivalSessionInteraction(
             session,
             action: action,
             affectedFileCount: affectedFileCount
@@ -863,8 +810,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         _ proposedFilename: String,
         for item: StoredItem
     ) {
-        guard let smart,
-              let rename = smart.plannedRename(of: item, to: proposedFilename)
+        guard let rename = smartPerch.plannedRename(of: item, to: proposedFilename)
         else {
             return
         }
@@ -877,31 +823,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             guard let acceptedFilename = renamedItem.metadata.backingFileNames.first else {
                 return
             }
-            smart.didAcceptRename(rename, acceptedFilename: acceptedFilename)
+            smartPerch.didAcceptRename(rename, acceptedFilename: acceptedFilename)
         } catch {
             NSLog("Perch could not rename \(item.metadata.title) to \(proposedFilename): \(error)")
         }
     }
 
     private func dismissFilenameSuggestion(for item: StoredItem) {
-        smart?.dismissFilenameSuggestion(for: item)
+        smartPerch.dismissFilenameSuggestion(for: item)
     }
 
     /// Carry out a learned route: move the item's files into the folder it has always
     /// gone to, then let Smart Perch record the trip.
     private func fileItemAtSuggestedRoute(_ item: StoredItem) {
-        guard let smart, let filing = smart.beginFilingAtSuggestedRoute(item) else {
+        guard let filing = smartPerch.beginFilingAtSuggestedRoute(item) else {
             return
         }
 
         let moved = store.fileItems([item], into: filing.folder)
         guard !moved.isEmpty else {
-            smart.abandonFiling(filing)
+            smartPerch.abandonFiling(filing)
             return
         }
 
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-        smart.didFileAtSuggestedRoute(filing)
+        smartPerch.didFileAtSuggestedRoute(filing)
     }
 
     /// React to the item list changing: shrink smoothly on removals, and run the
@@ -911,7 +857,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func shelfItemsDidChange(_ items: [StoredItem]) {
         let previousCount = lastItemCount
         sizingItems = items
-        smart?.itemsDidChange(items, countChanged: items.count != previousCount)
+        smartPerch.itemsDidChange(items, countChanged: items.count != previousCount)
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
@@ -2193,7 +2139,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         var usesStabilizedNameWidth = false
         let itemRows = sizingItems.compactMap { item
             -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
-            let name = smartNames.presentation(
+            let name = smartPerch.smartNames.presentation(
                 for: item.id,
                 originalTitle: item.metadata.title
             )
@@ -2204,21 +2150,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return (
                 title: name.title,
                 showsAction: theme.showsDeleteButton,
-                showsRouteAction: routeSuggestions.suggestion(for: item.id) != nil
+                showsRouteAction: smartPerch.routeSuggestions.suggestion(for: item.id) != nil
             )
         }
         let ghostRows = showsGhosts ? arrivals.visibleGhosts.compactMap {
             ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
-            if smartNames.isEnabled, ghost.offer?.usesStableScreenshotName == true {
+            if smartPerch.smartNames.isEnabled,
+               ghost.offer?.usesStableScreenshotName == true {
                 usesStabilizedNameWidth = true
                 return nil
             }
             return (
                 title: ghost.displayTitle(
-                    smartName: smartNames.isEnabled
+                    smartName: smartPerch.smartNames.isEnabled
                         ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
                         : nil,
-                    usesScreenshotPlaceholder: smartNames.isEnabled
+                    usesScreenshotPlaceholder: smartPerch.smartNames.isEnabled
                 ),
                 // Match an adopted row's stable trailing slot. The ghost does not draw
                 // the arrow yet, but reserving its room prevents title truncation and
@@ -2914,7 +2861,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil,
         prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
     ) {
-        smart?.recordDrop(
+        smartPerch.recordDrop(
             item,
             context: context,
             payloadKind: payloadKind,
@@ -2927,6 +2874,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func registerScreenshotPresentationIfNeeded(
         for item: StoredItem
     ) -> Bool {
-        smart?.registerScreenshotPresentationIfNeeded(for: item) ?? false
+        smartPerch.registerScreenshotPresentationIfNeeded(for: item)
     }
 }

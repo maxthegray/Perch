@@ -5,8 +5,8 @@ import Foundation
 /// Keys used to live on whichever type happened to read them, which meant the controller
 /// reached into a *view* (`ShelfHostView.shakeToSummonKey`) for a flag the view never
 /// touched, and the same string could be spelled twice in two files. Declaring them here
-/// keeps the settings tiers legible — General, Advanced, Labs — and makes a collision or a
-/// typo a compile error rather than a silently separate preference.
+/// keeps the settings tiers legible — General, Advanced, Smart Perch — and makes a
+/// collision or typo a compile error rather than a silently separate preference.
 ///
 /// The string values are load-bearing: they are what is already on disk in every install.
 /// Renaming a constant is free; changing its value silently resets that preference.
@@ -55,13 +55,13 @@ enum PerchSettings {
 
     static let snapBesideDock = "Perch.SnapBesideDock"
 
-    // MARK: - Labs
+    // MARK: - Smart Perch
 
     /// Master switch for Smart Perch. Off means the feature is never built: no database,
     /// no OCR, nothing recorded.
     static let smartPerchEnabled = "Perch.SmartPerchEnabled"
-    /// Whether the Labs pane is visible at all. Off until the user asks for it.
-    static let labsUnlocked = "Perch.LabsUnlocked"
+    /// Whether the Smart Perch pane is visible. Off until the user asks for it.
+    static let smartPerchUnlocked = "Perch.LabsUnlocked"
 
     // MARK: - Internal state (not user-facing)
 
