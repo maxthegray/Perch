@@ -37,16 +37,16 @@ struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .onDisappear { versionClicks = 0 }
-        .alert("Join Smart Perch Labs?", isPresented: $showsSmartPerchPrompt) {
-            Button("Join and Update") {
+        .alert("wanna try smart perch?", isPresented: $showsSmartPerchPrompt) {
+            Button("yep, update me") {
                 Updater.shared.joinSmartPerch()
             }
-            Button("Cancel", role: .cancel) {}
+            Button("not right now", role: .cancel) {}
         } message: {
             Text(
-                "Smart Perch reads screenshots you add to suggest names and remembers "
-                    + "where you file items. Its learning stays on this Mac. Perch will "
-                    + "switch to the experimental Smart Perch update track."
+                "it can name screenshots and remember where you usually put things. "
+                    + "everything it learns stays on this mac. this switches you over "
+                    + "to the smart perch updates."
             )
         }
     }
