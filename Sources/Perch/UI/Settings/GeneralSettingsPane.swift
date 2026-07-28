@@ -54,7 +54,7 @@ struct GeneralSettingsPane: View {
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionClick() }
                 if showsUnlockConfirmation {
-                    Text("Labs enabled.")
+                    Text("smart perch is here :)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

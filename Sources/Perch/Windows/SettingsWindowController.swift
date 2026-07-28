@@ -9,7 +9,7 @@ final class SettingsWindowController {
     /// The pane that carries the appearance controls, and therefore the one that summons
     /// the live preview shelf.
     private static let advancedPaneLabel = "Advanced"
-    private static let labsPaneLabel = "Labs"
+    private static let labsPaneLabel = "smart perch"
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
@@ -137,7 +137,7 @@ final class SettingsWindowController {
 
         guard existing == nil else { return }
         addPane(
-            to: tabs, label: Self.labsPaneLabel, symbol: "flask",
+            to: tabs, label: Self.labsPaneLabel, symbol: "sparkles",
             size: NSSize(width: 560, height: 380),
             view: LabsSettingsPane(themeStore: themeStore)
         )

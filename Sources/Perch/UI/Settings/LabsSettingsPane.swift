@@ -14,16 +14,16 @@ struct LabsSettingsPane: View {
 
     var body: some View {
         Form {
-            Section("Smart Perch") {
+            Section("smart perch") {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Smart Perch")
+                        Text("smart perch")
                         Text(smartPerchCaption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 12)
-                    Toggle("Smart Perch", isOn: $smartPerchEnabled)
+                    Toggle("smart perch", isOn: $smartPerchEnabled)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
@@ -41,13 +41,13 @@ struct LabsSettingsPane: View {
 
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Show suggestions")
-                        Text("Off keeps learning in the background with nothing on screen.")
+                        Text("show suggestions")
+                        Text("turn this off if you want it to keep learning quietly.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 12)
-                    Toggle("Show suggestions", isOn: $showsSuggestions)
+                    Toggle("show suggestions", isOn: $showsSuggestions)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
@@ -56,15 +56,15 @@ struct LabsSettingsPane: View {
             }
 
             Section {
-                Text("Smart Perch reads screenshots you drop to name them, and remembers which folder you file things in. It is kept in a database on this Mac and never leaves it.")
+                Text("it can read screenshots to name them and remember where you usually put things. everything stays in a little database on this mac. nothing gets sent anywhere.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    Button("Hide Labs") { hideLabs() }
-                    Text("Switches the experiments off and puts this tab away. Nothing already learned is deleted. Click the version number in General five times to bring it back.")
+                    Button("hide smart perch") { hideLabs() }
+                    Text("turns it off and tucks this tab away. it keeps what it already learned. click the version in general five times if you want it back.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -84,7 +84,7 @@ struct LabsSettingsPane: View {
     /// happens*, because that is now true: no database, no analysis, no history.
     private var smartPerchCaption: String {
         smartPerchEnabled
-            ? "Names screenshots from their contents and offers the folder you usually file an item in."
-            : "Off. Perch records nothing about what you drop and runs no analysis."
+            ? "on — i'll name screenshots and remember where you usually put things."
+            : "off — i won't analyze or remember anything you drop."
     }
 }

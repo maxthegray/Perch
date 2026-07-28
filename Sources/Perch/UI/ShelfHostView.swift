@@ -1200,15 +1200,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menuTargetFilenameSuggestion = suggestion.suggestedFilename
 
                 let smartName = NSMenuItem(
-                    title: "Smart Name",
+                    title: "smart name",
                     action: nil,
                     keyEquivalent: ""
                 )
-                let smartNameMenu = NSMenu(title: "Smart Name")
+                let smartNameMenu = NSMenu(title: "smart name")
                 smartNameMenu.autoenablesItems = false
 
                 let acceptSuggestion = NSMenuItem(
-                    title: "Keep “\(suggestion.displayName)” as Filename",
+                    title: "use “\(suggestion.displayName)” as the filename",
                     action: #selector(acceptFilenameSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1216,7 +1216,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 smartNameMenu.addItem(acceptSuggestion)
 
                 let dismissSuggestion = NSMenuItem(
-                    title: "Dismiss Suggestion",
+                    title: "nah, keep the old name",
                     action: #selector(dismissFilenameSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1238,7 +1238,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                     for: suggestion.destination
                 )
                 let fileItem = NSMenuItem(
-                    title: "Send to “\(destinationName)”",
+                    title: "send to “\(destinationName)”",
                     action: #selector(fileItemAtSuggestedRouteAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1246,7 +1246,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menu.addItem(fileItem)
 
                 let dismissRoute = NSMenuItem(
-                    title: "Don't Suggest for This Item",
+                    title: "don't suggest this for this item",
                     action: #selector(dismissRouteSuggestionAction(_:)),
                     keyEquivalent: ""
                 )

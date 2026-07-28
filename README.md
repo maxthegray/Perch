@@ -8,8 +8,8 @@
   A drag-and-drop shelf for macOS.
 </p>
 
-> This branch contains the experimental Smart Perch product track. Stable Perch lives
-> on `main`; normal development for its next release lives on `beta`.
+> psst — this is the smart perch branch. regular perch lives on `main`, and its next
+> normal update gets worked on over in `beta`.
 
 Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
@@ -21,7 +21,7 @@ It also understands file promises from apps like Photos, Mail, and Messages, so 
 
 ## Install
 
-1. Download `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases/latest).
+1. Download the newest `Perch-Smart.zip` from [Releases](https://github.com/maxthegray/Perch/releases).
 2. Unzip it.
 3. Drag `Perch.app` into your Applications folder.
 4. Open Perch from Applications.
@@ -48,11 +48,11 @@ Perch remembers these choices between launches and can check for updates through
 
 Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
 
-## Labs
+## smart perch
 
-There is a third settings pane that ships hidden, holding an experiment called **Smart Perch**: it reads screenshots you drop so it can name them from their contents, and it remembers which folder you usually file a kind of item in so it can offer to put the next one there for you.
+smart perch can read screenshots you drop so it can give them useful names. it also remembers where you tend to put things and can offer that folder next time.
 
-It is off, and none of it runs until you turn it on — no database is created and no text recognition happens. Everything it learns is kept in a file on your Mac and never leaves it. If you want to look, click the version number in General five times.
+it stays completely off until you turn it on — no database, no text recognition, nothing. whatever it learns stays in a file on your mac and never leaves it. click the version number in general five times if you want to peek.
 
 ## License
 
