@@ -122,10 +122,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shownEdge: ShelfEdge = .right
     private var itemsCancellable: AnyCancellable?
     private var styleCancellable: AnyCancellable?
-    private var heightCancellable: AnyCancellable?
-    private var widthCancellable: AnyCancellable?
+    private var sizePresetCancellable: AnyCancellable?
     private var stacksItemsCancellable: AnyCancellable?
-    private var squarePresetCancellable: AnyCancellable?
     private var labelsCancellable: AnyCancellable?
     private var smartNamesCancellable: AnyCancellable?
     private var routeSuggestionsCancellable: AnyCancellable?
@@ -518,22 +516,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.resizeToFitVisible()
             }
 
-        // The height/width sliders stream values continuously while dragged — re-fit the
-        // window on each one, un-animated so the card tracks the thumb instead of
-        // lagging behind a queue of animations. Same willSet/next-pass dance as the
-        // others. Neither slider changes the content's natural height (the height floor
-        // is pure window frame), so the measured height stays valid.
-        heightCancellable = themeStore.$heightFraction
+        // Size is one discrete choice now rather than two sliders streaming values, so
+        // this re-fit animates: there is no thumb for the card to track. Changing it does
+        // not change the content's natural height (the height floor is pure window
+        // frame), so the measured height stays valid. Same willSet/next-pass dance as the
+        // others.
+        sizePresetCancellable = themeStore.$sizePreset
             .dropFirst()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
-                self?.resizeToFitVisible(animated: false)
-            }
-        widthCancellable = themeStore.$widthScale
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
-                self?.resizeToFitVisible(animated: false)
+                self?.resizeToFitVisible()
             }
         stacksItemsCancellable = themeStore.$stacksItems
             .dropFirst()
@@ -543,12 +535,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 // Drop the old measurement so the matching estimate drives the resize
                 // until SwiftUI reports the new layout.
                 self?.measuredContentHeight = nil
-                self?.resizeToFitVisible()
-            }
-        squarePresetCancellable = themeStore.$squarePresetSelected
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] _ in
                 self?.resizeToFitVisible()
             }
 
@@ -2127,10 +2113,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         )
     }
 
-    /// The Square preset becomes a true square deck when stacking is enabled. Custom
-    /// slider dimensions still stack without being forced to a preset aspect ratio.
+    /// A stacked shelf is a square deck. This used to also require the Square preset,
+    /// because the sliders could put the card at any aspect ratio; with size reduced to
+    /// four presets, stacking is the whole condition.
     private var usesSquareStack: Bool {
-        themeStore.stacksItems && themeStore.squarePresetSelected
+        themeStore.stacksItems
     }
 
     /// The content height with the user's Height slider applied: a floor at that

@@ -3,13 +3,11 @@ import SwiftUI
 
 /// Tier one: what someone who just downloaded Perch needs and nothing else.
 ///
-/// The bar for appearing here is that leaving it out would either surprise the user
-/// (drag-out changing whether their file survives) or leave the shelf unreachable (no
-/// enabled edges). Everything else — how it looks, when it appears, how it moves — lives
-/// in Advanced, and the learning stack lives further in still.
+/// The bar for appearing here is that getting it wrong would surprise the user about what
+/// happened to their files — which is really just drag-out's move-or-copy. Everything
+/// else, including where the shelf docks, lives in Advanced, and the learning stack lives
+/// further in still.
 struct GeneralSettingsPane: View {
-    @ObservedObject var edgeSettings: EdgeSettings
-
     private let loginItem = LoginItemController()
     @State private var launchAtLogin = false
     @State private var versionClicks = 0
@@ -47,10 +45,6 @@ struct GeneralSettingsPane: View {
                     .fixedSize()
                 }
                 .padding(.vertical, 2)
-            }
-
-            Section("Docking") {
-                dockEdgeToggles
             }
 
             Section {
@@ -94,21 +88,5 @@ struct GeneralSettingsPane: View {
 
     private var appVersion: String {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
-    }
-
-    /// One toggle per dockable edge. The last enabled edge is disabled rather than
-    /// silently refused (EdgeSettings won't drop below one), so the constraint is visible.
-    @ViewBuilder
-    private var dockEdgeToggles: some View {
-        let entries: [(String, ShelfEdge)] = [
-            ("Left edge", .left), ("Right edge", .right), ("Top (Notch)", .notch)
-        ]
-        ForEach(entries, id: \.1) { title, edge in
-            Toggle(title, isOn: Binding(
-                get: { edgeSettings.isEnabled(edge) },
-                set: { _ in edgeSettings.toggle(edge) }
-            ))
-            .disabled(edgeSettings.isEnabled(edge) && edgeSettings.enabledEdges.count == 1)
-        }
     }
 }

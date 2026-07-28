@@ -26,9 +26,15 @@ enum PerchSettings {
     static let showsGrabHandle = "Perch.ShowsGrabHandle"
     static let showsShadow = "Perch.ShowsShadow"
     static let showsEdgeTab = "Perch.ShowsEdgeTab"
+    static let sizePreset = "Perch.SizePreset"
+    static let stacksItems = "Perch.StacksItems"
+    /// Retired in favour of `sizePreset`. The two slider values are read once to place an
+    /// upgrading install on the nearest preset, then never written again — left on disk so
+    /// a downgrade still finds the size the user had.
     static let widthScale = "Perch.WidthScale"
     static let heightFraction = "Perch.HeightFraction"
-    static let stacksItems = "Perch.StacksItems"
+    /// Retired outright. It only ever disambiguated the Square preset from the slider
+    /// values that produced it, and those values now land on `wide` without help.
     static let squarePresetSelected = "Perch.SquarePresetSelected"
 
     // MARK: - Advanced ▸ Behavior
