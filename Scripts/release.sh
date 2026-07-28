@@ -9,11 +9,52 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:?usage: release.sh <version>   e.g. ./Scripts/release.sh 0.2.0}"
-TAG="v${VERSION}"
-ZIP="/tmp/Perch.zip"
-NOTARY_ZIP="/tmp/Perch-notary.zip"
+if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: version must be MAJOR.MINOR.PATCH"
+  exit 1
+fi
+
+TRACK="$(/usr/libexec/PlistBuddy -c "Print :PerchUpdateTrack" Resources/Info.plist)"
+IFS=. read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "${VERSION}"
+BASE_BUILD=$((10#${VERSION_MAJOR} * 1000000 + 10#${VERSION_MINOR} * 10000 + 10#${VERSION_PATCH} * 10))
+
+case "${TRACK}" in
+  standard)
+    TAG="v${VERSION}"
+    BUILD="${BASE_BUILD}"
+    ZIP="/tmp/Perch.zip"
+    NOTARY_ZIP="/tmp/Perch-notary.zip"
+    ASSET_NAME="Perch.zip"
+    TARGET_BRANCH="main"
+    FEED_TITLE="Perch"
+    RELEASE_TITLE="Perch ${VERSION}"
+    RELEASE_FLAGS=()
+    ;;
+  smart)
+    TAG="smart-v${VERSION}"
+    BUILD="$((BASE_BUILD + 1))"
+    ZIP="/tmp/Perch-Smart.zip"
+    NOTARY_ZIP="/tmp/Perch-Smart-notary.zip"
+    ASSET_NAME="Perch-Smart.zip"
+    TARGET_BRANCH="smart-perch"
+    FEED_TITLE="Perch Smart"
+    RELEASE_TITLE="Perch Smart ${VERSION}"
+    RELEASE_FLAGS=(--prerelease)
+    ;;
+  *)
+    echo "error: unknown PerchUpdateTrack '${TRACK}'"
+    exit 1
+    ;;
+esac
+
+CURRENT_BRANCH="$(git branch --show-current)"
+if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
+  echo "error: ${TRACK} releases must be cut from ${TARGET_BRANCH}, not ${CURRENT_BRANCH}"
+  exit 1
+fi
+
 APPCAST="appcast.xml"
-DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/Perch.zip"
+DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/${ASSET_NAME}"
 NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
 
 create_release_zip() {
@@ -33,7 +74,7 @@ create_release_zip() {
 
 # 1. Stamp the version into the bundle.
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString ${VERSION}" Resources/Info.plist
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${VERSION}" Resources/Info.plist
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion ${BUILD}" Resources/Info.plist
 
 # 2. Build with Developer ID, hardened runtime, and secure timestamps.
 PERCH_DISTRIBUTION=1 ./Scripts/build-app.sh
@@ -77,14 +118,14 @@ cat > "${APPCAST}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>Perch</title>
+    <title>${FEED_TITLE}</title>
     <link>${DOWNLOAD_URL}</link>
-    <description>Auto-update feed for Perch.</description>
+    <description>Auto-update feed for ${FEED_TITLE}.</description>
     <language>en</language>
     <item>
       <title>Version ${VERSION}</title>
       <pubDate>${PUBDATE}</pubDate>
-      <sparkle:version>${VERSION}</sparkle:version>
+      <sparkle:version>${BUILD}</sparkle:version>
       <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
       <enclosure url="${DOWNLOAD_URL}" ${SIG_ATTRS} type="application/octet-stream" />
@@ -101,8 +142,9 @@ git push origin HEAD
 # 7. Publish the notarized, stapled archive.
 gh release create "${TAG}" "${ZIP}" \
   --repo maxthegray/Perch \
-  --target main \
-  --title "Perch ${VERSION}" \
-  --notes "Download \`Perch.zip\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple."
+  --target "${TARGET_BRANCH}" \
+  --title "${RELEASE_TITLE}" \
+  --notes "Download \`${ASSET_NAME}\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple." \
+  "${RELEASE_FLAGS[@]}"
 
 echo "Released ${TAG}."

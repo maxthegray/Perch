@@ -14,6 +14,8 @@ import SwiftUI
 struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
     @State private var launchAtLogin = false
+    @State private var versionClicks = 0
+    @State private var showsSmartPerchPrompt = false
 
     var body: some View {
         Form {
@@ -26,12 +28,34 @@ struct GeneralSettingsPane: View {
 
             Section {
                 LabeledContent("Version", value: appVersion)
+                    .contentShape(Rectangle())
+                    .onTapGesture { registerVersionClick() }
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
             }
         }
         .formStyle(.grouped)
+        .onDisappear { versionClicks = 0 }
+        .alert("Join Smart Perch Labs?", isPresented: $showsSmartPerchPrompt) {
+            Button("Join and Update") {
+                Updater.shared.joinSmartPerch()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Smart Perch reads screenshots you add to suggest names and remembers "
+                    + "where you file items. Its learning stays on this Mac. Perch will "
+                    + "switch to the experimental Smart Perch update track."
+            )
+        }
+    }
+
+    private func registerVersionClick() {
+        versionClicks += 1
+        guard versionClicks >= 5 else { return }
+        versionClicks = 0
+        showsSmartPerchPrompt = true
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.
