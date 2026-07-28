@@ -17,7 +17,15 @@ enum SmartPerchDataRemoval {
         defaults.set(false, forKey: enabledKey)
         defaults.removeObject(forKey: suggestionsKey)
         defaults.set(false, forKey: paneUnlockedKey)
-        defaults.set(false, forKey: showsLabelsKey)
+        let showsLabels = defaults.object(forKey: showsLabelsKey) as? Bool ?? true
+        defaults.set(
+            SmartPerchNamePreference.settingAfterSmartPerchChange(
+                enabled: false,
+                currentlyShowsNames: showsLabels,
+                defaults: defaults
+            ),
+            forKey: showsLabelsKey
+        )
         defaults.set(true, forKey: pendingKey)
 
         if let databaseURL = databaseURL ?? defaultDatabaseURL(fileManager: fileManager) {

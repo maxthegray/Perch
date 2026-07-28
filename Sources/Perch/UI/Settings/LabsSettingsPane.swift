@@ -28,9 +28,12 @@ struct LabsSettingsPane: View {
                         .labelsHidden()
                 }
                 .padding(.vertical, 2)
-                // Smart Names need labels, so the master switch controls both together.
                 .onChange(of: smartPerchEnabled) { _, enabled in
-                    themeStore.showsLabels = enabled
+                    themeStore.showsLabels =
+                        SmartPerchNamePreference.settingAfterSmartPerchChange(
+                            enabled: enabled,
+                            currentlyShowsNames: themeStore.showsLabels
+                        )
                 }
             }
 

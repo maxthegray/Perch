@@ -89,7 +89,7 @@ struct AdvancedSettingsPane: View {
             }
 
             SwiftUI.Section("Details") {
-                Toggle("Show names", isOn: $themeStore.showsLabels)
+                Toggle("Show names", isOn: showsLabelsBinding)
                 Toggle("Shadow", isOn: $themeStore.showsShadow)
                 VStack(alignment: .leading, spacing: 2) {
                     Toggle("Edge tab while dragging", isOn: $themeStore.showsEdgeTab)
@@ -186,6 +186,16 @@ struct AdvancedSettingsPane: View {
             return "Accessibility access is required; enable Perch in System Settings."
         }
         return "Adds both ends as snap points and follows the Dock when it hides."
+    }
+
+    private var showsLabelsBinding: Binding<Bool> {
+        Binding(
+            get: { themeStore.showsLabels },
+            set: { showsNames in
+                SmartPerchNamePreference.userChangedNames()
+                themeStore.showsLabels = showsNames
+            }
+        )
     }
 
     /// One toggle per dockable edge. The last enabled edge is disabled rather than

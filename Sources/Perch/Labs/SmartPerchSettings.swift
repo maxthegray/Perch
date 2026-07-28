@@ -10,3 +10,28 @@ enum SmartPerchSettings {
         PerchSettings.flag(enabledKey, default: false)
     }
 }
+
+enum SmartPerchNamePreference {
+    static func settingAfterSmartPerchChange(
+        enabled: Bool,
+        currentlyShowsNames: Bool,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        if enabled {
+            if currentlyShowsNames {
+                defaults.removeObject(forKey: PerchSettings.smartPerchAutoEnabledNames)
+            } else {
+                defaults.set(true, forKey: PerchSettings.smartPerchAutoEnabledNames)
+            }
+            return true
+        }
+
+        let wasAutoEnabled = defaults.bool(forKey: PerchSettings.smartPerchAutoEnabledNames)
+        defaults.removeObject(forKey: PerchSettings.smartPerchAutoEnabledNames)
+        return wasAutoEnabled ? false : currentlyShowsNames
+    }
+
+    static func userChangedNames(defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: PerchSettings.smartPerchAutoEnabledNames)
+    }
+}

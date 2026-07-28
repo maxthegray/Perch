@@ -20,6 +20,7 @@ final class SmartPerchDataRemovalTests: XCTestCase {
         defaults.set(false, forKey: "Perch.SmartPerchShowsSuggestions")
         defaults.set(true, forKey: "Perch.LabsUnlocked")
         defaults.set(true, forKey: "Perch.ShowsLabels")
+        defaults.set(true, forKey: PerchSettings.smartPerchAutoEnabledNames)
 
         SmartPerchDataRemoval.request(defaults: defaults, databaseURL: databaseURL)
 
@@ -35,6 +36,17 @@ final class SmartPerchDataRemovalTests: XCTestCase {
         for suffix in ["", "-wal", "-shm", "-journal"] {
             XCTAssertFalse(FileManager.default.fileExists(atPath: databaseURL.path + suffix))
         }
+    }
+
+    func testRequestPreservesNamesThatSmartPerchDidNotEnable() {
+        let defaults = makeDefaults()
+        defaults.set(true, forKey: "Perch.ShowsLabels")
+        let databaseURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("SmartPerchDataRemovalTests-\(UUID().uuidString).sqlite")
+
+        SmartPerchDataRemoval.request(defaults: defaults, databaseURL: databaseURL)
+
+        XCTAssertTrue(defaults.bool(forKey: "Perch.ShowsLabels"))
     }
 
     func testNextLaunchRepeatsRemovalAndClearsPendingFlag() throws {

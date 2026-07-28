@@ -65,6 +65,7 @@ enum PerchSettings {
 
     // MARK: - Internal state (not user-facing)
 
+    static let smartPerchAutoEnabledNames = "Perch.SmartPerchAutoEnabledNames"
     /// The edge the shelf considers home between launches.
     static let preferredShelfEdge = "Perch.PreferredShelfEdge"
     static let arrivalDismissed = "Perch.ArrivalDismissed"

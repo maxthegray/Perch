@@ -7,7 +7,15 @@ enum SmartPerchEnrollment {
         }
 
         defaults.set(true, forKey: PerchSettings.smartPerchEnabled)
-        defaults.set(true, forKey: PerchSettings.showsLabels)
+        let showsLabels = defaults.object(forKey: PerchSettings.showsLabels) as? Bool ?? true
+        defaults.set(
+            SmartPerchNamePreference.settingAfterSmartPerchChange(
+                enabled: true,
+                currentlyShowsNames: showsLabels,
+                defaults: defaults
+            ),
+            forKey: PerchSettings.showsLabels
+        )
         defaults.set(true, forKey: PerchSettings.labsUnlocked)
         defaults.removeObject(forKey: UpdateTrackStore.smartEnrollmentPendingKey)
     }
