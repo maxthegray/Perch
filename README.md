@@ -37,7 +37,7 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 
 **General** keeps the few choices that change what happens to your files: launch at login, and whether dragging an item out moves it or leaves a copy.
 
-**Advanced** splits in two. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, which edges it docks to, and recent-download suggestions. At least one edge always stays enabled.
+**Advanced** splits three ways. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, and recent-download suggestions. *Docking* is which edges it can dock to and how it snaps to them; at least one edge always stays enabled.
 
 Perch remembers these choices between launches and can check for updates through Sparkle.
 
