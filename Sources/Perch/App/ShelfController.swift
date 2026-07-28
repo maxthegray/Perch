@@ -139,6 +139,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var smartPerchEnabledCancellable: AnyCancellable?
     private var grabHandleCancellable: AnyCancellable?
     private var shadowCancellable: AnyCancellable?
+    private var edgeTabCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
     private var arrivalNamesCancellable: AnyCancellable?
     /// Coalesces asynchronous OCR/arrival label changes so the text can settle before
@@ -594,6 +595,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         shadowCancellable = themeStore.$showsShadow
             .sink { [weak self] shows in
                 self?.panel.hasShadow = shows
+            }
+
+        // Flipping the edge tab off mid-drag must fade the handle out right away (and
+        // flipping it on must bring it back), so reconcile against the live drag state.
+        // Deferred to the next main pass because @Published emits before the new value
+        // is stored, and `showHomeTab`/`setTabsShown` read it.
+        edgeTabCancellable = themeStore.$showsEdgeTab
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                guard let self else { return }
+                if self.dragActive {
+                    self.showHomeTab()
+                } else {
+                    self.setTabsShown(false)
+                }
             }
 
         // Ghost rows appearing/leaving change the card's height (and, when empty, its
@@ -1438,6 +1455,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func setTabsShown(_ shown: Bool) {
+        let shown = shown && themeStore.showsEdgeTab
         for strip in edgeStrips {
             strip.showsTab = shown
         }
@@ -1470,7 +1488,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Show only the tab belonging to the shelf's established dock. The pointer may
     /// begin a drag anywhere on the desktop; it does not get to relocate the shelf.
     private func showHomeTab() {
-        guard usesEdgeDock else {
+        guard usesEdgeDock, themeStore.showsEdgeTab else {
             setTabsShown(false)
             return
         }

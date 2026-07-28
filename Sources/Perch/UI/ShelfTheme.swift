@@ -135,6 +135,7 @@ final class ThemeStore: ObservableObject {
     private static let labelsKey = "Perch.ShowsLabels"
     private static let grabHandleKey = "Perch.ShowsGrabHandle"
     private static let shadowKey = "Perch.ShowsShadow"
+    private static let edgeTabKey = "Perch.ShowsEdgeTab"
     private static let widthScaleKey = "Perch.WidthScale"
     private static let heightFractionKey = "Perch.HeightFraction"
     private static let stacksItemsKey = "Perch.StacksItems"
@@ -178,6 +179,16 @@ final class ThemeStore: ObservableObject {
         didSet {
             guard showsShadow != oldValue else { return }
             UserDefaults.standard.set(showsShadow, forKey: Self.shadowKey)
+        }
+    }
+
+    /// Whether the accent handle at the shelf's dock is drawn while a drag is in
+    /// progress. Off leaves the tab invisible; its catch zone stays live, so dragging to
+    /// the edge still reveals the shelf.
+    @Published var showsEdgeTab: Bool {
+        didSet {
+            guard showsEdgeTab != oldValue else { return }
+            UserDefaults.standard.set(showsEdgeTab, forKey: Self.edgeTabKey)
         }
     }
 
@@ -235,6 +246,7 @@ final class ThemeStore: ObservableObject {
         }
         showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
         showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? false
+        showsEdgeTab = UserDefaults.standard.object(forKey: Self.edgeTabKey) as? Bool ?? true
         let clamp: (Double, ClosedRange<CGFloat>) -> CGFloat = {
             min(max(CGFloat($0), $1.lowerBound), $1.upperBound)
         }

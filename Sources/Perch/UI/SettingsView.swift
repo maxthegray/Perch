@@ -86,6 +86,12 @@ struct AppearanceSettingsPane: View {
 
                 Toggle("Show names", isOn: $themeStore.showsLabels)
                 Toggle("Shadow", isOn: $themeStore.showsShadow)
+                VStack(alignment: .leading, spacing: 2) {
+                    Toggle("Edge tab while dragging", isOn: $themeStore.showsEdgeTab)
+                    Text("The small handle that marks the shelf's dock during a drag. Dragging to the edge still reveals the shelf when it's off.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Size") {
