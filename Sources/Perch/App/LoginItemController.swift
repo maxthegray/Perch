@@ -8,8 +8,8 @@ import ServiceManagement
 /// no bundle identifier, so `isAvailable` is false and the menu item is hidden.
 @MainActor
 final class LoginItemController {
-    private static let defaultAppliedKey = "Perch.LaunchAtLoginDefaultApplied"
-    private static let userChoiceKey = "Perch.LaunchAtLoginUserChoice"
+    private static let defaultAppliedKey = PerchSettings.launchAtLoginDefaultApplied
+    private static let userChoiceKey = PerchSettings.launchAtLoginUserChoice
 
     /// Whether launch-at-login can be controlled (i.e. we're a bundled app).
     var isAvailable: Bool {

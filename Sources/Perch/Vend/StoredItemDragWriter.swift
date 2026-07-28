@@ -278,7 +278,7 @@ private struct StoredItemDragSnapshot {
         origin = resolvedBackingFileURLs.first.flatMap {
             item.metadata.originPaths?[$0.lastPathComponent]
         }
-        wasCopy = UserDefaults.standard.bool(forKey: "Perch.VendCopies")
+        wasCopy = UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
 
         let repsDir = item.directoryURL.appendingPathComponent("reps", isDirectory: true)
         var fileURLsByType: [String: URL] = [:]

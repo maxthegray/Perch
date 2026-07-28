@@ -203,14 +203,14 @@ struct BehaviorSettingsPane: View {
     @ObservedObject var themeStore: ThemeStore
     @ObservedObject var edgeSettings: EdgeSettings
 
-    @AppStorage(ShelfHostView.shakeToSummonKey) private var shakeToSummon = true
-    @AppStorage(ShelfHostView.revealOnDragStartKey) private var revealOnDragStart = true
-    @AppStorage(ShelfHostView.keepEmptyShelfKey) private var keepEmptyShelf = true
-    @AppStorage(ShelfHostView.snapBackToEdgesKey) private var snapBackToEdges = true
-    @AppStorage(DockGeometryReader.enabledKey) private var snapBesideDock = false
-    @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
-    @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
-    @AppStorage(SmartPerchSettings.enabledKey) private var smartPerchEnabled = true
+    @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = true
+    @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
+    @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
+    @AppStorage(PerchSettings.snapBackToEdges) private var snapBackToEdges = true
+    @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
+    @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
+    @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
+    @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = true
 
     var body: some View {
         Form {

@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 /// `@MainActor` coordinator that wires the store, windows, and the three pipelines.
 @MainActor
 final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
-    private static let preferredEdgeKey = "Perch.PreferredShelfEdge"
+    private static let preferredEdgeKey = PerchSettings.preferredShelfEdge
     private let panel: ShelfPanel
     private let windowController: ShelfWindowController
     private let holding: HoldingDirectory
@@ -64,21 +64,21 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
     private var revealOnDragStart: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.revealOnDragStartKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.revealOnDragStart, default: true)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
     /// value reads as true), matching the original always-on behavior.
     private var shakeToSummonEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.shakeToSummonKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.shakeToSummon, default: true)
     }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.keepEmptyShelfKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.keepEmptyShelf, default: true)
     }
     /// Whether free shelves preview and snap back into enabled edge docks.
     private var snapBackToEdgesEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.snapBackToEdgesKey) as? Bool ?? true
+        PerchSettings.flag(PerchSettings.snapBackToEdges, default: true)
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -2029,7 +2029,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             var coastingTicks = 0
             while !Task.isCancelled {
                 guard let self, self.dockAttachment == attachment else { return }
-                if !UserDefaults.standard.bool(forKey: DockGeometryReader.enabledKey) {
+                if !UserDefaults.standard.bool(forKey: PerchSettings.snapBesideDock) {
                     self.detachFromSystemDock(makeVisible: true)
                     return
                 }

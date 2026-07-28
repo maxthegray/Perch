@@ -131,15 +131,15 @@ struct ShelfTheme {
 /// AppKit edge tab can react live.
 @MainActor
 final class ThemeStore: ObservableObject {
-    private static let key = "Perch.ShelfStyle"
-    private static let labelsKey = "Perch.ShowsLabels"
-    private static let grabHandleKey = "Perch.ShowsGrabHandle"
-    private static let shadowKey = "Perch.ShowsShadow"
-    private static let edgeTabKey = "Perch.ShowsEdgeTab"
-    private static let widthScaleKey = "Perch.WidthScale"
-    private static let heightFractionKey = "Perch.HeightFraction"
-    private static let stacksItemsKey = "Perch.StacksItems"
-    private static let squarePresetKey = "Perch.SquarePresetSelected"
+    private static let key = PerchSettings.shelfStyle
+    private static let labelsKey = PerchSettings.showsLabels
+    private static let grabHandleKey = PerchSettings.showsGrabHandle
+    private static let shadowKey = PerchSettings.showsShadow
+    private static let edgeTabKey = PerchSettings.showsEdgeTab
+    private static let widthScaleKey = PerchSettings.widthScale
+    private static let heightFractionKey = PerchSettings.heightFraction
+    private static let stacksItemsKey = PerchSettings.stacksItems
+    private static let squarePresetKey = PerchSettings.squarePresetSelected
 
     /// Bounds of the width slider (75%–200% of the design width).
     static let widthScaleRange: ClosedRange<CGFloat> = 0.75...2

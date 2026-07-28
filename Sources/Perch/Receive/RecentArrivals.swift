@@ -19,14 +19,14 @@ import UniformTypeIdentifiers
 final class RecentArrivals: ObservableObject {
     /// Master switch, user-toggled from Behavior settings. Default on (an unset value
     /// reads as true) — the worst case is a few dim rows on an already-summoned shelf.
-    static let enabledKey = "Perch.OfferRecentArrivals"
+    static let enabledKey = PerchSettings.offerRecentArrivals
 
     static let window: TimeInterval = 15 * 60
     static let maxSessions = 3
     static let maxReveals = 3
 
-    private static let dismissedKey = "Perch.ArrivalDismissed"
-    private static let revealCountsKey = "Perch.ArrivalRevealCounts"
+    private static let dismissedKey = PerchSettings.arrivalDismissed
+    private static let revealCountsKey = PerchSettings.arrivalRevealCounts
     /// In-progress download artifacts that must never be offered.
     private static let partialExtensions: Set<String> = [
         "crdownload", "download", "part", "partial", "tmp"

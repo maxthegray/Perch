@@ -8,7 +8,7 @@ import Foundation
 /// back on reveals everything Perch learned in the meantime rather than starting the
 /// three-session count from zero.
 enum SmartPerchSettings {
-    static let enabledKey = "Perch.SmartPerchEnabled"
+    static let enabledKey = PerchSettings.smartPerchEnabled
 
     /// Defaults to on: an unset value reads as true, matching the behavior every
     /// existing install already has.

@@ -85,33 +85,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// centering offset when the card is floored taller than its content.
     private var measuredContentHeight: CGFloat = 0
 
-    // The behavior flags below are written by the Settings window (@AppStorage on these
-    // keys) and read live from UserDefaults, so a change applies on the next gesture.
+    // The behavior flags are written by the Settings window (@AppStorage) and read live
+    // from UserDefaults, so a change applies on the next gesture. Their keys live in
+    // `PerchSettings`; the ones the controller reads are no longer declared here.
 
-    /// When true, dragging an item out leaves the original on the shelf (copy);
-    /// otherwise it's removed once it lands somewhere (move — the default).
-    static let vendCopiesKey = "Perch.VendCopies"
     private var vendCopies: Bool {
-        UserDefaults.standard.bool(forKey: Self.vendCopiesKey)
+        UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
     }
-
-    /// When true, the shelf reveals at the nearest enabled edge the moment a drag starts,
-    /// instead of waiting for the pointer to reach the edge tab. Read live by the
-    /// controller's drag handlers. Default true.
-    static let revealOnDragStartKey = "Perch.RevealOnDragStart"
-
-    /// When true, shaking the cursor summons a free-floating shelf at the pointer. Read
-    /// live by the controller's summon handler. Default true (the original behavior), so
-    /// an unset value keeps shake-to-summon on.
-    static let shakeToSummonKey = "Perch.ShakeToSummon"
-
-    /// When true, a free-floating shelf stays where it is after its last item leaves
-    /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
-    /// itself. Read live by the controller. Default true.
-    static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
-    /// When true, releasing a free shelf near an enabled dock previews the target and
-    /// snaps it back into ordinary edge behavior. Default true.
-    static let snapBackToEdgesKey = "Perch.SnapBackToEdges"
 
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
