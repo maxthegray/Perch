@@ -38,6 +38,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var dismissingFreeShelfResetTask: Task<Void, Never>?
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
+    /// Delays the visual edge tab so short, ordinary drags stay quiet. If a drag lasts
+    /// long enough, the nearest tab appears as a reminder that Perch is available.
+    private var edgeTabReminderTask: Task<Void, Never>?
+    private var edgeTabReminderVisible = false
     /// True when the current drag (in "reveal while dragging" mode) is what opened the
     /// shelf, so it follows the nearest edge during the drag and retracts on drag-end if
     /// nothing was dropped onto it.
@@ -57,10 +61,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
         UserDefaults.standard.object(forKey: ShelfHostView.keepEmptyShelfKey) as? Bool ?? true
-    }
-    /// Whether free shelves preview and snap back into enabled edge docks.
-    private var snapBackToEdgesEnabled: Bool {
-        UserDefaults.standard.object(forKey: ShelfHostView.snapBackToEdgesKey) as? Bool ?? true
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -331,28 +331,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             Task { @MainActor in self?.rebuildEdgeStrips() }
         }
 
-        // During a drag, show only the tab nearest the cursor; hide all when it ends.
-        // The drag also grows the empty drop target into a bigger, easier box.
+        // During a longer drag, show the nearest tab as a reminder; short drags stay
+        // visually quiet. The drag also grows the empty drop target into an easier box.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
             self.setDragActive(active)
             if active {
-                if self.usesEdgeDock {
-                    self.showNearestTab(to: NSEvent.mouseLocation)
-                } else {
-                    self.setTabsShown(false)
-                }
+                self.beginEdgeTabReminder()
                 if self.usesEdgeDock, self.revealOnDragStart {
                     self.revealForDrag(to: NSEvent.mouseLocation)
                 }
             } else {
-                self.setTabsShown(false)
+                self.endEdgeTabReminder()
                 self.dragDidEnd()
             }
         }
         mouseMonitor.onDragMoved = { [weak self] point in
             guard let self else { return }
-            if self.usesEdgeDock {
+            if self.usesEdgeDock, self.edgeTabReminderVisible {
                 self.showNearestTab(to: point)
             } else {
                 self.setTabsShown(false)
@@ -917,6 +913,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
+    private func beginEdgeTabReminder() {
+        edgeTabReminderTask?.cancel()
+        edgeTabReminderVisible = false
+        setTabsShown(false)
+        guard usesEdgeDock else { return }
+
+        edgeTabReminderTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(1200))
+            } catch {
+                return
+            }
+            guard let self, self.dragActive, self.usesEdgeDock else { return }
+            self.edgeTabReminderVisible = true
+            self.showNearestTab(to: NSEvent.mouseLocation)
+        }
+    }
+
+    private func endEdgeTabReminder() {
+        edgeTabReminderTask?.cancel()
+        edgeTabReminderTask = nil
+        edgeTabReminderVisible = false
+        setTabsShown(false)
+    }
+
     private func setDragActive(_ active: Bool) {
         dragActive = active
         // Ghost rows hide for the drag's duration so the drop geometry never shifts
@@ -1112,10 +1133,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// free also gets a chance to re-dock at any enabled edge.
     private func shelfDragDidEnd() {
         if revealMode == .free {
-            guard snapBackToEdgesEnabled else {
-                clearDockSnapPreview()
-                return
-            }
             let target = refreshedPreviewedDockTarget() ?? nearestDockSnapTarget()
             if let target {
                 snapFreeShelf(to: target)
@@ -1269,7 +1286,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Reveal the exact landing frame while a free shelf is inside the snap radius.
     /// Moving away or dragging a still-docked shelf removes the preview immediately.
     private func updateDockSnapPreview() {
-        guard revealMode == .free, snapBackToEdgesEnabled else {
+        guard revealMode == .free else {
             clearDockSnapPreview()
             return
         }

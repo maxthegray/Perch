@@ -224,7 +224,6 @@ struct BehaviorSettingsPane: View {
     @AppStorage(ShelfHostView.shakeToSummonKey) private var shakeToSummon = true
     @AppStorage(ShelfHostView.revealOnDragStartKey) private var revealOnDragStart = true
     @AppStorage(ShelfHostView.keepEmptyShelfKey) private var keepEmptyShelf = true
-    @AppStorage(ShelfHostView.snapBackToEdgesKey) private var snapBackToEdges = true
     @AppStorage(DockGeometryReader.enabledKey) private var snapBesideDock = false
     @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
     @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
@@ -252,12 +251,6 @@ struct BehaviorSettingsPane: View {
                     isOn: $keepEmptyShelf
                 )
                 draggingModeRow
-                behaviorRow(
-                    demo: .moveShelf,
-                    title: "Snap to locations",
-                    caption: "Release a free shelf near an enabled screen edge or Dock side.",
-                    isOn: $snapBackToEdges
-                )
             }
 
             Section {
