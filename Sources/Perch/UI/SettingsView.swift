@@ -210,7 +210,8 @@ struct BehaviorSettingsPane: View {
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
     @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
-    @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = true
+    @AppStorage(PerchSettings.smartPerchEnabled) private var smartPerchEnabled = false
+    @AppStorage(PerchSettings.smartPerchShowsSuggestions) private var smartPerchShowsSuggestions = true
 
     var body: some View {
         Form {
@@ -306,6 +307,21 @@ struct BehaviorSettingsPane: View {
                         themeStore.showsLabels = true
                     }
                 }
+
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show suggestions")
+                        Text("Off keeps learning in the background with nothing on screen.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("Show suggestions", isOn: $smartPerchShowsSuggestions)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                .padding(.vertical, 2)
+                .disabled(!smartPerchEnabled)
             }
 
             Section("Docking") {
@@ -330,12 +346,12 @@ struct BehaviorSettingsPane: View {
         .formStyle(.grouped)
     }
 
-    /// States plainly that analysis continues either way. "Off" hides Smart Perch's
-    /// output; it is not a switch that stops Perch from reading files.
+    /// Says what the switch actually does in each position. Off has to read as *nothing
+    /// happens*, because that is now true: no database, no analysis, no history.
     private var smartPerchCaption: String {
         smartPerchEnabled
-            ? "Names screenshots from their contents and offers the folder you usually file an item in."
-            : "Hidden, but Perch keeps reading and learning from items on this Mac so the suggestions are ready when you turn it back on."
+            ? "Names screenshots from their contents and offers the folder you usually file an item in. What it learns stays on this Mac."
+            : "Off. Perch records nothing about what you drop and runs no analysis."
     }
 
     private var dockSnapCaption: String {

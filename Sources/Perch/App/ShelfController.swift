@@ -1042,19 +1042,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    /// Push the Smart Perch switch into the presentation stores. Recording is not
-    /// consulted here on purpose: drops, OCR, and route history keep accumulating while
-    /// the switch is off, so turning it on shows what was learned in the meantime.
+    /// Push the "Show suggestions" switch into the presentation stores. Learning keeps
+    /// running while it is off, so turning it on shows what was learned in the meantime.
+    /// The master switch is a different question — it decides whether Smart Perch was
+    /// built at all, and is handled where the feature is constructed.
     private func applySmartPerchEnabled() {
-        let isEnabled = SmartPerchSettings.isEnabled
-        guard isEnabled != smartNames.isEnabled
-                || isEnabled != routeSuggestions.isEnabled
+        let showsSuggestions = SmartPerchSettings.showsSuggestions
+        guard showsSuggestions != smartNames.isEnabled
+                || showsSuggestions != routeSuggestions.isEnabled
         else {
             // Any defaults write wakes this observer; only a real change costs a re-fit.
             return
         }
-        smartNames.isEnabled = isEnabled
-        routeSuggestions.isEnabled = isEnabled
+        smartNames.isEnabled = showsSuggestions
+        routeSuggestions.isEnabled = showsSuggestions
         scheduleAsynchronousNameResize()
     }
 

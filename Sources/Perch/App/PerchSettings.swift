@@ -57,6 +57,9 @@ enum PerchSettings {
     /// Master switch for Smart Perch. Off means the feature is never built: no database,
     /// no OCR, nothing recorded.
     static let smartPerchEnabled = "Perch.SmartPerchEnabled"
+    /// Whether Smart Perch displays what it has learned. Only meaningful while the master
+    /// switch is on; off means it keeps learning with nothing on screen.
+    static let smartPerchShowsSuggestions = "Perch.SmartPerchShowsSuggestions"
 
     // MARK: - Internal state (not user-facing)
 

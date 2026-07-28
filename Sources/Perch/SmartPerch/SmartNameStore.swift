@@ -8,11 +8,11 @@ import SmartPerchCore
 /// makes available labels immediately visible in SwiftUI.
 @MainActor
 final class SmartNameStore: ObservableObject {
-    /// Mirrors the Smart Perch switch. Generated names are still collected and held
-    /// while this is false — they are simply not shown, so flipping the switch reveals
-    /// them immediately instead of waiting for a re-analysis. Also consulted for the
-    /// arrival ghosts' names, which are the same feature on a different row.
-    @Published var isEnabled = SmartPerchSettings.isEnabled
+    /// Mirrors the "Show suggestions" switch. Generated names are still collected and
+    /// held while this is false — they are simply not shown, so flipping it reveals them
+    /// immediately instead of waiting for a re-analysis. Also consulted for the arrival
+    /// ghosts' names, which are the same feature on a different row.
+    @Published var isEnabled = SmartPerchSettings.showsSuggestions
     @Published private(set) var suggestionsByItemID: [UUID: AvailableFilenameSuggestion] = [:]
     /// Screenshot rows use one stable presentation from their first frame onward. This
     /// set survives completion without a suggestion so a low-information capture keeps
