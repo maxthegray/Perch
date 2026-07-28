@@ -135,22 +135,22 @@ struct ShelfTheme {
 /// removes all of that; the geometry code still reads a width multiplier and a height
 /// fraction, it just no longer has to wonder where they came from.
 enum ShelfSizePreset: String, CaseIterable {
-    case standard, wide, tall, full
+    case standard, square, tall, full
 
     var displayName: String {
         switch self {
         case .standard: return "Standard"
-        case .wide: return "Wide"
+        case .square: return "Square"
         case .tall: return "Tall"
         case .full: return "Full"
         }
     }
 
-    /// Multiplier on the design width.
+    /// Multiplier on the design width. Full is Tall's height at Square's width.
     var widthScale: CGFloat {
         switch self {
-        case .wide: return 1.5
-        case .standard, .tall, .full: return 1
+        case .standard, .tall: return 1
+        case .square, .full: return 1.5
         }
     }
 
@@ -158,25 +158,26 @@ enum ShelfSizePreset: String, CaseIterable {
     /// anything above floors the card taller, the extra space acting as a drop target.
     var heightFraction: CGFloat {
         switch self {
-        case .standard, .wide: return 0
-        case .tall: return 0.8
-        case .full: return 1
+        case .standard: return 0
+        case .square: return Self.squareHeightFraction
+        case .tall, .full: return 0.8
         }
     }
 
-    /// A stacked shelf is always square, so the two height presets have nothing to say
-    /// about it and are offered only for the list arrangement.
-    var isAvailableWhileStacking: Bool {
-        heightFraction == 0
+    /// The only preset whose height depends on the display. The empty card is 80pt wide
+    /// at 100%, so Square's 150% makes it 120pt, and the height floor has to resolve to
+    /// that same 120pt for the card to actually read as a square.
+    private static var squareHeightFraction: CGFloat {
+        let usableHeight = max(1, (NSScreen.main?.visibleFrame.height ?? 924) - 24)
+        return min(120 / usableHeight, 1)
     }
 
-    /// Maps the old width/height pair onto the closest preset, for installs upgrading
-    /// from the sliders. The retired Square preset was 150% width with a small height
-    /// floor, which lands on `wide`.
+    /// Maps a stored width/height pair onto the closest preset, for installs upgrading
+    /// from the sliders.
     static func nearest(widthScale: CGFloat, heightFraction: CGFloat) -> ShelfSizePreset {
-        if heightFraction >= 0.9 { return .full }
-        if heightFraction >= 0.4 { return .tall }
-        return widthScale >= 1.25 ? .wide : .standard
+        let isWide = widthScale >= 1.25
+        if heightFraction >= 0.4 { return isWide ? .full : .tall }
+        return isWide ? .square : .standard
     }
 }
 
@@ -240,8 +241,7 @@ final class ThemeStore: ObservableObject {
         }
     }
 
-    /// The card's size. Stacking forces a square card, so a height preset chosen for the
-    /// list arrangement is dropped rather than silently ignored when stacking turns on.
+    /// The card's size.
     @Published var sizePreset: ShelfSizePreset {
         didSet {
             guard sizePreset != oldValue else { return }
@@ -250,15 +250,12 @@ final class ThemeStore: ObservableObject {
     }
 
     /// Whether multiple entries overlap like a deck instead of making the shelf grow
-    /// vertically. A stacked shelf is always square — that is what the arrangement is
-    /// for, and it is why the height presets are unavailable alongside it.
+    /// vertically. Combined with the Square size it becomes a true square deck; the other
+    /// sizes stack too, they just keep their own proportions.
     @Published var stacksItems: Bool {
         didSet {
             guard stacksItems != oldValue else { return }
             UserDefaults.standard.set(stacksItems, forKey: Self.stacksItemsKey)
-            if stacksItems, !sizePreset.isAvailableWhileStacking {
-                sizePreset = .standard
-            }
         }
     }
 
@@ -299,11 +296,6 @@ final class ThemeStore: ObservableObject {
             )
             sizePreset = migrated
             UserDefaults.standard.set(migrated.rawValue, forKey: Self.sizePresetKey)
-        }
-
-        // A stacked shelf is square, so a migrated height preset cannot survive next to it.
-        if stacksItems, !sizePreset.isAvailableWhileStacking {
-            sizePreset = .standard
         }
     }
 

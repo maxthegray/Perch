@@ -81,19 +81,12 @@ struct AdvancedSettingsPane: View {
                 }
                 .pickerStyle(.segmented)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Picker("Size", selection: $themeStore.sizePreset) {
-                        ForEach(availableSizePresets, id: \.self) { preset in
-                            Text(preset.displayName).tag(preset)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    if themeStore.stacksItems {
-                        Text("A stacked shelf is always square.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                Picker("Size", selection: $themeStore.sizePreset) {
+                    ForEach(ShelfSizePreset.allCases, id: \.self) { preset in
+                        Text(preset.displayName).tag(preset)
                     }
                 }
+                .pickerStyle(.segmented)
             }
 
             SwiftUI.Section("Details") {
@@ -108,13 +101,6 @@ struct AdvancedSettingsPane: View {
             }
         }
         .formStyle(.grouped)
-    }
-
-    /// Stacking forces a square card, so the two height presets have nothing to offer it.
-    private var availableSizePresets: [ShelfSizePreset] {
-        themeStore.stacksItems
-            ? ShelfSizePreset.allCases.filter(\.isAvailableWhileStacking)
-            : ShelfSizePreset.allCases
     }
 
     // MARK: - Behavior

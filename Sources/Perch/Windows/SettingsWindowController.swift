@@ -62,7 +62,7 @@ final class SettingsWindowController {
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 560, height: 240),
+            size: NSSize(width: 560, height: 340),
             view: GeneralSettingsPane()
         )
         let advanced = NSHostingController(

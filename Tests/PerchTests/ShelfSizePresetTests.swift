@@ -9,6 +9,29 @@ final class ShelfSizePresetTests: XCTestCase {
         XCTAssertEqual(ShelfSizePreset.standard.heightFraction, 0)
     }
 
+    /// Full is Tall's height at Square's width — a thicker Tall, not a bigger everything.
+    func testFullIsTallAtSquaresWidth() {
+        XCTAssertEqual(ShelfSizePreset.full.widthScale, ShelfSizePreset.square.widthScale)
+        XCTAssertEqual(ShelfSizePreset.full.heightFraction, ShelfSizePreset.tall.heightFraction)
+        XCTAssertGreaterThan(ShelfSizePreset.full.widthScale, ShelfSizePreset.tall.widthScale)
+    }
+
+    /// Square has to resolve to a card as tall as it is wide, so its height fraction is
+    /// the one that depends on the display rather than being a fixed constant.
+    func testSquareIsShorterThanTallButWiderThanStandard() {
+        XCTAssertGreaterThan(ShelfSizePreset.square.heightFraction, 0)
+        XCTAssertLessThan(
+            ShelfSizePreset.square.heightFraction,
+            ShelfSizePreset.tall.heightFraction
+        )
+        XCTAssertGreaterThan(
+            ShelfSizePreset.square.widthScale,
+            ShelfSizePreset.standard.widthScale
+        )
+    }
+
+    // MARK: - Migrating off the sliders
+
     func testMigratesAnUntouchedInstallToStandard() {
         XCTAssertEqual(
             ShelfSizePreset.nearest(widthScale: 1, heightFraction: 0),
@@ -16,41 +39,34 @@ final class ShelfSizePresetTests: XCTestCase {
         )
     }
 
-    /// The retired Square preset was 150% width with a small height floor. It has no
-    /// successor, so it lands on the preset that shares its width.
-    func testMigratesTheRetiredSquarePresetToWide() {
+    /// The old Square was 150% width with a small height floor.
+    func testMigratesTheOldSquarePreset() {
         XCTAssertEqual(
             ShelfSizePreset.nearest(widthScale: 1.5, heightFraction: 0.13),
-            .wide
+            .square
         )
     }
 
-    func testMigratesTheTallPreset() {
+    func testMigratesTheOldTallPreset() {
         XCTAssertEqual(
             ShelfSizePreset.nearest(widthScale: 1, heightFraction: 0.8),
             .tall
         )
     }
 
-    func testMigratesAFullHeightCustomSizeToFull() {
+    /// Wide and tall together is what Full now is.
+    func testMigratesAWideTallCustomSizeToFull() {
         XCTAssertEqual(
-            ShelfSizePreset.nearest(widthScale: 1, heightFraction: 1),
+            ShelfSizePreset.nearest(widthScale: 1.8, heightFraction: 0.7),
             .full
         )
     }
 
-    /// Height wins over width: someone who dragged both sliders up wanted a tall shelf,
-    /// and `wide` cannot express that at all.
-    func testHeightTakesPrecedenceOverWidthWhenBothWereRaised() {
+    /// A custom width with no height floor keeps the width it had.
+    func testMigratesAWideShortCustomSizeToSquare() {
         XCTAssertEqual(
-            ShelfSizePreset.nearest(widthScale: 1.8, heightFraction: 0.7),
-            .tall
+            ShelfSizePreset.nearest(widthScale: 1.6, heightFraction: 0),
+            .square
         )
-    }
-
-    /// Stacking makes the card square, so the height presets are withheld from it.
-    func testOnlyTheFlatPresetsSurviveStacking() {
-        let stackable = ShelfSizePreset.allCases.filter(\.isAvailableWhileStacking)
-        XCTAssertEqual(stackable, [.standard, .wide])
     }
 }

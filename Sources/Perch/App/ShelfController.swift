@@ -1217,13 +1217,44 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if revealMode == .free {
             var target = freePanelFrame()
             target.origin.y = bottom
+            target = Self.clampedOnScreen(target, on: Self.screenForFrame(target))
             freeTopLeft = NSPoint(x: target.minX, y: target.maxY)
             return target
         }
         guard let screen = Self.liveScreen(shownScreen) else { return panel.frame }
         var target = panelFrame(for: screen, edge: shownEdge)
         target.origin.y = bottom
-        return target
+        return Self.clampedOnScreen(target, on: screen)
+    }
+
+    /// Keep a frame whose vertical position was pinned — to a held bottom edge, rather
+    /// than recomputed — fully on its screen.
+    ///
+    /// Holding the bottom while the card grows is deliberate (the body viewport must not
+    /// jump as the handle lane opens), but on its own it lets a tall card push its top
+    /// edge past the menu bar, which is how the first rows ended up off-screen. Clamping
+    /// afterwards keeps the contract for every size that fits and gives up the pin only
+    /// when honoring it would put content where it cannot be seen. Mirrors the clamp in
+    /// `removalFrameKeepingTop`.
+    private static func clampedOnScreen(_ frame: NSRect, on screen: NSScreen?) -> NSRect {
+        guard let screen else { return frame }
+        let visible = screen.visibleFrame
+        var result = frame
+        result.size.height = min(result.height, visible.height - 24)
+        let lowerBound = visible.minY + 12
+        let upperBound = visible.maxY - result.height - 12
+        result.origin.y = min(max(result.minY, lowerBound), max(lowerBound, upperBound))
+        return result
+    }
+
+    /// The screen a free-floating card is mostly on, so it is clamped against the display
+    /// it actually occupies rather than whichever one the shelf last docked to.
+    private static func screenForFrame(_ frame: NSRect) -> NSScreen? {
+        let overlap: (NSScreen) -> CGFloat = {
+            let r = $0.frame.intersection(frame)
+            return r.isNull ? 0 : r.width * r.height
+        }
+        return NSScreen.screens.max { overlap($0) < overlap($1) } ?? NSScreen.main
     }
 
     private func resizeToFitVisible(keepingBottomAt bottom: CGFloat, animated: Bool) {
@@ -2113,11 +2144,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         )
     }
 
-    /// A stacked shelf is a square deck. This used to also require the Square preset,
-    /// because the sliders could put the card at any aspect ratio; with size reduced to
-    /// four presets, stacking is the whole condition.
+    /// The Square size becomes a true square deck when stacking is on. The other sizes
+    /// stack as well; they simply keep their own proportions rather than being forced
+    /// to a square.
     private var usesSquareStack: Bool {
-        themeStore.stacksItems
+        themeStore.stacksItems && themeStore.sizePreset == .square
     }
 
     /// The content height with the user's Height slider applied: a floor at that
