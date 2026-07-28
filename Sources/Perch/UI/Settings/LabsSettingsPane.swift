@@ -15,16 +15,16 @@ struct LabsSettingsPane: View {
 
     var body: some View {
         Form {
-            Section("smart perch") {
+            Section("Smart Perch") {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("smart perch")
+                        Text("Smart Perch")
                         Text(smartPerchCaption)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 12)
-                    Toggle("smart perch", isOn: $smartPerchEnabled)
+                    Toggle("Smart Perch", isOn: $smartPerchEnabled)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
@@ -42,13 +42,13 @@ struct LabsSettingsPane: View {
 
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("show suggestions")
-                        Text("turn this off if you want it to keep learning quietly.")
+                        Text("Show suggestions")
+                        Text("Turn this off to keep learning without showing suggestions.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 12)
-                    Toggle("show suggestions", isOn: $showsSuggestions)
+                    Toggle("Show suggestions", isOn: $showsSuggestions)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }
@@ -57,58 +57,42 @@ struct LabsSettingsPane: View {
             }
 
             Section {
-                Text("it can read screenshots to name them and remember where you usually put things. everything stays in a little database on this mac. nothing gets sent anywhere.")
+                Text("Smart Perch reads screenshots to name them and remembers where you usually put things. Everything stays in a local database on this Mac and is never sent anywhere.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
             Section {
                 VStack(alignment: .leading, spacing: 4) {
-                    Button("hide smart perch") { hideLabs() }
-                    Text("turns it off and tucks this tab away. it keeps what it already learned. click the version in general five times if you want it back.")
-                        .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            }
-
-            Section {
-                VStack(alignment: .leading, spacing: 4) {
-                    Button("uninstall smart perch", role: .destructive) {
+                    Button("Uninstall Smart Perch", role: .destructive) {
                         showsUninstallConfirmation = true
                     }
-                    Text("switches back to regular perch and permanently deletes everything smart perch learned. your shelf stays exactly where it is.")
+                    Text("Returns to regular Perch and permanently deletes everything Smart Perch learned. Shelf items are not affected.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
         }
         .formStyle(.grouped)
-        .alert("leave smart perch?", isPresented: $showsUninstallConfirmation) {
-            Button("uninstall + delete everything", role: .destructive) {
+        .alert("Uninstall Smart Perch?", isPresented: $showsUninstallConfirmation) {
+            Button("Uninstall and Delete Data", role: .destructive) {
                 Updater.shared.leaveSmartPerchAndDeleteData()
             }
-            Button("never mind", role: .cancel) {}
+            Button("Cancel", role: .cancel) {}
         } message: {
             Text(
-                "this turns smart perch off, leaves the smart update track, and deletes "
-                    + "its database from this mac. your shelf items and regular perch "
-                    + "settings won't be touched."
+                "This turns Smart Perch off, leaves its update track, and deletes its "
+                    + "database from this Mac. Shelf items and regular Perch settings "
+                    + "will not be affected."
             )
         }
-    }
-
-    /// Off first, then hide. The other order would leave Smart Perch running behind a tab
-    /// that no longer exists — and the launch migration would just unlock it again.
-    private func hideLabs() {
-        smartPerchEnabled = false
-        LabsAccess.lock()
     }
 
     /// Says what the switch actually does in each position. Off has to read as *nothing
     /// happens*, because that is now true: no database, no analysis, no history.
     private var smartPerchCaption: String {
         smartPerchEnabled
-            ? "on — i'll name screenshots and remember where you usually put things."
-            : "off — i won't analyze or remember anything you drop."
+            ? "Names screenshots and remembers where you usually put things."
+            : "Off — nothing you drop is analyzed or remembered."
     }
 }

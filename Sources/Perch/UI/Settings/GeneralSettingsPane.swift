@@ -48,13 +48,13 @@ struct GeneralSettingsPane: View {
             }
 
             Section {
-                LabeledContent("version", value: "\(productName) \(appVersion)")
+                LabeledContent("Version", value: "\(productName) \(appVersion)")
                     // The way into Labs. Deliberately undiscoverable: nothing about the
                     // row suggests it, and the count resets whenever the pane goes away.
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionClick() }
                 if showsUnlockConfirmation {
-                    Text("smart perch is here :)")
+                    Text("Smart Perch enabled.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

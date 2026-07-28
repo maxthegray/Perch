@@ -1200,15 +1200,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menuTargetFilenameSuggestion = suggestion.suggestedFilename
 
                 let smartName = NSMenuItem(
-                    title: "smart name",
+                    title: "Smart Name",
                     action: nil,
                     keyEquivalent: ""
                 )
-                let smartNameMenu = NSMenu(title: "smart name")
+                let smartNameMenu = NSMenu(title: "Smart Name")
                 smartNameMenu.autoenablesItems = false
 
                 let acceptSuggestion = NSMenuItem(
-                    title: "use “\(suggestion.displayName)” as the filename",
+                    title: "Use “\(suggestion.displayName)” as Filename",
                     action: #selector(acceptFilenameSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1216,7 +1216,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 smartNameMenu.addItem(acceptSuggestion)
 
                 let dismissSuggestion = NSMenuItem(
-                    title: "nah, keep the old name",
+                    title: "Keep Current Filename",
                     action: #selector(dismissFilenameSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1238,7 +1238,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                     for: suggestion.destination
                 )
                 let fileItem = NSMenuItem(
-                    title: "send to “\(destinationName)”",
+                    title: "Send to “\(destinationName)”",
                     action: #selector(fileItemAtSuggestedRouteAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1246,7 +1246,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menu.addItem(fileItem)
 
                 let dismissRoute = NSMenuItem(
-                    title: "don't suggest this for this item",
+                    title: "Don't Suggest This for This Item",
                     action: #selector(dismissRouteSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1340,7 +1340,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(.separator())
         let productName = UpdateTrackStore().displayName
         let quit = NSMenuItem(
-            title: "quit \(productName)",
+            title: "Quit \(productName)",
             action: #selector(quitAction(_:)),
             keyEquivalent: ""
         )
@@ -1367,7 +1367,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         case let .summary(session, .addAll):
             return "Add All \(session.offers.count) Downloads"
         case .offer:
-            return "add to \(UpdateTrackStore().displayName)"
+            return "Add to \(UpdateTrackStore().displayName)"
         }
     }
 

@@ -2,14 +2,14 @@
   <img src="assets/icon.png" width="128" alt="Perch icon">
 </p>
 
-<h1 align="center">Perch</h1>
+<h1 align="center">Smart Perch</h1>
 
 <p align="center">
   A drag-and-drop shelf for macOS.
 </p>
 
-> psst — this is the smart perch branch. regular perch lives on `main`, and its next
-> normal update gets worked on over in `beta`.
+> This branch contains Smart Perch. Regular Perch lives on `main`, and its next
+> normal update is developed on `beta`.
 
 Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
@@ -48,11 +48,11 @@ Perch remembers these choices between launches and can check for updates through
 
 Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
 
-## smart perch
+## Smart Perch
 
-smart perch can read screenshots you drop so it can give them useful names. it also remembers where you tend to put things and can offer that folder next time.
+Smart Perch reads screenshots you drop so it can give them useful names. It also remembers where you tend to put things and can offer that folder next time.
 
-it stays completely off until you turn it on — no database, no text recognition, nothing. whatever it learns stays in a file on your mac and never leaves it. click the version number in general five times if you want to peek.
+It remains completely off until you turn it on—no database, text recognition, or learning runs in the background. Everything it learns stays in a file on your Mac and never leaves it.
 
 ## License
 

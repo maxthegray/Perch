@@ -15,7 +15,7 @@ final class UpdateTrackStoreTests: XCTestCase {
         let store = UpdateTrackStore(defaults: defaults, bundledTrack: .smart)
 
         XCTAssertEqual(store.selectedTrack, .smart)
-        XCTAssertEqual(store.displayName, "smart perch")
+        XCTAssertEqual(store.displayName, "Smart Perch")
         XCTAssertEqual(store.feedURLString, UpdateTrackStore.smartFeedURL)
     }
 

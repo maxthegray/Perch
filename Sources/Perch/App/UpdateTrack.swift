@@ -40,7 +40,7 @@ struct UpdateTrackStore {
     }
 
     var displayName: String {
-        selectedTrack == .smart ? "smart perch" : "Perch"
+        selectedTrack == .smart ? "Smart Perch" : "Perch"
     }
 
     func enrollInSmartPerch() {

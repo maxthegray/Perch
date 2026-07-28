@@ -9,7 +9,7 @@ final class SettingsWindowController {
     /// The pane that carries the appearance controls, and therefore the one that summons
     /// the live preview shelf.
     private static let advancedPaneLabel = "Advanced"
-    private static let labsPaneLabel = "smart perch"
+    private static let labsPaneLabel = "Smart Perch"
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
