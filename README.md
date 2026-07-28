@@ -2,14 +2,11 @@
   <img src="assets/icon.png" width="128" alt="Perch icon">
 </p>
 
-<h1 align="center">Smart Perch</h1>
+<h1 align="center">Perch</h1>
 
 <p align="center">
   A drag-and-drop shelf for macOS.
 </p>
-
-> This branch contains Smart Perch. Regular Perch lives on `main`, and its next
-> normal update is developed on `beta`.
 
 Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
@@ -21,7 +18,7 @@ It also understands file promises from apps like Photos, Mail, and Messages, so 
 
 ## Install
 
-1. Download the newest `Perch-Smart.zip` from [Releases](https://github.com/maxthegray/Perch/releases).
+1. Download `Perch.zip` from the [latest release](https://github.com/maxthegray/Perch/releases/latest).
 2. Unzip it.
 3. Drag `Perch.app` into your Applications folder.
 4. Open Perch from Applications.
@@ -40,19 +37,19 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 
 **General** keeps the few choices that change what happens to your files: launch at login, and whether dragging an item out moves it or leaves a copy.
 
-**Advanced** splits three ways. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, and recent-download suggestions. *Docking* is which edges it can dock to and how it snaps to them; at least one edge always stays enabled.
+**Advanced** splits three ways. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, and recent-download suggestions. *Docking* chooses which edges it can use; snapping to an enabled edge is automatic, and at least one edge always stays enabled.
 
 Perch remembers these choices between launches and can check for updates through Sparkle.
 
 ## Your files stay yours
 
-Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts, analytics, or tracking. Perch only uses the network for automatic or manual update checks.
+Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts or remote analytics. Perch only uses the network for automatic or manual update checks.
 
 ## Smart Perch
 
 Smart Perch reads screenshots you drop so it can give them useful names. It also remembers where you tend to put things and can offer that folder next time.
 
-It remains completely off until you turn it on—no database, text recognition, or learning runs in the background. Everything it learns stays in a file on your Mac and never leaves it.
+It is built into Perch but remains hidden and completely off until you deliberately enable it—no Smart database, text recognition, or learning runs in the background. Everything it learns stays in a file on your Mac and never leaves it. Removing Smart Perch deletes that learned data without affecting shelf items.
 
 ## License
 

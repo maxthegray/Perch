@@ -14,48 +14,34 @@ if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
   exit 1
 fi
 
-TRACK="$(/usr/libexec/PlistBuddy -c "Print :PerchUpdateTrack" Resources/Info.plist)"
 IFS=. read -r VERSION_MAJOR VERSION_MINOR VERSION_PATCH <<< "${VERSION}"
-BASE_BUILD=$((10#${VERSION_MAJOR} * 1000000 + 10#${VERSION_MINOR} * 10000 + 10#${VERSION_PATCH} * 10))
-
-case "${TRACK}" in
-  standard)
-    TAG="v${VERSION}"
-    BUILD="${BASE_BUILD}"
-    ZIP="/tmp/Perch.zip"
-    NOTARY_ZIP="/tmp/Perch-notary.zip"
-    ASSET_NAME="Perch.zip"
-    TARGET_BRANCH="main"
-    FEED_TITLE="Perch"
-    RELEASE_TITLE="Perch ${VERSION}"
-    RELEASE_FLAGS=(--latest)
-    ;;
-  smart)
-    TAG="smart-v${VERSION}"
-    BUILD="$((BASE_BUILD + 1))"
-    ZIP="/tmp/Perch-Smart.zip"
-    NOTARY_ZIP="/tmp/Perch-Smart-notary.zip"
-    ASSET_NAME="Perch-Smart.zip"
-    TARGET_BRANCH="smart-perch"
-    FEED_TITLE="Smart Perch"
-    RELEASE_TITLE="Smart Perch ${VERSION}"
-    RELEASE_FLAGS=(--prerelease)
-    ;;
-  *)
-    echo "error: unknown PerchUpdateTrack '${TRACK}'"
-    exit 1
-    ;;
-esac
+BUILD=$((10#${VERSION_MAJOR} * 1000000 + 10#${VERSION_MINOR} * 10000 + 10#${VERSION_PATCH} * 10))
+TAG="v${VERSION}"
+ZIP="/tmp/Perch.zip"
+NOTARY_ZIP="/tmp/Perch-notary.zip"
+ASSET_NAME="Perch.zip"
+TARGET_BRANCH="main"
+RELEASE_TITLE="Perch ${VERSION}"
 
 CURRENT_BRANCH="$(git branch --show-current)"
 if [ "${CURRENT_BRANCH}" != "${TARGET_BRANCH}" ]; then
-  echo "error: ${TRACK} releases must be cut from ${TARGET_BRANCH}, not ${CURRENT_BRANCH}"
+  echo "error: releases must be cut from ${TARGET_BRANCH}, not ${CURRENT_BRANCH}"
+  exit 1
+fi
+if [ -n "$(git status --porcelain)" ]; then
+  echo "error: release requires a clean worktree"
+  exit 1
+fi
+if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+  echo "error: tag ${TAG} already exists"
   exit 1
 fi
 
 APPCAST="appcast.xml"
 DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/${ASSET_NAME}"
 NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
+
+swift test
 
 create_release_zip() {
   local destination="$1"
@@ -118,9 +104,9 @@ cat > "${APPCAST}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
-    <title>${FEED_TITLE}</title>
+    <title>Perch</title>
     <link>${DOWNLOAD_URL}</link>
-    <description>Auto-update feed for ${FEED_TITLE}.</description>
+    <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
       <title>Version ${VERSION}</title>
@@ -144,7 +130,6 @@ gh release create "${TAG}" "${ZIP}" \
   --repo maxthegray/Perch \
   --target "${TARGET_BRANCH}" \
   --title "${RELEASE_TITLE}" \
-  --notes "Download \`${ASSET_NAME}\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple." \
-  "${RELEASE_FLAGS[@]}"
+  --notes "Download \`${ASSET_NAME}\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple. Smart Perch is included as an optional, local feature."
 
 echo "Released ${TAG}."
