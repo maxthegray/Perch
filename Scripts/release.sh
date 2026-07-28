@@ -28,7 +28,7 @@ case "${TRACK}" in
     TARGET_BRANCH="main"
     FEED_TITLE="Perch"
     RELEASE_TITLE="Perch ${VERSION}"
-    RELEASE_FLAGS=()
+    RELEASE_FLAGS=(--latest)
     ;;
   smart)
     TAG="smart-v${VERSION}"
