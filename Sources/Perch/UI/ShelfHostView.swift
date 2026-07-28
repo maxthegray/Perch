@@ -25,6 +25,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// More than one may be pending if the user starts another vend during the grace
     /// period for the previous drag.
     private var routeCoordinators: [UUID: RouteDragSessionCoordinator] = [:]
+    /// Whether drags should be watched to learn where items go. Set by the controller
+    /// from the Smart Perch master switch. With it off no coordinator is created, so a
+    /// vend costs no window lookup and starts no grace timer — the observation itself is
+    /// what the switch turns off, not just the display of what was observed.
+    var routeLearningActive = false
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
     /// Snapshot of the suggestion displayed by the current menu.
@@ -637,23 +642,27 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction.vendingItemIDs = itemIDs
         }
         let dragSource = ItemDragSource(items: items)
-        let routeCoordinator = RouteDragSessionCoordinator(
-            items: items.map {
-                RouteDragItem(
-                    shelfItemID: $0.id,
-                    addedToPerchAt: $0.metadata.createdAt,
-                    expectsFilePromise: !$0.backingFileURLs().isEmpty
-                )
-            },
-            transferMode: isMove ? .move : .copy,
-            recordRoutes: { [weak self] routes in
-                self?.onRecordSuccessfulRoutes?(routes)
-            },
-            onTerminal: { [weak self] sessionID in
-                self?.routeCoordinators.removeValue(forKey: sessionID)
-            }
-        )
-        routeCoordinators[routeCoordinator.routeSessionID] = routeCoordinator
+        let routeCoordinator: RouteDragSessionCoordinator? = routeLearningActive
+            ? RouteDragSessionCoordinator(
+                items: items.map {
+                    RouteDragItem(
+                        shelfItemID: $0.id,
+                        addedToPerchAt: $0.metadata.createdAt,
+                        expectsFilePromise: !$0.backingFileURLs().isEmpty
+                    )
+                },
+                transferMode: isMove ? .move : .copy,
+                recordRoutes: { [weak self] routes in
+                    self?.onRecordSuccessfulRoutes?(routes)
+                },
+                onTerminal: { [weak self] sessionID in
+                    self?.routeCoordinators.removeValue(forKey: sessionID)
+                }
+            )
+            : nil
+        if let routeCoordinator {
+            routeCoordinators[routeCoordinator.routeSessionID] = routeCoordinator
+        }
         let ledger = ledger
         // Retained by the writer callbacks below, which AppKit keeps alive for as long
         // as the destination can still call in a promise — exactly the window in which

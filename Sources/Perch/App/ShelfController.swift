@@ -18,12 +18,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
     private let promiseMaterializer: FilePromiseMaterializer
-    /// Optional so a damaged/unwritable smart log never prevents the shelf itself
-    /// from launching and handling files.
-    private let smartDropRecorder: SmartPerchDropRecorder?
+    /// Smart Perch, or `nil` when the user has it switched off (and when its event log
+    /// cannot be opened — a damaged log must not stop the shelf from launching). Nil is
+    /// the whole feature being absent: no database, no OCR, nothing recorded.
+    private var smart: SmartPerchFeature?
+    /// Inert view-models when `smart` is nil. They stay on the controller so rebuilding
+    /// the feature on a toggle cannot pull the bindings out from under the view tree.
     private let smartNames = SmartNameStore()
     private let routeSuggestions = RouteSuggestionStore()
-    private let screenshotOCRWorker = ScreenshotOCRWorker()
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let dockSnapPreview = DockSnapPreviewWindow()
@@ -33,15 +35,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let edgeSettings = EdgeSettings()
     /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
     private let arrivals = RecentArrivals()
-    private struct ArrivalNameAnalysis: Sendable {
-        let ocrResult: ScreenshotOCRResult
-        let suggestion: ScreenshotNameSuggestion?
-    }
-    /// Ghost analysis is transient: it improves the preview without creating a drop
-    /// event. If adopted, the cached OCR result is transferred into the real log.
-    private var arrivalNameAnalysisByPath: [String: ArrivalNameAnalysis] = [:]
-    private var arrivalNameTasksByPath: [String: Task<Void, Never>] = [:]
-    private var attemptedArrivalNamePaths: Set<String> = []
     private var edgeStrips: [EdgeStripWindow] = []
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
@@ -203,13 +196,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         settingsWindow = SettingsWindowController(themeStore: themeStore, edgeSettings: edgeSettings)
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
-        do {
-            let eventStore = try SmartPerchEventStore(databaseURL: holding.smartEventLogFile)
-            smartDropRecorder = SmartPerchDropRecorder(eventStore: eventStore)
-        } catch {
-            NSLog("Perch could not open the Smart Perch event log: \(error)")
-            smartDropRecorder = nil
-        }
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
         windowController = ShelfWindowController(panel: panel)
         dropView = ShelfDropView(frame: panel.contentView?.bounds ?? .zero)
@@ -239,20 +225,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         panel.contentView = dropView
 
         hostView.onRecordSuccessfulRoutes = { [weak self] routes in
-            guard let recorder = self?.smartDropRecorder else { return }
-            Task { @MainActor [weak self] in
-                do {
-                    try await recorder.recordSuccessfulRoutes(routes)
-                } catch {
-                    NSLog(
-                        "Perch could not record route session \(routes.first?.routeSessionID.uuidString ?? "unknown"): \(error)"
-                    )
-                    return
-                }
-                // A drag just added evidence; the run it completes may be the one that
-                // makes a route confident enough to offer for the items left behind.
-                self?.refreshRouteSuggestions()
-            }
+            self?.smart?.recordSuccessfulRoutes(routes)
         }
 
         // "Close Shelf" in the context menu dismisses the free shelf without removing
@@ -389,19 +362,60 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         edgeSettings.onChange = { [weak self] in
             self?.rebuildEdgeStrips()
         }
+
+        // Build Smart Perch only if the user has it on. Everything above this line is the
+        // shelf, and works identically whether or not the feature exists. The stored
+        // shelf has not been loaded yet, so `start` does the initial read.
+        reconcileSmartPerchFeature(loadingExistingState: false)
+    }
+
+    /// Construct or tear down Smart Perch to match the master switch.
+    ///
+    /// Turning it off releases the event log and the OCR worker instead of leaving them
+    /// running behind a hidden UI, which is the whole point of the switch. Turning it on
+    /// re-reads what was learned previously — the database is kept on disk, so the
+    /// three-session count does not restart.
+    private func reconcileSmartPerchFeature(loadingExistingState: Bool = true) {
+        let shouldBeActive = SmartPerchSettings.isEnabled
+        guard shouldBeActive != (smart != nil) else { return }
+
+        guard shouldBeActive else {
+            smart?.shutDown()
+            smart = nil
+            smartNames.reset()
+            routeSuggestions.replace(with: [:])
+            arrivals.clearSmartNames()
+            hostView.routeLearningActive = false
+            scheduleAsynchronousNameResize()
+            return
+        }
+
+        smart = SmartPerchFeature(
+            databaseURL: holding.smartEventLogFile,
+            smartNames: smartNames,
+            routeSuggestions: routeSuggestions,
+            arrivals: arrivals,
+            currentItems: { [weak self] in self?.store.items ?? [] }
+        )
+        hostView.routeLearningActive = smart != nil
+        guard loadingExistingState else { return }
+        smart?.registerStoredScreenshotPresentations()
+        smart?.loadFilenameSuggestions()
+        smart?.refreshRouteSuggestions()
+        smart?.prepareArrivalSmartNames()
     }
 
     /// Build the windows, load the store, and start observing drags.
     func start() {
         do {
             try ShelfPersistenceLoader.load(store: store, ledger: ledger)
-            registerStoredScreenshotPresentations()
+            smart?.registerStoredScreenshotPresentations()
             NSLog("Perch loaded \(store.items.count) stored item(s)")
         } catch {
             NSLog("Perch failed to load stored items: \(error)")
         }
-        loadFilenameSuggestions()
-        refreshRouteSuggestions()
+        smart?.loadFilenameSuggestions()
+        smart?.refreshRouteSuggestions()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -554,13 +568,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self?.scheduleAsynchronousNameResize()
             }
 
-        // The Smart Perch switch lives in UserDefaults (written by the settings pane's
-        // @AppStorage, like every other toggle). Mirror it into the two presentation
-        // stores so flipping it re-renders the rows immediately.
+        // Both Smart Perch switches live in UserDefaults (written by the settings pane's
+        // @AppStorage, like every other toggle). The master one builds or tears the
+        // feature down; the other only mirrors into the presentation stores so flipping
+        // it re-renders the rows immediately.
         smartPerchEnabledCancellable = NotificationCenter.default
             .publisher(for: UserDefaults.didChangeNotification)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
+                self?.reconcileSmartPerchFeature()
                 self?.applySmartPerchEnabled()
             }
 
@@ -641,95 +657,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// mutations that change what should be offered.
     private func refreshArrivals(markRevealed: Bool = false) {
         arrivals.refresh(excluding: arrivalExclusions(), markRevealed: markRevealed)
-        prepareArrivalSmartNames()
-    }
-
-    /// Precompute names only for screenshot offer rows the user can currently see.
-    /// Vision remains on its serial utility queue; ordinary files and collapsed batch
-    /// members never pay this cost.
-    private func prepareArrivalSmartNames() {
-        let activePaths = Set(arrivals.sessions.flatMap(\.offers).map(\.id))
-        let staleTaskPaths = arrivalNameTasksByPath.keys.filter {
-            !activePaths.contains($0)
-        }
-        for path in staleTaskPaths {
-            arrivalNameTasksByPath.removeValue(forKey: path)?.cancel()
-        }
-        arrivalNameAnalysisByPath = arrivalNameAnalysisByPath.filter {
-            activePaths.contains($0.key)
-        }
-        attemptedArrivalNamePaths.formIntersection(activePaths)
-
-        guard !arrivals.suppressed else { return }
-        let visibleOffers = arrivals.visibleGhosts.compactMap(\.offer)
-        for offer in visibleOffers
-        where !attemptedArrivalNamePaths.contains(offer.id) {
-            attemptedArrivalNamePaths.insert(offer.id)
-            startArrivalNameAnalysis(for: offer)
-        }
-    }
-
-    private func startArrivalNameAnalysis(for offer: ArrivalOffer) {
-        let path = offer.id
-        let url = offer.url
-        let captureContext = offer.screenshotCaptureContext
-        let worker = screenshotOCRWorker
-
-        arrivalNameTasksByPath[path] = Task.detached(priority: .utility) { [weak self] in
-            let analysis: ArrivalNameAnalysis?
-            do {
-                let metadata = try DroppedFileMetadata.capture(from: url)
-                let category = ExtensionHeuristicsClassifier().classify(metadata)
-                guard ScreenshotOCRGate().isEligible(metadata, category: category),
-                      !Task.isCancelled
-                else {
-                    await MainActor.run { [weak self] in
-                        self?.arrivalNameTasksByPath[path] = nil
-                    }
-                    return
-                }
-
-                let result = try await worker.recognizeText(at: url)
-                guard !Task.isCancelled else { return }
-                let suggestion = ScreenshotFilenameSuggester().suggestName(
-                    from: result.text ?? "",
-                    recognizedLines: result.lines,
-                    originalFilename: url.lastPathComponent,
-                    screenshotCaptureContext: captureContext
-                )
-                analysis = ArrivalNameAnalysis(
-                    ocrResult: result,
-                    suggestion: suggestion
-                )
-            } catch {
-                analysis = nil
-            }
-
-            await MainActor.run { [weak self] in
-                guard let self else { return }
-                self.arrivalNameTasksByPath[path] = nil
-                guard self.arrivals.sessions.contains(where: { session in
-                    session.offers.contains(where: { $0.id == path })
-                }), let analysis
-                else {
-                    return
-                }
-                self.arrivalNameAnalysisByPath[path] = analysis
-                if let suggestion = analysis.suggestion {
-                    self.arrivals.setSmartName(
-                        suggestion.displayName,
-                        forPath: path
-                    )
-                }
-                if analysis.ocrResult.durationMilliseconds > 2_000 {
-                    NSLog(
-                        "Perch screenshot ghost OCR took "
-                            + "\(analysis.ocrResult.durationMilliseconds) ms for "
-                            + "\(url.lastPathComponent)"
-                    )
-                }
-            }
-        }
+        smart?.prepareArrivalSmartNames()
     }
 
     /// A watched folder changed. Wait for Chrome's temporary download + rename burst
@@ -805,8 +733,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
-        let prefetchedOCRResult = arrivalNameAnalysisByPath[offer.id]?.ocrResult
-        arrivalNameTasksByPath.removeValue(forKey: offer.id)?.cancel()
+        let prefetchedOCRResult = smart?.takeArrivalAnalysis(forPath: offer.id)
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
             return nil
@@ -901,7 +828,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func expandArrivalSession(_ session: ArrivalSession) {
         arrivals.expand(session)
-        prepareArrivalSmartNames()
+        smart?.prepareArrivalSmartNames()
         recordArrivalSessionInteraction(
             session,
             action: .expanded,
@@ -934,64 +861,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         action: ArrivalSessionAction,
         affectedFileCount: Int
     ) {
-        guard let smartDropRecorder,
-              let location = session.offers.first?.location
-        else { return }
-
-        Task(priority: .utility) {
-            do {
-                try await smartDropRecorder.recordArrivalSessionInteraction(
-                    sessionID: session.id,
-                    locationIdentifier: location.rawValue,
-                    action: action,
-                    totalFileCount: session.totalFileCount,
-                    affectedFileCount: affectedFileCount
-                )
-            } catch {
-                NSLog(
-                    "Perch could not record arrival session \(session.id.uuidString): \(error)"
-                )
-            }
-        }
+        smart?.recordArrivalSessionInteraction(
+            session,
+            action: action,
+            affectedFileCount: affectedFileCount
+        )
     }
 
-    private func loadFilenameSuggestions() {
-        guard let smartDropRecorder else { return }
-
-        Task(priority: .utility) { [weak self] in
-            do {
-                let suggestions = try await smartDropRecorder.prepareFilenameSuggestions()
-                guard let self else { return }
-
-                let itemsByID = Dictionary(uniqueKeysWithValues: store.items.map {
-                    ($0.id, $0)
-                })
-                var availableSuggestions: [AvailableFilenameSuggestion] = []
-                var usedItemIDs: Set<UUID> = []
-                for suggestion in suggestions {
-                    guard let item = itemsByID[suggestion.shelfItemID],
-                          item.metadata.backingFileNames == [suggestion.originalFilename],
-                          usedItemIDs.insert(suggestion.shelfItemID).inserted
-                    else {
-                        continue
-                    }
-                    availableSuggestions.append(suggestion)
-                }
-                smartNames.replace(with: availableSuggestions)
-            } catch {
-                NSLog("Perch could not load Smart Perch filename suggestions: \(error)")
-            }
-        }
-    }
-
+    /// Take a generated name the user accepted. Smart Perch decides whether the rename is
+    /// still valid and records the outcome; the rename itself is the store's job, so the
+    /// two halves meet here rather than giving the feature a handle on the shelf.
     private func acceptFilenameSuggestion(
         _ proposedFilename: String,
         for item: StoredItem
     ) {
-        guard let suggestion = smartNames.suggestion(for: item.id),
-              suggestion.suggestedFilename == proposedFilename,
-              item.metadata.backingFileNames == [suggestion.originalFilename],
-              let smartDropRecorder
+        guard let smart,
+              let rename = smart.plannedRename(of: item, to: proposedFilename)
         else {
             return
         }
@@ -1004,42 +889,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             guard let acceptedFilename = renamedItem.metadata.backingFileNames.first else {
                 return
             }
-            smartNames.remove(for: item.id)
-
-            Task(priority: .utility) {
-                do {
-                    try await smartDropRecorder.acceptFilenameSuggestion(
-                        fileID: suggestion.fileID,
-                        acceptedFilename: acceptedFilename
-                    )
-                } catch {
-                    NSLog(
-                        "Perch could not record accepted filename suggestion for \(item.id): \(error)"
-                    )
-                }
-            }
+            smart.didAcceptRename(rename, acceptedFilename: acceptedFilename)
         } catch {
             NSLog("Perch could not rename \(item.metadata.title) to \(proposedFilename): \(error)")
         }
     }
 
     private func dismissFilenameSuggestion(for item: StoredItem) {
-        guard let suggestion = smartNames.remove(for: item.id),
-              let smartDropRecorder else {
+        smart?.dismissFilenameSuggestion(for: item)
+    }
+
+    /// Carry out a learned route: move the item's files into the folder it has always
+    /// gone to, then let Smart Perch record the trip.
+    private func fileItemAtSuggestedRoute(_ item: StoredItem) {
+        guard let smart, let filing = smart.beginFilingAtSuggestedRoute(item) else {
             return
         }
 
-        Task(priority: .utility) {
-            do {
-                try await smartDropRecorder.dismissFilenameSuggestion(
-                    fileID: suggestion.fileID
-                )
-            } catch {
-                NSLog(
-                    "Perch could not record dismissed filename suggestion for \(item.id): \(error)"
-                )
-            }
+        let moved = store.fileItems([item], into: filing.folder)
+        guard !moved.isEmpty else {
+            smart.abandonFiling(filing)
+            return
         }
+
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+        smart.didFileAtSuggestedRoute(filing)
     }
 
     /// Push the "Show suggestions" switch into the presentation stores. Learning keeps
@@ -1059,90 +933,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         scheduleAsynchronousNameResize()
     }
 
-    /// Re-match the shelf against the learned routes. Cheap enough to run on every
-    /// shelf change: it is one SQLite read plus a pure grouping pass, and it must react
-    /// to items arriving, leaving, and to new evidence landing in the log.
-    /// `items` must be supplied when called from a `store.$items` observer: `@Published`
-    /// emits before `store.items` is replaced, so reading the property there would match
-    /// against the shelf as it was a moment ago.
-    private func refreshRouteSuggestions(items: [StoredItem]? = nil) {
-        guard let smartDropRecorder else { return }
-        let shelfItems = items ?? store.items
-        let shelfItemIDs = shelfItems.map(\.id)
-        guard !shelfItemIDs.isEmpty else {
-            routeSuggestions.replace(with: [:])
-            return
-        }
-
-        Task(priority: .utility) { [weak self] in
-            do {
-                let suggestions = try await smartDropRecorder.fetchRouteSuggestions(
-                    for: shelfItemIDs
-                )
-                guard let self else { return }
-                // Items can leave while the read is in flight; never offer a route for
-                // a row that is no longer there. By now the store has caught up, so its
-                // own list is the authority.
-                let liveItemIDs = Set(self.store.items.map(\.id))
-                self.routeSuggestions.replace(
-                    with: suggestions.filter { liveItemIDs.contains($0.key) }
-                )
-            } catch {
-                NSLog("Perch could not load learned route suggestions: \(error)")
-            }
-        }
-    }
-
-    /// Carry out a learned route: move the item's files into the folder it has always
-    /// gone to, then record the trip as an accepted suggestion so it enriches the
-    /// history without feeding back into the pattern that produced it.
-    private func fileItemAtSuggestedRoute(_ item: StoredItem) {
-        guard let suggestion = routeSuggestions.suggestion(for: item.id),
-              let folder = RouteDestinationPresentation.folderURL(for: suggestion.destination)
-        else {
-            return
-        }
-
-        routeSuggestions.beginFiling(item.id)
-        let addedToPerchAt = item.metadata.createdAt
-        let moved = store.fileItems([item], into: folder)
-        guard !moved.isEmpty else {
-            // Nothing left the shelf — put the offer back rather than silently dropping it.
-            routeSuggestions.endFiling(item.id)
-            refreshRouteSuggestions()
-            return
-        }
-
-        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
-
-        guard let smartDropRecorder else { return }
-        let occurredAt = Date()
-        let route = ItemRouteEvent(
-            routeSessionID: UUID(),
-            shelfItemID: item.id,
-            successfulDropAtMilliseconds: Int64(
-                (occurredAt.timeIntervalSince1970 * 1_000).rounded()
-            ),
-            dwellTimeMilliseconds: max(
-                0,
-                Int64((occurredAt.timeIntervalSince(addedToPerchAt) * 1_000).rounded())
-            ),
-            destination: suggestion.destination,
-            captureMethod: .perchFiling,
-            transferMode: .move,
-            origin: .acceptedSuggestion
-        )
-
-        Task(priority: .utility) { [weak self] in
-            do {
-                try await smartDropRecorder.recordSuccessfulRoutes([route])
-            } catch {
-                NSLog("Perch could not record filed route for \(item.id): \(error)")
-            }
-            await MainActor.run { self?.routeSuggestions.endFiling(item.id) }
-        }
-    }
-
     /// React to the item list changing: shrink smoothly on removals, and run the
     /// open/retract logic when the empty↔non-empty state actually flips. (Growth on
     /// insertions is driven separately by the SwiftUI content's measured height — see
@@ -1150,11 +940,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func shelfItemsDidChange(_ items: [StoredItem]) {
         let previousCount = lastItemCount
         sizingItems = items
-        smartNames.retainPresentations(for: Set(items.map(\.id)))
-        routeSuggestions.retainSuggestions(for: Set(items.map(\.id)))
-        if items.count != previousCount {
-            refreshRouteSuggestions(items: items)
-        }
+        smart?.itemsDidChange(items, countChanged: items.count != previousCount)
         lastItemCount = items.count
         let isEmpty = items.isEmpty
         if items.count < previousCount, !isEmpty {
@@ -3104,146 +2890,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         screenshotCaptureContexts: [ScreenshotCaptureContext?]? = nil,
         prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
     ) {
-        let shelfItemID = item.id
-        let fileURLs = item.backingFileURLs()
-        let expectsSmartName = registerScreenshotPresentationIfNeeded(for: item)
-        if expectsSmartName {
-            smartNames.beginAnalyzingScreenshot(shelfItemID)
-        }
-        guard let smartDropRecorder else {
-            if expectsSmartName {
-                smartNames.finishAnalyzingScreenshot(shelfItemID)
-            }
-            return
-        }
-        let capturedContexts = screenshotCaptureContexts ?? fileURLs.map {
-            ScreenshotWindowContextCapture.captureFreshContext(for: $0)
-        }
-
-        Task(priority: .utility) { [weak self] in
-            guard let self else { return }
-            defer {
-                if expectsSmartName {
-                    smartNames.finishAnalyzingScreenshot(shelfItemID)
-                }
-            }
-            do {
-                let recordedDrop = try await smartDropRecorder.recordFinalizedDrop(
-                    context: context,
-                    shelfItemID: shelfItemID,
-                    payloadKind: payloadKind,
-                    fileURLs: fileURLs,
-                    screenshotCaptureContexts: capturedContexts
-                )
-                // The item's source app and category only become known to the log here,
-                // so this is the first moment a learned route can be matched to it.
-                self.refreshRouteSuggestions()
-                await runPendingOCR(
-                    in: recordedDrop,
-                    fileURLs: fileURLs,
-                    recorder: smartDropRecorder,
-                    prefetchedOCRResults: prefetchedOCRResults
-                )
-            } catch {
-                NSLog("Perch could not record Smart Perch drop \(context.eventID): \(error)")
-            }
-        }
+        smart?.recordDrop(
+            item,
+            context: context,
+            payloadKind: payloadKind,
+            screenshotCaptureContexts: screenshotCaptureContexts,
+            prefetchedOCRResults: prefetchedOCRResults
+        )
     }
 
-    /// Register screenshot presentation synchronously, before SwiftUI gets its first
-    /// frame for a newly inserted row. Metadata is authoritative when available; the
-    /// filename/type fallback covers a promise item whose file has only just arrived.
     @discardableResult
     private func registerScreenshotPresentationIfNeeded(
         for item: StoredItem
     ) -> Bool {
-        let classifier = ExtensionHeuristicsClassifier()
-        let gate = ScreenshotOCRGate()
-        let isEligible = item.backingFileURLs().contains { url in
-            guard let metadata = try? DroppedFileMetadata.capture(from: url) else {
-                return false
-            }
-            return gate.isEligible(
-                metadata,
-                category: classifier.classify(metadata)
-            )
-        } || item.metadata.backingFileNames.contains { filename in
-            guard ScreenshotNamePresentation.filenameLooksLikeScreenshot(filename),
-                  let type = UTType(
-                    filenameExtension: (filename as NSString).pathExtension
-                  )
-            else {
-                return false
-            }
-            return type.conforms(to: .image)
-        }
-
-        if isEligible {
-            smartNames.registerScreenshot(item.id)
-        }
-        return isEligible
-    }
-
-    private func registerStoredScreenshotPresentations() {
-        for item in store.items {
-            registerScreenshotPresentationIfNeeded(for: item)
-        }
-    }
-
-    private func runPendingOCR(
-        in drop: RecordedDrop,
-        fileURLs: [URL],
-        recorder: SmartPerchDropRecorder,
-        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
-    ) async {
-        for file in drop.files where file.ocrState == .pending {
-            guard fileURLs.indices.contains(file.ordinal) else {
-                try? await recorder.failOCR(fileID: file.fileID)
-                continue
-            }
-
-            do {
-                let result: ScreenshotOCRResult
-                if let prefetchedOCRResults,
-                   prefetchedOCRResults.indices.contains(file.ordinal),
-                   let prefetched = prefetchedOCRResults[file.ordinal] {
-                    result = prefetched
-                } else {
-                    result = try await screenshotOCRWorker.recognizeText(
-                        at: fileURLs[file.ordinal]
-                    )
-                }
-                let nameSuggestion = try await recorder.completeOCR(
-                    fileID: file.fileID,
-                    text: result.text,
-                    recognizedLines: result.lines,
-                    originalFilename: file.displayName,
-                    durationMilliseconds: result.durationMilliseconds,
-                    screenshotCaptureContext: file.screenshotCaptureContext
-                )
-                if let nameSuggestion {
-                    smartNames.set(
-                        AvailableFilenameSuggestion(
-                            fileID: file.fileID,
-                            shelfItemID: drop.event.shelfItemID,
-                            originalFilename: file.displayName,
-                            displayName: nameSuggestion.displayName,
-                            suggestedFilename: nameSuggestion.suggestedFilename
-                        )
-                    )
-                }
-                if result.durationMilliseconds > 2_000 {
-                    NSLog(
-                        "Perch screenshot OCR took \(result.durationMilliseconds) ms for \(file.displayName)"
-                    )
-                }
-            } catch {
-                do {
-                    try await recorder.failOCR(fileID: file.fileID)
-                } catch {
-                    NSLog("Perch could not persist failed OCR state for \(file.displayName): \(error)")
-                }
-            }
-        }
+        smart?.registerScreenshotPresentationIfNeeded(for: item) ?? false
     }
 }

@@ -233,6 +233,13 @@ final class RecentArrivals: ObservableObject {
         smartNamesByPath[path] = name
     }
 
+    /// Drop the generated names when Smart Perch is switched off, so ghosts fall back to
+    /// their real filenames instead of keeping labels nothing is maintaining any more.
+    func clearSmartNames() {
+        guard !smartNamesByPath.isEmpty else { return }
+        smartNamesByPath = [:]
+    }
+
     /// Silence paths Perch itself just placed (vended files, returns-to-origin) so the
     /// shelf never offers back what it just put down.
     func excludePermanently(_ paths: [String]) {

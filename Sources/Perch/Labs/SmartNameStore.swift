@@ -110,4 +110,17 @@ final class SmartNameStore: ObservableObject {
         screenshotItemIDs.remove(itemID)
         return suggestionsByItemID.removeValue(forKey: itemID)
     }
+
+    /// Forget everything when Smart Perch is switched off. The generated names are not
+    /// worth preserving across a teardown: nothing is producing them any more, and the
+    /// "Screenshot" placeholder would otherwise outlive the feature that replaces it.
+    func reset() {
+        guard !suggestionsByItemID.isEmpty
+                || !screenshotItemIDs.isEmpty
+                || !analyzingItemIDs.isEmpty
+        else { return }
+        suggestionsByItemID = [:]
+        screenshotItemIDs = []
+        analyzingItemIDs = []
+    }
 }
