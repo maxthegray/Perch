@@ -97,10 +97,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// (dragged out or deleted), showing the empty drop tile, instead of dismissing
     /// itself. Read live by the controller. Default true.
     static let keepEmptyShelfKey = "Perch.KeepEmptyShelf"
-    /// When true, releasing a free shelf near an enabled dock previews the target and
-    /// snaps it back into ordinary edge behavior. Default true.
-    static let snapBackToEdgesKey = "Perch.SnapBackToEdges"
-
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?

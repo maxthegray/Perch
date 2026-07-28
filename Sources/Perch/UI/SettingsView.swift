@@ -37,16 +37,16 @@ struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .onDisappear { versionClicks = 0 }
-        .alert("wanna try smart perch?", isPresented: $showsSmartPerchPrompt) {
-            Button("yep, update me") {
+        .alert("Try Smart Perch?", isPresented: $showsSmartPerchPrompt) {
+            Button("Join and Update") {
                 Updater.shared.joinSmartPerch()
             }
-            Button("not right now", role: .cancel) {}
+            Button("Not Now", role: .cancel) {}
         } message: {
             Text(
-                "it can name screenshots and remember where you usually put things. "
-                    + "everything it learns stays on this mac. this switches you over "
-                    + "to the smart perch updates."
+                "Smart Perch names screenshots and remembers where you usually put "
+                    + "things. Everything it learns stays on this Mac. Joining switches "
+                    + "Perch to the Smart Perch update track."
             )
         }
     }
@@ -224,7 +224,6 @@ struct BehaviorSettingsPane: View {
     @AppStorage(ShelfHostView.shakeToSummonKey) private var shakeToSummon = true
     @AppStorage(ShelfHostView.revealOnDragStartKey) private var revealOnDragStart = true
     @AppStorage(ShelfHostView.keepEmptyShelfKey) private var keepEmptyShelf = true
-    @AppStorage(ShelfHostView.snapBackToEdgesKey) private var snapBackToEdges = true
     @AppStorage(DockGeometryReader.enabledKey) private var snapBesideDock = false
     @AppStorage(ShelfHostView.vendCopiesKey) private var vendCopies = false
     @AppStorage(RecentArrivals.enabledKey) private var offerRecentArrivals = true
@@ -252,12 +251,6 @@ struct BehaviorSettingsPane: View {
                     isOn: $keepEmptyShelf
                 )
                 draggingModeRow
-                behaviorRow(
-                    demo: .moveShelf,
-                    title: "Snap to locations",
-                    caption: "Release a free shelf near an enabled screen edge or Dock side.",
-                    isOn: $snapBackToEdges
-                )
             }
 
             Section {
