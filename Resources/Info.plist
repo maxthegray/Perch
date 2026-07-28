@@ -26,10 +26,12 @@
 	<true/>
 	<key>NSHumanReadableCopyright</key>
 	<string>Personal use.</string>
+	<key>PerchUpdateTrack</key>
+	<string>smart</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
 	<key>SUFeedURL</key>
-	<string>https://raw.githubusercontent.com/maxthegray/Perch/main/appcast.xml</string>
+	<string>https://raw.githubusercontent.com/maxthegray/Perch/smart-perch/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>A1Plel1yzsvq+JzhNs0xM35jcVKe/UzcV3JPJPZJWIw=</string>
 </dict>
