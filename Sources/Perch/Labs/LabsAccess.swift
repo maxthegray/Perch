@@ -20,6 +20,14 @@ enum LabsAccess {
         UserDefaults.standard.set(true, forKey: PerchSettings.labsUnlocked)
     }
 
+    /// Put the pane away again. The caller must switch the experiments off first —
+    /// hiding the tab while something inside it is running would leave a feature with no
+    /// visible control, which is exactly what ``unlockIfSmartPerchWasAlreadyOn`` exists
+    /// to prevent (and it would simply unlock the pane again on the next launch).
+    static func lock() {
+        UserDefaults.standard.set(false, forKey: PerchSettings.labsUnlocked)
+    }
+
     /// Anyone who had already switched Smart Perch on keeps it on — so they need a way to
     /// reach the switch again. Without this they would be left with a feature running and
     /// no visible control for it.

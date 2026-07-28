@@ -60,8 +60,24 @@ struct LabsSettingsPane: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Section {
+                VStack(alignment: .leading, spacing: 4) {
+                    Button("Hide Labs") { hideLabs() }
+                    Text("Switches the experiments off and puts this tab away. Nothing already learned is deleted. Click the version number in General five times to bring it back.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         }
         .formStyle(.grouped)
+    }
+
+    /// Off first, then hide. The other order would leave Smart Perch running behind a tab
+    /// that no longer exists — and the launch migration would just unlock it again.
+    private func hideLabs() {
+        smartPerchEnabled = false
+        LabsAccess.lock()
     }
 
     /// Says what the switch actually does in each position. Off has to read as *nothing

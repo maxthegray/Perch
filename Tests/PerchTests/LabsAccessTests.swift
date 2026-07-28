@@ -55,6 +55,26 @@ final class LabsAccessTests: XCTestCase {
         XCTAssertTrue(LabsAccess.isUnlocked)
     }
 
+    func testLockingHidesThePaneAgain() {
+        LabsAccess.unlock()
+        LabsAccess.lock()
+        XCTAssertFalse(LabsAccess.isUnlocked)
+    }
+
+    /// Hiding Labs switches Smart Perch off first. If it did not, the launch migration
+    /// would see an explicit `true` and unlock the pane straight back open.
+    func testLockingSticksOnlyBecauseSmartPerchWasTurnedOffFirst() {
+        UserDefaults.standard.set(true, forKey: PerchSettings.smartPerchEnabled)
+        LabsAccess.unlock()
+
+        // What LabsSettingsPane.hideLabs does, in order.
+        UserDefaults.standard.set(false, forKey: PerchSettings.smartPerchEnabled)
+        LabsAccess.lock()
+
+        LabsAccess.unlockIfSmartPerchWasAlreadyOn()
+        XCTAssertFalse(LabsAccess.isUnlocked)
+    }
+
     private func restore(_ value: Any?, forKey key: String) {
         if let value {
             UserDefaults.standard.set(value, forKey: key)

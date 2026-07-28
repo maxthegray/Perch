@@ -65,7 +65,7 @@ final class SettingsWindowController {
             size: NSSize(width: 560, height: 820),
             view: AdvancedSettingsPane(themeStore: themeStore)
         )
-        addLabsPaneIfUnlocked(to: tabs)
+        syncLabsPane(in: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -83,15 +83,15 @@ final class SettingsWindowController {
             }
         }
 
-        // The unlock happens inside the General pane, which cannot reach the tab bar.
-        // Watch the flag instead so the pane appears on the fifth click rather than on
-        // the next launch.
+        // Unlocking happens in the General pane and hiding happens in the Labs pane;
+        // neither can reach the tab bar. Watch the flag instead so the tab appears on the
+        // fifth click and disappears on Hide, rather than at the next launch.
         labsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self, weak tabs] _ in
             MainActor.assumeIsolated {
                 guard let self, let tabs else { return }
-                self.addLabsPaneIfUnlocked(to: tabs)
+                self.syncLabsPane(in: tabs)
             }
         }
 
@@ -99,18 +99,25 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Adds the Labs tab once unlocked. Locking is not undone here: the flag is only ever
-    /// set, and a pane that vanished under the user mid-session would be worse than one
-    /// that stays until the next launch.
-    private func addLabsPaneIfUnlocked(to tabs: NSTabViewController) {
-        guard LabsAccess.isUnlocked,
-              !tabs.tabViewItems.contains(where: { $0.label == Self.labsPaneLabel })
-        else {
+    /// Adds or removes the Labs tab to match the unlock flag.
+    private func syncLabsPane(in tabs: NSTabViewController) {
+        let existing = tabs.tabViewItems.firstIndex { $0.label == Self.labsPaneLabel }
+
+        guard LabsAccess.isUnlocked else {
+            guard let existing else { return }
+            // Removing the selected tab would leave the tab view with no selection and a
+            // stale window title, so step back to General first.
+            if tabs.selectedTabViewItemIndex == existing {
+                tabs.selectedTabViewItemIndex = 0
+            }
+            tabs.removeTabViewItem(tabs.tabViewItems[existing])
             return
         }
+
+        guard existing == nil else { return }
         addPane(
             to: tabs, label: Self.labsPaneLabel, symbol: "flask",
-            size: NSSize(width: 560, height: 340),
+            size: NSSize(width: 560, height: 380),
             view: LabsSettingsPane(themeStore: themeStore)
         )
     }
