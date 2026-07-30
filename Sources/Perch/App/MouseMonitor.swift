@@ -14,6 +14,12 @@ final class MouseMonitor {
     /// Fired on each drag movement with the current cursor location (screen coords).
     var onDragMoved: ((NSPoint) -> Void)?
 
+    /// Fired on each plain (no button held) pointer sample, with the cursor location in
+    /// screen coords. The edge catch strips ignore mouse events so they don't swallow
+    /// clicks meant for the app underneath, which means hover has to be spotted in this
+    /// global stream rather than through their own tracking areas.
+    var onMouseMoved: ((NSPoint) -> Void)?
+
     /// Fired when the user "shakes" the cursor (rapid back-and-forth) — the gesture that
     /// summons the shelf at the pointer. Carries the current cursor location.
     var onSummonAtCursor: ((NSPoint) -> Void)?
@@ -93,7 +99,9 @@ final class MouseMonitor {
                 onDragSessionChange?(false)
             }
         case .mouseMoved:
-            detectShake(at: NSEvent.mouseLocation)
+            let point = NSEvent.mouseLocation
+            onMouseMoved?(point)
+            detectShake(at: point)
         default:
             break
         }

@@ -49,8 +49,9 @@ final class EdgeStripWindow: NSPanel {
     /// Active look — the drawn handle follows it.
     let themeStore: ThemeStore
 
-    /// Whether the visible tab is drawn. The window itself is always present (so it
-    /// can catch hover + drag), but the accent handle only shows while dragging.
+    /// Whether the visible tab is drawn. The window itself is always present (so a drag
+    /// has something to enter and the catch zone stays a stable rectangle), but the accent
+    /// handle only shows while dragging.
     var showsTab = false {
         didSet {
             guard showsTab != oldValue else { return }
@@ -114,6 +115,13 @@ final class EdgeStripWindow: NSPanel {
         }
     }
 
+    /// Take (or stop taking) real mouse events. Only a live drag session needs them; plain
+    /// hover is detected from the controller's global pointer samples against
+    /// `catchZoneContains`, which costs no window and eats no clicks.
+    func setAcceptsMouseEvents(_ accepts: Bool) {
+        ignoresMouseEvents = !accepts
+    }
+
     /// Whether the pointer is inside the catch zone, counting the screen boundary
     /// itself. The cursor pins at exactly the edge coordinate (e.g. `y == maxY` when
     /// pushed under the notch), which `NSRect.contains` and tracking areas treat as
@@ -144,7 +152,12 @@ final class EdgeStripWindow: NSPanel {
         hasShadow = false
         isOpaque = false
         backgroundColor = .clear
-        ignoresMouseEvents = false
+        // Click-through by default. This is an invisible window parked permanently on the
+        // screen edge; with `ignoresMouseEvents = false` every click on that band went
+        // into an unhandled responder chain and was discarded, so the app underneath
+        // never saw it — including in free-floating mode, where the strips do nothing at
+        // all. The controller flips this on only while a drag needs `draggingEntered`.
+        ignoresMouseEvents = true
 
         let triggerView = EdgeStripTriggerView(frame: NSRect(origin: .zero, size: frame.size))
         triggerView.autoresizingMask = [.width, .height]
@@ -189,18 +202,9 @@ private final class EdgeStripTriggerView: NSView {
         }
     }
 
-    override func updateTrackingAreas() {
-        super.updateTrackingAreas()
-        trackingAreas.forEach(removeTrackingArea)
-        addTrackingArea(
-            NSTrackingArea(
-                rect: bounds,
-                options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
-                owner: self,
-                userInfo: nil
-            )
-        )
-    }
+    // No tracking areas: the strip window ignores mouse events except during a drag, so
+    // it would never receive enter/exit anyway. `ShelfController` watches the global
+    // pointer position against `catchZoneContains` instead.
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
@@ -270,21 +274,6 @@ private final class EdgeStripTriggerView: NSView {
         glow.set()
         draw()
         NSGraphicsContext.restoreGraphicsState()
-    }
-
-    override func mouseEntered(with event: NSEvent) {
-        if let strip {
-            strip.stripDelegate?.edgeStrip(strip, pointerDidEnterViaDrag: false)
-        }
-    }
-
-    override func mouseExited(with event: NSEvent) {
-        guard let strip else { return }
-        // A cursor pinned at the screen edge (fully under the notch) reads as an exit
-        // because the tracking area excludes the boundary pixel — ignore the event
-        // while the pointer is really still inside the catch zone.
-        if strip.catchZoneContains(NSEvent.mouseLocation) { return }
-        strip.stripDelegate?.edgeStripPointerDidExit(strip, duringDrag: false)
     }
 
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {

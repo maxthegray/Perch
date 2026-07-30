@@ -40,9 +40,36 @@ final class ShelfWindowController {
     /// When true, hide scales about the card's center (the cursor-summoned shelf's pop).
     var usesFreeAnimation = false
 
+    /// Where the panel is in its reveal/hide cycle, which is what decides whether it may
+    /// take mouse events. Every transition below sets it, and the same generation guards
+    /// that protect the animations protect this: a superseded fade's completion is
+    /// dropped, so it can never leave the flag describing a state the panel has left.
+    private var phase: ShelfMouseEventPolicy.PanelPhase = .hidden {
+        didSet { applyMouseEventPolicy() }
+    }
+
+    /// Whether a system drag is in flight, set by the controller from its global drag
+    /// state. A drag has to be able to reach the card the moment it is ordered in, since
+    /// the drop routinely lands inside the fade-in.
+    var dragSessionActive = false {
+        didSet { applyMouseEventPolicy() }
+    }
+
     init(panel: ShelfPanel) {
         self.panel = panel
         revealedFrame = panel.frame
+        applyMouseEventPolicy()
+    }
+
+    /// A panel that looks absent must also *be* absent to the pointer. AppKit hit-tests a
+    /// window on its frame and `isHidden` alone — alpha plays no part — so without this a
+    /// card ordered in at alpha 0, or one whose 0.18s fade-out has not yet reached its
+    /// `orderOut`, eats every click in its frame and the app below never sees them.
+    private func applyMouseEventPolicy() {
+        panel.ignoresMouseEvents = !ShelfMouseEventPolicy.panelAcceptsMouseEvents(
+            phase: phase,
+            dragActive: dragSessionActive
+        )
     }
 
     func reveal(animated: Bool) {
@@ -63,6 +90,7 @@ final class ShelfWindowController {
         panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
         panel.alphaValue = 1
         panel.orderFrontRegardless()
+        phase = .revealed
         healContentViewShear()
     }
 
@@ -81,11 +109,15 @@ final class ShelfWindowController {
             activeRevealGeneration = nil
             panel.alphaValue = 1
             panel.orderFrontRegardless()
+            phase = .revealed
             return
         }
 
         activeRevealGeneration = generation
         panel.alphaValue = 0
+        // Set before ordering in, so the window never spends a moment in the hit-test
+        // tree while it is still invisible.
+        phase = .revealing
         panel.orderFrontRegardless()
 
         NSAnimationContext.runAnimationGroup { context in
@@ -99,6 +131,7 @@ final class ShelfWindowController {
                     return
                 }
                 self.activeRevealGeneration = nil
+                self.phase = .revealed
             }
         }
     }
@@ -118,11 +151,13 @@ final class ShelfWindowController {
             panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
             panel.alphaValue = 1
             panel.orderFrontRegardless()
+            phase = .revealed
             return
         }
 
         activeRevealGeneration = generation
         panel.alphaValue = 0
+        phase = .revealing
         panel.orderFrontRegardless()
 
         let transform = CABasicAnimation(keyPath: "transform")
@@ -143,6 +178,7 @@ final class ShelfWindowController {
                     return
                 }
                 self.activeRevealGeneration = nil
+                self.phase = .revealed
             }
         }
     }
@@ -151,6 +187,10 @@ final class ShelfWindowController {
         visibilityGeneration &+= 1
         activeRevealGeneration = nil
         let generation = visibilityGeneration
+        // The moment the retraction starts the card stops taking clicks: it is on its way
+        // out, and for the whole 0.18s fade it would otherwise keep them from the app
+        // that is being revealed underneath it.
+        phase = animated ? .hiding : .hidden
         guard animated, let layer = panel.contentView?.layer else {
             panel.orderOut(nil)
             panel.alphaValue = 1
@@ -180,6 +220,7 @@ final class ShelfWindowController {
                 guard let self, generation == self.visibilityGeneration else { return }
                 self.panel.orderOut(nil)
                 self.panel.alphaValue = 1
+                self.phase = .hidden
                 self.panel.contentView?.layer?.removeAnimation(forKey: transformKey)
             }
         }
