@@ -445,10 +445,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             } else {
                 self.setTabsShown(false)
             }
-            self.dragDidMove(to: point)
+            self.pointerDidMove(to: point, duringDrag: true)
         }
         mouseMonitor.onMouseMoved = { [weak self] point in
-            self?.pointerDidMove(to: point)
+            self?.pointerDidMove(to: point, duringDrag: false)
         }
         // Shake the cursor to summon the shelf right where the pointer is (when enabled).
         mouseMonitor.onSummonAtCursor = { [weak self] point in
@@ -2114,29 +2114,23 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         exitRegion(duringDrag: duringDrag)
     }
 
-    /// Reveal on a drag that reaches the home dock. The strips do take real events while a
-    /// drag is live, but matching the drag's own position against the catch zone makes the
-    /// reveal independent of whether flipping `ignoresMouseEvents` mid-session got them
-    /// into the in-flight drag's destination set.
-    private func dragDidMove(to point: NSPoint) {
-        guard usesEdgeDock,
-              let home = homeStrip(),
-              home.catchZoneContains(point) else { return }
-        enterRegion(immediate: true)
-    }
-
-    /// Hover detection for the edge docks. The strips are click-through, so AppKit never
-    /// sends them enter/exit; their catch zones are matched against the global pointer
-    /// samples instead. Entry and exit run the same paths the tracking areas used to.
-    private func pointerDidMove(to point: NSPoint) {
+    /// Which catch zone the pointer is in, tracked from the global pointer and drag
+    /// samples. The strips are click-through, so AppKit no longer sends them enter/exit;
+    /// matching their catch zones here runs the same entry and exit paths the tracking
+    /// areas used to, and makes the drag case independent of whether flipping
+    /// `ignoresMouseEvents` mid-session got them into an in-flight drag's destination set.
+    ///
+    /// Transitions only: `enterRegion` reasserts the panel's presentation, which should not
+    /// run per sample.
+    private func pointerDidMove(to point: NSPoint, duringDrag: Bool) {
         let strip = usesEdgeDock ? edgeStrips.first { $0.catchZoneContains(point) } : nil
         guard strip !== hoveredStrip else { return }
         let previous = hoveredStrip
         hoveredStrip = strip
         if let strip {
-            edgeStrip(strip, pointerDidEnterViaDrag: false)
+            edgeStrip(strip, pointerDidEnterViaDrag: duringDrag)
         } else if let previous {
-            edgeStripPointerDidExit(previous, duringDrag: false)
+            edgeStripPointerDidExit(previous, duringDrag: duringDrag)
         }
     }
 
