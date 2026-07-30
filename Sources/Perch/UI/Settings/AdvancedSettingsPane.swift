@@ -21,7 +21,7 @@ struct AdvancedSettingsPane: View {
         var preferredHeight: CGFloat {
             switch self {
             case .look: return 440
-            case .behavior: return 720
+            case .behavior: return 820
             case .docking: return 380
             }
         }
@@ -35,6 +35,7 @@ struct AdvancedSettingsPane: View {
 
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = true
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
+    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
@@ -107,6 +108,12 @@ struct AdvancedSettingsPane: View {
     private var behaviorForm: some View {
         Form {
             SwiftUI.Section("Showing the shelf") {
+                behaviorRow(
+                    demo: .revealOnHover,
+                    title: "Auto-show on hover",
+                    caption: "The shelf slides out when the pointer rests at its edge. Off leaves that edge alone until you drag something to it.",
+                    isOn: $revealOnHover
+                )
                 behaviorRow(
                     demo: .revealOnDrag,
                     title: "Auto-show while dragging",

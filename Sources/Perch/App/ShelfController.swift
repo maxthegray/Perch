@@ -29,6 +29,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
     private let arrivals = RecentArrivals()
     private var edgeStrips: [EdgeStripWindow] = []
+    /// The strip whose catch zone last held the pointer, tracked from the global pointer
+    /// stream because the strips themselves ignore mouse events (see `pointerDidMove`).
+    private weak var hoveredStrip: EdgeStripWindow?
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
@@ -42,6 +45,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var dismissingFreeShelfResetTask: Task<Void, Never>?
     /// True while a system drag is in flight; grows the empty drop target.
     private var dragActive = false
+    /// True while an item dragged *off the card* is still in flight. See `dragSessionLive`.
+    private var vendSessionActive = false
     /// Delays the visual edge tab so short, ordinary drags stay quiet. If a drag lasts
     /// long enough, the home tab appears as a reminder that Perch is available.
     private var edgeTabReminderTask: Task<Void, Never>?
@@ -55,6 +60,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
     private var revealOnDragStart: Bool {
         PerchSettings.flag(PerchSettings.revealOnDragStart, default: true)
+    }
+    /// Whether resting the pointer at an enabled edge reveals the shelf at all.
+    /// User-toggled; defaults on, matching the behavior that had no switch.
+    private var revealOnHover: Bool {
+        PerchSettings.flag(PerchSettings.revealOnHover, default: true)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
     /// value reads as true), matching the original always-on behavior.
@@ -226,6 +236,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onRecordSuccessfulRoutes = { [weak self] routes in
             self?.smartPerch.recordSuccessfulRoutes(routes)
+        }
+
+        hostView.onVendSessionChange = { [weak self] active in
+            self?.setVendSessionActive(active)
         }
 
         // "Close Shelf" in the context menu dismisses the free shelf without removing
@@ -413,13 +427,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self.dragDidEnd()
             }
         }
-        mouseMonitor.onDragMoved = { [weak self] _ in
+        mouseMonitor.onDragMoved = { [weak self] point in
             guard let self else { return }
             if self.usesEdgeDock, self.edgeTabReminderVisible {
                 self.showHomeTab()
             } else {
                 self.setTabsShown(false)
             }
+            self.dragDidMove(to: point)
+        }
+        mouseMonitor.onMouseMoved = { [weak self] point in
+            self?.pointerDidMove(to: point)
         }
         // Shake the cursor to summon the shelf right where the pointer is (when enabled).
         mouseMonitor.onSummonAtCursor = { [weak self] point in
@@ -1223,6 +1241,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func setDragActive(_ active: Bool) {
         dragActive = active
+        applyDragMousePolicy()
         // A retract scheduled just before the drag pasteboard became active must not
         // win the next main-loop turn and hide the drop target mid-gesture.
         if active {
@@ -1286,6 +1305,31 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             Self.distance(from: panel.frame.origin, to: $0.frame)
                 < Self.distance(from: panel.frame.origin, to: $1.frame)
         }) ?? resolvedPreferredStrip()
+    }
+
+    /// Whether *some* drag session is in flight. `dragActive` comes from the global event
+    /// monitor, which by design never sees our own app's events, so a vend begun on the
+    /// card reports itself separately.
+    private var dragSessionLive: Bool {
+        dragActive || vendSessionActive
+    }
+
+    private func setVendSessionActive(_ active: Bool) {
+        vendSessionActive = active
+        applyDragMousePolicy()
+    }
+
+    /// Both the card and the catch strips are transparent to the pointer except when they
+    /// have a reason not to be, and a live drag is that reason: AppKit routes
+    /// dragging-destination messages by window, so a window that ignores mouse events can
+    /// be neither dragged to nor dropped on.
+    private func applyDragMousePolicy() {
+        let live = dragSessionLive
+        windowController.dragSessionActive = live
+        let accepts = ShelfMouseEventPolicy.edgeStripAcceptsMouseEvents(dragActive: live)
+        for strip in edgeStrips {
+            strip.setAcceptsMouseEvents(accepts)
+        }
     }
 
     /// The enabled edge tab whose catch zone is nearest the cursor.
@@ -2029,6 +2073,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
 
+        // With hover reveal off, a pass over the edge does nothing at all — in particular
+        // it does not re-home the shelf, which would otherwise let an incidental sweep
+        // along the left edge move the dock the user had settled on the right.
+        guard HoverRevealPolicy.armsReveal(
+            revealOnHoverEnabled: revealOnHover,
+            usesEdgeDock: usesEdgeDock
+        ) else { return }
+
         // A deliberate ordinary hover selects this as the shelf's future home.
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
@@ -2039,6 +2091,32 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
         guard usesEdgeDock else { return }
         exitRegion(duringDrag: duringDrag)
+    }
+
+    /// Reveal on a drag that reaches the home dock. The strips do take real events while a
+    /// drag is live, but matching the drag's own position against the catch zone makes the
+    /// reveal independent of whether flipping `ignoresMouseEvents` mid-session got them
+    /// into the in-flight drag's destination set.
+    private func dragDidMove(to point: NSPoint) {
+        guard usesEdgeDock,
+              let home = homeStrip(),
+              home.catchZoneContains(point) else { return }
+        enterRegion(immediate: true)
+    }
+
+    /// Hover detection for the edge docks. The strips are click-through, so AppKit never
+    /// sends them enter/exit; their catch zones are matched against the global pointer
+    /// samples instead. Entry and exit run the same paths the tracking areas used to.
+    private func pointerDidMove(to point: NSPoint) {
+        let strip = usesEdgeDock ? edgeStrips.first { $0.catchZoneContains(point) } : nil
+        guard strip !== hoveredStrip else { return }
+        let previous = hoveredStrip
+        hoveredStrip = strip
+        if let strip {
+            edgeStrip(strip, pointerDidEnterViaDrag: false)
+        } else if let previous {
+            edgeStripPointerDidExit(previous, duringDrag: false)
+        }
     }
 
     /// Height of the empty drop target — also the card's minimum size.
@@ -2275,6 +2353,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             strip.orderOut(nil)
         }
         edgeStrips.removeAll()
+        hoveredStrip = nil
         installEdgeStripIfNeeded()
 
         // Retract if the shelf is open on a screen that's gone or an edge now disabled.
@@ -2361,6 +2440,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func makeStrip(on screen: NSScreen, edge: ShelfEdge) -> EdgeStripWindow {
         let strip = EdgeStripWindow(screen: screen, edge: edge, themeStore: themeStore)
         strip.stripDelegate = self
+        // A strip built mid-drag (a display change during one) has to match the others.
+        strip.setAcceptsMouseEvents(
+            ShelfMouseEventPolicy.edgeStripAcceptsMouseEvents(dragActive: dragSessionLive)
+        )
         strip.orderFrontRegardless()
         NSLog("Perch edge tab (\(edge)) installed at frame \(NSStringFromRect(strip.frame))")
         return strip
@@ -2403,6 +2486,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         openTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
             guard let self, !Task.isCancelled else { return }
+            // The pointer has to have *stayed* at the edge. Nothing used to re-check this,
+            // so brushing past on the way somewhere else was enough to drop a card under
+            // the cursor — which is the dwell requirement, at no cost in new state: the
+            // real cursor is authoritative, and the delay above is the dwell.
+            guard HoverRevealPolicy.completesArmedReveal(
+                revealOnHoverEnabled: self.revealOnHover,
+                pointerStillInCatchZone: self.pointerOverEdgeCatchZone(NSEvent.mouseLocation)
+            ) else {
+                self.openTask = nil
+                return
+            }
             self.pointerInRegion = true
             self.revealIfNeeded()
             self.openTask = nil
@@ -2478,7 +2572,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// tab across the gap to the card never reads as "left the shelf" (screen coords).
     private func pointerOverShelfOrTab(_ point: NSPoint) -> Bool {
         if keepAliveRegion().contains(point) { return true }
-        return edgeStrips.contains { $0.catchZoneContains(point) }
+        return pointerOverEdgeCatchZone(point)
+    }
+
+    /// Whether the cursor is inside any enabled edge dock's catch zone (screen coords).
+    private func pointerOverEdgeCatchZone(_ point: NSPoint) -> Bool {
+        edgeStrips.contains { $0.catchZoneContains(point) }
     }
 
     /// The card's frame unioned with the active edge's tab, so the rectangle spans the

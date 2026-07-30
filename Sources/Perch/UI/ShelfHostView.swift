@@ -122,6 +122,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// controller performs it for the same reason.
     var onFileItemAtSuggestedRoute: ((StoredItem) -> Void)?
 
+    /// Fires when a vend drag begins (`true`) and when it ends (`false`). A drag started
+    /// inside Perch is not visible in the global event monitor the way another app's drag
+    /// is, and the controller needs to know: while a session is live the edge docks have
+    /// to take real events so the item can be carried back to one.
+    var onVendSessionChange: ((Bool) -> Void)?
+
     /// Called when the user picks "Show History…"; the controller opens the window.
     var onShowHistory: (() -> Void)?
 
@@ -629,6 +635,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
+        onVendSessionChange?(true)
         preservesSelectionForDrag = false
         let items = interaction.selectedItemIDs.contains(item.id)
             ? store.items.filter { interaction.selectedItemIDs.contains($0.id) }
@@ -706,6 +713,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             occurredAt in
             guard let self else { return }
             self.activeDragSource = nil
+            self.onVendSessionChange?(false)
             routeCoordinator?.draggingEnded(
                 operation: operation,
                 returnedToPerch: returnedToPerch,

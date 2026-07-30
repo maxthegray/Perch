@@ -9,7 +9,7 @@ import SwiftUI
 /// demos (keep-open, move/copy) act out whichever variant is currently selected.
 struct BehaviorDemo: View {
     enum Kind {
-        case shakeToSummon, revealOnDrag, keepEmpty, moveShelf, dragOut
+        case shakeToSummon, revealOnHover, revealOnDrag, keepEmpty, moveShelf, dragOut
     }
 
     let kind: Kind
@@ -44,7 +44,7 @@ struct BehaviorDemo: View {
 
     private var duration: Double {
         switch kind {
-        case .shakeToSummon, .moveShelf: return 4.6
+        case .shakeToSummon, .moveShelf, .revealOnHover: return 4.6
         case .revealOnDrag, .keepEmpty, .dragOut: return 5.2
         }
     }
@@ -53,6 +53,7 @@ struct BehaviorDemo: View {
     private func scene(at t: Double) -> some View {
         switch kind {
         case .shakeToSummon: shakeScene(t)
+        case .revealOnHover: hoverScene(t)
         case .revealOnDrag: revealScene(t)
         case .keepEmpty: keepEmptyScene(t)
         case .moveShelf: moveShelfScene(t)
@@ -68,6 +69,18 @@ struct BehaviorDemo: View {
         return ZStack {
             shelf(rows: [1, 1, 1], x: shelfX(shelfIn))
             cursor(x: 46 + wiggle, y: 36)
+        }
+    }
+
+    /// The cursor crosses to the edge and *stays* there; the shelf slides out after the
+    /// pause, then retracts once the cursor wanders back off.
+    private func hoverScene(_ t: Double) -> some View {
+        let approach = ramp(t, 0.3, 1.2)
+        let leave = ramp(t, 2.8, 3.6)
+        let shelfIn = ramp(t, 1.5, 1.9) - ramp(t, 3.0, 3.4)
+        return ZStack {
+            shelf(rows: [1, 1], x: shelfX(shelfIn))
+            cursor(x: lerp(lerp(30, 104, approach), 34, leave), y: 32)
         }
     }
 
