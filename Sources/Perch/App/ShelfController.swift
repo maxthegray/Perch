@@ -51,6 +51,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// long enough, the home tab appears as a reminder that Perch is available.
     private var edgeTabReminderTask: Task<Void, Never>?
     private var edgeTabReminderVisible = false
+    /// Why the shelf is currently out. A hover reveal starts out `unusedHover` and is
+    /// undone when the pointer leaves — a hover is a glance, not a decision — until
+    /// something is actually done with the card, at which point it keeps the old behavior
+    /// and stays out. Every other reveal path is deliberate, hence the default.
+    private var revealProvenance: ShelfRetractionPolicy.Reveal = .used
     /// True when the current drag (in "reveal while dragging" mode) opened the shelf.
     /// The chosen edge remains stable until the drag ends or the pointer explicitly
     /// enters another edge tab.
@@ -238,8 +243,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.smartPerch.recordSuccessfulRoutes(routes)
         }
 
+        hostView.onCardInteraction = { [weak self] in
+            self?.markRevealUsed()
+        }
+
         hostView.onVendSessionChange = { [weak self] active in
-            self?.setVendSessionActive(active)
+            guard let self else { return }
+            if active { self.markRevealUsed() }
+            self.setVendSessionActive(active)
         }
 
         // "Close Shelf" in the context menu dismisses the free shelf without removing
@@ -650,7 +661,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             try? await Task.sleep(for: .seconds(8))
             guard let self, !Task.isCancelled else { return }
             guard self.panel.isVisible,
-                  self.shouldAutomaticallyRetractEmptyShelf(
+                  self.shouldAutomaticallyRetractShelf(
                     pointerInKeepAliveRegion: self.pointerInRegion
                   )
             else { return }
@@ -1343,7 +1354,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// drag-revealed if it wasn't already open, so a persistent full shelf is untouched.
     private func revealForDrag() {
         guard usesEdgeDock else { return }
-        if !panel.isVisible { revealedForDrag = true }
+        if !panel.isVisible {
+            revealedForDrag = true
+            // A drag reveal is deliberate. An unused hover card that is merely *already*
+            // out keeps its provisional status: if the drag lands elsewhere, the pointer
+            // leaving still takes the accidental reveal back.
+            markRevealUsed()
+        }
         if let shownScreen, edgeSettings.isEnabled(shownEdge) {
             preferredScreen = shownScreen
             preferredEdge = shownEdge
@@ -1363,7 +1380,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let pointerIsOverShelf = pointerOverShelfOrTab(NSEvent.mouseLocation)
         pointerInRegion = pointerIsOverShelf
-        guard shouldAutomaticallyRetractEmptyShelf(
+        guard shouldAutomaticallyRetractShelf(
             pointerInKeepAliveRegion: pointerIsOverShelf
         ) else {
             resizeToFitVisible()
@@ -1380,6 +1397,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// locked free shelf is a fixture — the summon must not yank it from its spot.
     private func summonAtCursor(_ point: NSPoint) {
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
+        // Summoning is as deliberate as it gets.
+        markRevealUsed()
         detachFromSystemDock(makeVisible: false)
         // A deliberate summon adopts any preview shelf (the settings closure re-flags).
         shelfIsSettingsPreview = false
@@ -2034,7 +2053,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
 
             // Keep the shelf open after a drop (the pointer is over it); it closes
-            // when the pointer leaves.
+            // when the pointer leaves. A drop is the clearest possible use of the card,
+            // so a hover that revealed it is no longer provisional.
+            markRevealUsed()
             cancelOpen()
             cancelRetract()
             return true
@@ -2497,10 +2518,21 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self.openTask = nil
                 return
             }
+            // A reveal this hover is about to perform is provisional: if the pointer
+            // leaves again with nothing done, it is taken back.
+            if !self.panel.isVisible {
+                self.revealProvenance = .unusedHover
+            }
             self.pointerInRegion = true
             self.revealIfNeeded()
             self.openTask = nil
         }
+    }
+
+    /// The user did something with the card, so it is no longer a provisional hover reveal
+    /// and stays out until it empties (or is dismissed) as before.
+    private func markRevealUsed() {
+        revealProvenance = .used
     }
 
     /// The pointer left the region. A plain hover exit retracts immediately. Drag exits
@@ -2522,7 +2554,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // A context menu open over the shelf keeps it alive even as the pointer wanders
         // into submenus outside the card.
         if hostView.isContextMenuOpen { return }
-        guard store.items.isEmpty else { return }
+        // An empty card has nothing holding it out, and an unused hover reveal is taken
+        // back however much sits on it. `scheduleRetract` re-checks the full policy.
+        guard store.items.isEmpty || revealProvenance == .unusedHover else { return }
         // Moving off the (centered) card toward the tab still reads as a card-exit, but
         // it's really a hand-off across the gap — only retract instantly when the pointer
         // has actually left the whole tab↔card corridor; otherwise let the watcher decide.
@@ -2550,7 +2584,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 let pointerIsOverShelf = self.pointerOverShelfOrTab(
                     NSEvent.mouseLocation
                 )
-                guard self.shouldAutomaticallyRetractEmptyShelf(
+                guard self.shouldAutomaticallyRetractShelf(
                     pointerInKeepAliveRegion: pointerIsOverShelf
                 ) else {
                     continue
@@ -2609,6 +2643,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 scheduleRetract()
             }
         } else {
+            // Content arriving on the shelf is a reason for it to be out in its own right,
+            // whatever opened it.
+            markRevealUsed()
             cancelRetract()
             revealIfNeeded()
         }
@@ -2713,7 +2750,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             guard let self, !Task.isCancelled else { return }
             // Re-check every visibility hold, including a system drag that may have
             // begun after this task was scheduled.
-            guard self.shouldAutomaticallyRetractEmptyShelf(
+            guard self.shouldAutomaticallyRetractShelf(
                 pointerInKeepAliveRegion: self.pointerInRegion
             ) else {
                 self.retractTask = nil
@@ -2725,10 +2762,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    private func shouldAutomaticallyRetractEmptyShelf(
+    private func shouldAutomaticallyRetractShelf(
         pointerInKeepAliveRegion: Bool
     ) -> Bool {
-        ShelfRetractionPolicy.shouldRetractEmptyShelf(
+        ShelfRetractionPolicy.shouldRetractShelf(
+            reveal: revealProvenance,
             dragActive: dragActive,
             shelfDragActive: dragOutDockedFrame != nil,
             isFreeFloating: revealMode == .free,

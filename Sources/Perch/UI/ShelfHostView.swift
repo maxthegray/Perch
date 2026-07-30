@@ -122,6 +122,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// controller performs it for the same reason.
     var onFileItemAtSuggestedRoute: ((StoredItem) -> Void)?
 
+    /// Fires when the user acts on the card — a press the card claimed, or a right-click
+    /// that opens its menu. The controller stops treating a hover reveal as provisional
+    /// once this arrives: the shelf has been reached for, not just brushed open.
+    var onCardInteraction: (() -> Void)?
+
     /// Fires when a vend drag begins (`true`) and when it ends (`false`). A drag started
     /// inside Perch is not visible in the global event monitor the way another app's drag
     /// is, and the controller needs to know: while a session is live the edge docks have
@@ -455,6 +460,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         resetDragState()
         guard !isContextMenuOpen else { return }
         hasActiveLeftPress = true
+        onCardInteraction?()
 
         // Shelf movement takes precedence over row/delete/arrival interactions only
         // when the selected gesture is used. In handle mode, ordinary row drags keep
@@ -1216,6 +1222,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
+        onCardInteraction?()
         let menu = NSMenu()
         menu.delegate = self
         // Automatic enabling ignores the `isEnabled` values set below (every item has a
