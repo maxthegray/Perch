@@ -58,6 +58,17 @@ final class ShelfDropView: NSView {
         )
     }
 
+    /// The shelf's context menu belongs to the whole card, but the host view on top of us
+    /// now declines events that land on inert background — so a right-click there arrives
+    /// here instead. Ask the host for the menu it would have built at that point rather
+    /// than showing none.
+    override func menu(for event: NSEvent) -> NSMenu? {
+        for subview in subviews.reversed() {
+            if let menu = subview.menu(for: event) { return menu }
+        }
+        return super.menu(for: event)
+    }
+
     override func mouseEntered(with event: NSEvent) {
         dropHandler?.pointerDidEnterShelf()
     }

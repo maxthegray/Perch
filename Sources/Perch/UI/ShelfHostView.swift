@@ -261,8 +261,68 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     override var isFlipped: Bool { true }
 
+    /// Claim only the points that actually do something. This used to be an unconditional
+    /// `bounds.contains`, which made the side margins around the row lane and the empty
+    /// space of a card floored taller than its contents exactly as opaque to the mouse as
+    /// a row — `mouseDown` then consumed presses that had nothing to act on.
+    ///
+    /// Note the scope of this: an event the card declines is dropped, not handed to the app
+    /// underneath. Only `ignoresMouseEvents` gives a window back to what is behind it (see
+    /// `ShelfMouseEventPolicy`); declining here keeps the card from acting on presses that
+    /// were not aimed at it.
     override func hitTest(_ point: NSPoint) -> NSView? {
-        bounds.contains(point) ? self : nil
+        // `point` arrives in the superview's (unflipped) coordinates and this view is
+        // flipped, so every row measurement has to run on the converted point.
+        let local = superview.map { convert(point, from: $0) } ?? point
+        return ShelfHitTestPolicy.claimsEvent(hitTestTargets(at: local)) ? self : nil
+    }
+
+    /// What sits under `point` (view coords), gathered for `ShelfHitTestPolicy`.
+    private func hitTestTargets(at point: NSPoint) -> ShelfHitTestPolicy.Targets {
+        var targets = ShelfHitTestPolicy.Targets()
+        targets.isInsideCard = bounds.contains(point)
+        guard targets.isInsideCard else { return targets }
+
+        // Which event is being routed decides some of this: a right-click opens the menu
+        // anywhere, and Command-drag moves the card from anywhere.
+        let event = NSApp.currentEvent
+        targets.isContextClick = event.map(Self.isContextClick) ?? false
+        targets.isScrollEvent = event?.type == .scrollWheel
+        targets.shelfDragModifierHeld = !themeStore.showsGrabHandle
+            && event?.modifierFlags.contains(.command) == true
+
+        targets.isOverGrabHandle = grabberZoneContains(point)
+        targets.isOverRow = rowIndex(at: point) != nil
+        targets.isOverGhostRow = arrivalIndex(at: point) != nil
+        targets.isOverTrailingButton = trailingButtonContains(point)
+        targets.dismissesEmptyFreeShelf = isFreeMode && store.items.isEmpty
+        targets.hasActiveSelection = !interaction.selectedItemIDs.isEmpty
+        targets.gestureInFlight = hasActiveLeftPress || shelfDragActive || reorderActive
+        return targets
+    }
+
+    /// Whether any row's trailing button (✕ / return arrow, file-it) covers `point`. Their
+    /// hit rects are deliberately enlarged past the glyph and can reach slightly outside
+    /// the row itself, so they are checked in their own right.
+    private func trailingButtonContains(_ point: NSPoint) -> Bool {
+        guard !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels
+        else { return false }
+        return visibleItems.indices.contains {
+            deleteHitRect(forRow: $0).contains(point)
+                || routeActionHitRect(forRow: $0).contains(point)
+        }
+    }
+
+    /// A press that must open the context menu rather than act on a row.
+    private static func isContextClick(_ event: NSEvent) -> Bool {
+        switch event.type {
+        case .rightMouseDown, .rightMouseUp, .rightMouseDragged:
+            return true
+        case .leftMouseDown, .leftMouseUp:
+            return event.modifierFlags.contains(.control)
+        default:
+            return false
+        }
     }
 
     /// Guards against the scroll view bouncing an unconsumed event back up the responder
