@@ -2,16 +2,23 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.0.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.1.0/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.0.0</title>
-      <pubDate>Fri, 31 Jul 2026 17:35:05 +0000</pubDate>
-      <sparkle:version>1000000</sparkle:version>
-      <sparkle:shortVersionString>1.0.0</sparkle:shortVersionString>
+      <title>Version 1.1.0</title>
+      <description><![CDATA[
+<p>Perch now tells you what changed.</p>
+<ul>
+  <li><b>What's New after an update</b><br>Perch has no Dock or menu bar icon, so an update used to install and relaunch with nothing to show for it. Now it says what changed, once, and gets out of the way. Skip a few releases and you will see everything you missed.</li>
+  <li><b>Shake to summon is off by default</b><br>It could fire during ordinary vigorous mouse movement, which is a surprising way to meet a feature you did not know existed. Turn it back on under Settings, Advanced. If you had already switched it on, it stays on.</li>
+</ul>
+      ]]></description>
+      <pubDate>Fri, 31 Jul 2026 20:46:19 +0000</pubDate>
+      <sparkle:version>1010000</sparkle:version>
+      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.0.0/Perch.zip" sparkle:edSignature="6vN6q+35yHOaSJ6tMYUuqFW7memq4i195tJSsr2+uoD29FkgOnjB3xXscvjaE8Y4lJKdjGEBln2iCCRLSyVIBw==" length="3927995" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.1.0/Perch.zip" sparkle:edSignature="fAw/0cS5dWiB2ooUk6OS4WKcIqUMhrmYazlkKn6InI14gQ+dpqks9vTojZeC033Wdh8fp8yH6BYvpmRDYk1qAw==" length="3968677" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
