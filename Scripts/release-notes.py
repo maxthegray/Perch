@@ -40,11 +40,13 @@ def entry_for(version):
 def as_html(entry):
     lines = []
     if entry.get("headline"):
-        lines.append(f"<p>{html.escape(entry['headline'])}</p>")
+        lines.append(f"<p>{html.escape(entry['headline'], quote=False)}</p>")
     lines.append("<ul>")
     for highlight in entry.get("highlights", []):
-        title = html.escape(highlight["title"])
-        detail = html.escape(highlight["detail"])
+        # quote=False: this is element text, not an attribute value, so escaping
+        # apostrophes only makes the published feed harder to read.
+        title = html.escape(highlight["title"], quote=False)
+        detail = html.escape(highlight["detail"], quote=False)
         lines.append(f"  <li><b>{title}</b><br>{detail}</li>")
     lines.append("</ul>")
     return "\n".join(lines)

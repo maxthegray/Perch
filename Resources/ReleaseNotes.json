@@ -2,6 +2,22 @@
   "comment": "The one source of truth for what changed in each release. The app shows these in its What's New window; Scripts/release.sh turns the matching entry into the appcast description Sparkle shows before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. Add \"showsWelcome\": true to an entry to show updating users the welcome window itself instead of these notes — for a release that changes how Perch introduces itself. Their existing settings are pre-filled, so the window changes nothing they do not change.",
   "versions": [
     {
+      "version": "1.1.0",
+      "headline": "Perch now tells you what changed.",
+      "highlights": [
+        {
+          "symbol": "sparkles",
+          "title": "What's New after an update",
+          "detail": "Perch has no Dock or menu bar icon, so an update used to install and relaunch with nothing to show for it. Now it says what changed, once, and gets out of the way. Skip a few releases and you will see everything you missed."
+        },
+        {
+          "symbol": "hand.raised",
+          "title": "Shake to summon is off by default",
+          "detail": "It could fire during ordinary vigorous mouse movement, which is a surprising way to meet a feature you did not know existed. Turn it back on under Settings, Advanced. If you had already switched it on, it stays on."
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "headline": "The first launch now explains itself.",
       "highlights": [
