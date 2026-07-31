@@ -49,6 +49,62 @@ NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
 NOTES_HTML="$(python3 Scripts/release-notes.py "${VERSION}" --format html)"
 NOTES_MARKDOWN="$(python3 Scripts/release-notes.py "${VERSION}" --format markdown)"
 
+# Refuse to publish a commit CI has not vouched for. The `swift test` below runs on
+# whatever toolchain this machine happens to have; CI runs the one that decides whether
+# the project builds for everyone else. v1.0.0 shipped from a commit whose *test target
+# did not compile* on CI — a green local run is exactly what hid it, so a green local run
+# is no longer enough on its own.
+#
+# PERCH_SKIP_CI_CHECK=1 bypasses this for an emergency release from a machine that cannot
+# reach GitHub. It is a deliberate override, not a default.
+if [ "${PERCH_SKIP_CI_CHECK:-0}" = "1" ]; then
+  echo "WARNING: skipping the CI check at your request — nothing has verified this commit"
+else
+  HEAD_SHA="$(git rev-parse HEAD)"
+  git fetch --quiet origin "${TARGET_BRANCH}"
+  if [ "$(git rev-parse "origin/${TARGET_BRANCH}")" != "${HEAD_SHA}" ]; then
+    echo "error: origin/${TARGET_BRANCH} does not point at HEAD (${HEAD_SHA:0:7})."
+    echo "       Push first, so CI runs on the commit this release would publish."
+    exit 1
+  fi
+
+  echo "Checking CI on ${HEAD_SHA:0:7}..."
+  CI_DEADLINE=$((SECONDS + 1800))
+  CI_APPEARS_BY=$((SECONDS + 300))
+  while :; do
+    CI_RESULT="$(gh run list --repo maxthegray/Perch --workflow CI --commit "${HEAD_SHA}" \
+      --limit 1 --json status,conclusion \
+      --jq '.[0] | "\(.status)/\(.conclusion // "pending")"' 2>/dev/null || true)"
+    case "${CI_RESULT}" in
+      completed/success)
+        echo "CI passed on ${HEAD_SHA:0:7}."
+        break
+        ;;
+      completed/*)
+        echo "error: CI concluded '${CI_RESULT#*/}' on ${HEAD_SHA:0:7}. Fix it before releasing."
+        exit 1
+        ;;
+      ""|null/*|"null")
+        # GitHub takes a moment to register a run after a push, so an absent run is
+        # "not yet" rather than "never" — but only briefly, because it is also what a
+        # commit that never triggered CI looks like.
+        if [ "${SECONDS}" -ge "${CI_APPEARS_BY}" ]; then
+          echo "error: no CI run for ${HEAD_SHA:0:7} after 5 minutes. Did the workflow trigger?"
+          exit 1
+        fi
+        sleep 20
+        ;;
+      *)
+        if [ "${SECONDS}" -ge "${CI_DEADLINE}" ]; then
+          echo "error: CI was still ${CI_RESULT%%/*} on ${HEAD_SHA:0:7} after 30 minutes."
+          exit 1
+        fi
+        sleep 20
+        ;;
+    esac
+  done
+fi
+
 swift test
 
 create_release_zip() {
