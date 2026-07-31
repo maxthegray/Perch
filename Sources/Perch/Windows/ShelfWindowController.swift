@@ -10,11 +10,14 @@ final class ShelfWindowController {
     let panel: ShelfPanel
     private static let transformKey = "perch.reveal.transform"
 
-    private static let revealDuration: CFTimeInterval = 0.30
-    private static let hideDuration: CFTimeInterval = 0.18
+    // Internal rather than private so the first-run card copies (`ShelfGhostCardWindow`)
+    // can move on the shelf's own timing instead of a second set of numbers that would
+    // drift away from these.
+    static let revealDuration: CFTimeInterval = 0.30
+    static let hideDuration: CFTimeInterval = 0.18
     /// Smooth quint-style decel for the entrance; a gentle ease-in for the exit.
-    private static let revealCurve = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-    private static let hideCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
+    static let revealCurve = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+    static let hideCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
     /// A slightly punchier scale for the cursor-summon pop (no directional travel).
     private static let freeStartScale: CGFloat = 0.9
 

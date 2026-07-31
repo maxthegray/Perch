@@ -23,7 +23,9 @@ It also understands file promises from apps like Photos, Mail, and Messages, so 
 3. Drag `Perch.app` into your Applications folder.
 4. Open Perch from Applications.
 
-Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched, it quietly waits at the screen edge. You can enable Launch at Login from Settings.
+The first launch shows a short welcome: the gesture that summons the shelf, where to find Settings, which screen edges it may use, and a checkbox for opening Perch at login. Dismiss it and a shelf appears at every edge you chose at once — the real one at its home edge, a still copy at each of the others — so you can see where it lives before it gets out of the way.
+
+Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched, it quietly waits at the screen edge. Launch at Login can be changed later from Settings.
 
 ## How it works
 

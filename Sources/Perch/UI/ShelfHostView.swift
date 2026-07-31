@@ -98,6 +98,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
     }
 
+    /// Whether the ⌘-drag footnote has done its job and should stay gone.
+    private var moveHintRetired: Bool {
+        UserDefaults.standard.bool(forKey: PerchSettings.moveHintRetired)
+    }
+
     /// Called with the SwiftUI content's measured natural height so the controller can
     /// size the window to fit.
     var onContentHeight: ((CGFloat) -> Void)?
@@ -813,6 +818,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             let moved = hypot(location.x - shelfDragScreenStart.x, location.y - shelfDragScreenStart.y)
             guard moved >= 4, canBeginShelfDrag?() == true else { return }
             shelfDragActive = true
+            // The card is now genuinely following the cursor, so if this was the ⌘ path
+            // the gesture has been learned and its footnote can retire for good. Here
+            // rather than at mouse-down: holding Command over the card and thinking
+            // better of it is not the same as having moved the shelf.
+            if !themeStore.showsGrabHandle {
+                UserDefaults.standard.set(true, forKey: PerchSettings.moveHintRetired)
+            }
             shelfDragWindowOrigin = window?.frame.origin ?? .zero
             interaction.isGrabberHovered = hasGrabber
             NSCursor.closedHand.set()
@@ -1423,6 +1435,30 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(quit)
 
         menu.addItem(.separator())
+
+        // A footnote next to the version, not a row among the actions. With "Move shelf
+        // using" set to ⌘ + Click (the default) holding Command is the only way to lift
+        // the card off its edge, and nothing on screen suggests it — but at menu-item size
+        // and grouped with the actions it read as a broken command and widened the whole
+        // menu to fit. Small and secondary, in the footer, it reads as the aside it is.
+        //
+        // Dropped once it has nothing left to teach: after the first ⌘-drag that actually
+        // moved the card (for good — the gesture doesn't get forgotten), while the shelf
+        // is already floating, and when the handle is on and there is a visible
+        // affordance to find instead.
+        if !isFreeMode, !themeStore.showsGrabHandle, !moveHintRetired {
+            let moveHint = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+            moveHint.attributedTitle = NSAttributedString(
+                string: "⌘-drag to move the shelf",
+                attributes: [
+                    .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                    .foregroundColor: NSColor.secondaryLabelColor
+                ]
+            )
+            moveHint.isEnabled = false
+            menu.addItem(moveHint)
+        }
+
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
         let about = NSMenuItem(
             title: "\(productName) \(version)",

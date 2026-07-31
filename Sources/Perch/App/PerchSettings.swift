@@ -18,6 +18,9 @@ enum PerchSettings {
     static let vendCopies = "Perch.VendCopies"
     /// Raw values of the edges the shelf is allowed to dock to.
     static let enabledEdges = "Perch.EnabledEdges"
+    /// Set the first time a ⌘-drag actually moves the card. Retires the menu footnote
+    /// that teaches the gesture — it has a job, and once it is done it should stop.
+    static let moveHintRetired = "Perch.MoveHintRetired"
 
     // MARK: - Advanced ▸ Appearance
 
@@ -69,6 +72,10 @@ enum PerchSettings {
     // MARK: - Internal state (not user-facing)
 
     static let smartPerchAutoEnabledNames = "Perch.SmartPerchAutoEnabledNames"
+    /// Set once the welcome window has been shown and answered — or, for an install that
+    /// predates it, once that install has been recognized as an upgrade. See
+    /// `FirstRunExperience`.
+    static let firstRunCompleted = "Perch.FirstRunCompleted"
     /// The edge the shelf considers home between launches.
     static let preferredShelfEdge = "Perch.PreferredShelfEdge"
     static let arrivalDismissed = "Perch.ArrivalDismissed"

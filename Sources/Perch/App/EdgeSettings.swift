@@ -36,6 +36,15 @@ final class EdgeSettings: ObservableObject {
         enabledEdges.contains(edge)
     }
 
+    /// Replace the whole selection at once — the first-run edge picker hands over its
+    /// answer in one go rather than as a sequence of toggles, which would fire `onChange`
+    /// (and rebuild every edge tab) once per edge. An empty set is refused for the same
+    /// reason `toggle` refuses to remove the last edge: the shelf must stay reachable.
+    func setEnabledEdges(_ edges: Set<ShelfEdge>) {
+        guard !edges.isEmpty, edges != enabledEdges else { return }
+        enabledEdges = edges
+    }
+
     func toggle(_ edge: ShelfEdge) {
         if enabledEdges.contains(edge) {
             guard enabledEdges.count > 1 else { return }  // keep at least one

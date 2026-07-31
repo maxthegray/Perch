@@ -24,6 +24,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let dockSnapPreview = DockSnapPreviewWindow()
     private var previewedDockTarget: DockSnapTarget?
     private var dockSnapPreviewHideTask: Task<Void, Never>?
+    /// Still copies of the card at the chosen edges the real one isn't coming out of,
+    /// for the length of the first-run demonstration only.
+    private var firstRunEdgeGhosts: [ShelfGhostCardWindow] = []
     private let themeStore = ThemeStore()
     private let edgeSettings = EdgeSettings()
     /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
@@ -121,13 +124,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Observes display add/remove/resolution changes so the edge tabs stay correct.
     private var screenObserver: NSObjectProtocol?
     private var preferredScreen: NSScreen?
-    private var preferredEdge: ShelfEdge = .right
+    private var preferredEdge: ShelfEdge = .left
     /// Where the visible panel actually sits. `preferredScreen`/`preferredEdge` are the
     /// *next reveal* target and get retargeted by any brush over an edge tab's catch
     /// zone, so in-place resizes must use these instead — otherwise a resize can
     /// teleport an open shelf to whichever edge the pointer last passed.
     private var shownScreen: NSScreen?
-    private var shownEdge: ShelfEdge = .right
+    private var shownEdge: ShelfEdge = .left
     private var itemsCancellable: AnyCancellable?
     private var styleCancellable: AnyCancellable?
     private var sizePresetCancellable: AnyCancellable?
@@ -148,6 +151,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// A shelf opened only to advertise a new arrival goes away again after a short
     /// glance; adopting, pinning, locking, or hovering it hands control to normal UI.
     private var arrivalAutoHideTask: Task<Void, Never>?
+    /// Retracts the shelf again after the first-run demonstration — see
+    /// `demonstrateShelfLocation`.
+    private var firstRunDemoTask: Task<Void, Never>?
 
     /// Where the shelf is currently anchored: docked to a screen edge, or free-floating
     /// at the cursor (shake-to-summon). The two coexist on the same panel.
@@ -2144,7 +2150,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard let screen = NSScreen.main ?? NSScreen.screens.first else {
             return NSRect(x: 0, y: 0, width: 300, height: emptyStateHeight)
         }
-        return panelFrame(for: screen, edge: .right, contentHeight: emptyStateHeight, width: 300, centerY: nil)
+        return panelFrame(for: screen, edge: .left, contentHeight: emptyStateHeight, width: 300, centerY: nil)
     }
 
     /// The card height that hugs every rendered row: stored items plus recent-arrival
@@ -2429,6 +2435,100 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         startRetractWatcher()
     }
 
+    /// Adopt the edges chosen during first run, then show them off. Applying the
+    /// selection first means the tabs are already rebuilt by the time they are lit.
+    func completeFirstRun(enabling edges: Set<ShelfEdge>) {
+        edgeSettings.setEnabledEdges(edges)
+        preferredEdge = Self.homeEdge(among: edges)
+        demonstrateShelfLocation()
+    }
+
+    /// Which of the chosen edges the card itself comes out of. `revealAtPreferredEdge`
+    /// would otherwise fall back to whichever dock happens to be nearest the pointer —
+    /// fine for a stale preference mid-session, but on first run it would seat the shelf
+    /// wherever the welcome window left the mouse. Left is the default home; the order
+    /// below is only consulted when the user turned left off.
+    static func homeEdge(among edges: Set<ShelfEdge>) -> ShelfEdge {
+        [.left, .right, .notch].first(where: edges.contains) ?? .left
+    }
+
+    /// The last beat of first run: light every enabled edge tab at once, slide the card
+    /// out at the shelf's home edge, hold both long enough to be seen, then put
+    /// everything back and resume ordinary behavior. Words in a window cannot convey
+    /// *where* an invisible app lives; seeing its edges light up can.
+    ///
+    /// Only one card exists, so it can only *be* at one edge at a time. The other chosen
+    /// edges get a still copy of it (`ShelfGhostCardWindow`) at the frame the shelf would
+    /// occupy there, so every edge the user picked shows a shelf at the same moment.
+    ///
+    /// Mirrors the arrival reveal rather than `revealIfNeeded`: no retract watcher is
+    /// started, because the card is empty and the watcher would pull it back within a
+    /// frame or two of appearing. One scheduled hide replaces it.
+    func demonstrateShelfLocation() {
+        guard !panel.isVisible else { return }
+        NSLog("Perch is showing a first-run reveal at the \(preferredEdge.rawValue) edge")
+        // Not a hover, so the pointer wandering nearby must not take the reveal back
+        // before the user has looked at it.
+        markRevealUsed()
+        revealAtPreferredEdge()
+        // Every tab, not just the shelf's home one: the point is to show the user each
+        // edge they picked. Normal behavior shows only the home tab, and only mid-drag.
+        setTabsShown(true)
+        showFirstRunEdgeGhosts()
+
+        firstRunDemoTask?.cancel()
+        firstRunDemoTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(2.6))
+            guard let self, !Task.isCancelled else { return }
+            self.firstRunDemoTask = nil
+            // Back to normal: tabs are a drag-time reminder, not permanent furniture.
+            // This runs even when the user has already adopted the card below, because
+            // the tabs and the outlines are the demonstration's alone to clean up.
+            if !self.dragActive {
+                self.setTabsShown(false)
+            }
+            self.clearFirstRunEdgeGhosts()
+            // Anything the user did in the meantime — dropping something on it, tearing
+            // it off its edge, locking it — outranks the demonstration's own cleanup.
+            guard self.panel.isVisible,
+                  self.revealMode == .edge,
+                  self.store.items.isEmpty
+            else { return }
+            self.hideShelf(animated: true)
+        }
+    }
+
+    /// Put a copy of the card at each *other* enabled edge on the screen the
+    /// demonstration is playing on, so every edge the user chose shows a shelf and not
+    /// just a tab. Same screen only: filling every dock on a three-monitor desk would
+    /// say "Perch is everywhere" instead of "here is where yours lives", and the real
+    /// card the copies are standing in for is on this screen.
+    private func showFirstRunEdgeGhosts() {
+        clearFirstRunEdgeGhosts()
+        guard let screen = Self.liveScreen(shownScreen) else { return }
+        let otherEdges = Set(
+            edgeStrips
+                .filter { $0.pinnedScreen == screen && $0.edge != shownEdge }
+                .map(\.edge)
+        )
+        for edge in otherEdges {
+            let ghost = ShelfGhostCardWindow(
+                theme: themeStore.theme,
+                frame: panelFrame(for: screen, edge: edge)
+            )
+            ghost.reveal()
+            firstRunEdgeGhosts.append(ghost)
+        }
+        NSLog("Perch is showing \(otherEdges.count) first-run card copies at \(otherEdges.map(\.rawValue).sorted())")
+    }
+
+    private func clearFirstRunEdgeGhosts() {
+        for ghost in firstRunEdgeGhosts {
+            ghost.dismiss()
+        }
+        firstRunEdgeGhosts.removeAll()
+    }
+
     /// Menu tracking may consume the mouse exit/up that normally clears hover and drag
     /// holds. Rebuild the keep-open decision from the actual cursor when it ends.
     private func contextMenuDidClose() {
@@ -2661,7 +2761,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Reveal (or reposition) the panel at the current preferred screen + edge.
     private func revealAtPreferredEdge() {
-        // `preferredEdge` can be stale (including its launch default of `.right`) after
+        // `preferredEdge` can be stale (including its launch default of `.left`) after
         // settings change. Resolve it through the installed strips—the authoritative
         // set of enabled, physically available docks—before any reveal. This keeps
         // automatic arrival/screenshot reveals off disabled edges too.
