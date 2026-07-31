@@ -47,6 +47,17 @@ else
   echo "  (no Resources/AppIcon.icns -- run 'swift Scripts/make-icon.swift' for a custom icon)"
 fi
 
+# What the What's New window reads. Also the source release.sh publishes to the appcast
+# and the GitHub release, so the words in all three places come from one file.
+# `plutil -lint` reads property lists, not JSON, so validate with the same parser
+# release-notes.py uses — a malformed file must fail here rather than ship an app whose
+# What's New window silently has nothing to say.
+if ! python3 -c "import json,sys; json.load(open('Resources/ReleaseNotes.json'))" 2>/dev/null; then
+  echo "error: Resources/ReleaseNotes.json is missing or is not valid JSON"
+  exit 1
+fi
+cp Resources/ReleaseNotes.json "${APP}/Contents/Resources/ReleaseNotes.json"
+
 # SwiftPM resource bundle containing GRDB's privacy manifest.
 GRDB_RESOURCES=".build/${CONFIG}/GRDB_GRDB.bundle"
 if [ -d "${GRDB_RESOURCES}" ]; then

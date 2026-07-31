@@ -5,10 +5,20 @@ import SwiftUI
 /// the window by any route commits the same choice — see `WelcomeView.choices`.
 @MainActor
 final class WelcomeChoices: ObservableObject {
-    @Published var launchAtLogin = true
-    /// Starts on Perch's shipping default (both side docks). The notch is opt-in and is
-    /// only offered at all on a display that has one.
-    @Published var edges: Set<ShelfEdge> = [.left, .right]
+    @Published var launchAtLogin: Bool
+    @Published var edges: Set<ShelfEdge>
+
+    /// A new install starts on Perch's shipping defaults: both side docks (the notch is
+    /// opt-in, and only offered at all on a display that has one) and Launch at Login on.
+    ///
+    /// A *returning* user must be seeded with what they already have instead. This window
+    /// commits its answers on any dismissal, so defaults here would mean closing it turned
+    /// Launch at Login back on for someone who had switched it off, and replaced their
+    /// edge selection with Perch's — settings changed by a window they only glanced at.
+    init(launchAtLogin: Bool = true, edges: Set<ShelfEdge> = [.left, .right]) {
+        self.launchAtLogin = launchAtLogin
+        self.edges = edges
+    }
 }
 
 /// Owns the welcome window shown once, on a new install.
@@ -21,15 +31,25 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     /// closed the window. Never fires twice.
     var onFinish: ((_ launchAtLogin: Bool, _ edges: Set<ShelfEdge>) -> Void)?
 
-    private let choices = WelcomeChoices()
+    private let choices: WelcomeChoices
     private let loginItemAvailable: Bool
     private let offeredEdges: [ShelfEdge]
+    private let mode: WelcomeMode
     private var window: NSWindow?
     private var hasFinished = false
 
-    init(loginItemAvailable: Bool, offeredEdges: [ShelfEdge]) {
+    init(
+        loginItemAvailable: Bool,
+        offeredEdges: [ShelfEdge],
+        mode: WelcomeMode = .firstRun,
+        choices: WelcomeChoices? = nil
+    ) {
         self.loginItemAvailable = loginItemAvailable
         self.offeredEdges = offeredEdges
+        self.mode = mode
+        // Built here rather than as a default argument: default arguments are
+        // evaluated in the caller's context, which is not the main actor.
+        self.choices = choices ?? WelcomeChoices()
     }
 
     func show() {
@@ -44,6 +64,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
                 choices: choices,
                 loginItemAvailable: loginItemAvailable,
                 offeredEdges: offeredEdges,
+                mode: mode,
                 onFinish: { [weak self] in self?.finish() }
             )
         )
@@ -54,7 +75,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.isMovableByWindowBackground = true
-        window.title = "Welcome to \(PerchProductIdentity.displayName)"
+        window.title = mode.windowTitle
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.center()

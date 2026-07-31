@@ -1,6 +1,55 @@
 import AppKit
 import SwiftUI
 
+/// Who is looking at the welcome window.
+///
+/// The same three lessons and the same question serve both audiences; only the framing
+/// changes. A returning user is not being welcomed — they have used Perch for months —
+/// so the window says what it actually is: a look at how the app introduces itself now,
+/// with their existing settings already filled in.
+enum WelcomeMode {
+    case firstRun
+    /// Shown once to an existing install updating into a release that changed how Perch
+    /// presents itself. Every control arrives seeded from what the user already has.
+    case revisit
+
+    var windowTitle: String {
+        switch self {
+        case .firstRun: return "Welcome to \(PerchProductIdentity.displayName)"
+        case .revisit: return "A Look Around \(PerchProductIdentity.displayName)"
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .firstRun: return "Welcome to \(PerchProductIdentity.displayName)"
+        case .revisit: return "A look around \(PerchProductIdentity.displayName)"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .firstRun: return "A place to set things down while you work."
+        case .revisit: return "This is how Perch introduces itself now. "
+            + "Nothing changes unless you change it."
+        }
+    }
+
+    var edgeQuestion: String {
+        switch self {
+        case .firstRun: return "Where should it wait?"
+        case .revisit: return "Where it waits"
+        }
+    }
+
+    var confirmTitle: String {
+        switch self {
+        case .firstRun: return "Show Me Where It Lives"
+        case .revisit: return "Show Me"
+        }
+    }
+}
+
 /// The one thing Perch shows on a new install.
 ///
 /// Perch is an accessory app with no Dock tile and no menu-bar item, so an ordinary
@@ -23,6 +72,8 @@ struct WelcomeView: View {
     /// one, so the picker is built from what the hardware supports rather than from
     /// `ShelfEdge.allCases`.
     let offeredEdges: [ShelfEdge]
+    /// First run, or a returning user taking the tour again.
+    var mode: WelcomeMode = .firstRun
     /// Called when the user is done. The answers are read from `choices`.
     let onFinish: () -> Void
 
@@ -54,12 +105,15 @@ struct WelcomeView: View {
                     .frame(width: 76, height: 76)
                     .accessibilityHidden(true)
             }
-            Text("Welcome to \(PerchProductIdentity.displayName)")
+            Text(mode.title)
                 .font(.system(size: 22, weight: .semibold))
                 .padding(.top, 2)
-            Text("A place to set things down while you work.")
+            Text(mode.subtitle)
                 .font(.system(size: 13))
                 .foregroundStyle(.secondary)
+                // The first-run subtitle is one short line; the revisit's is not, and
+                // without this it truncates mid-word instead of wrapping.
+                .fixedSize(horizontal: false, vertical: true)
         }
         .multilineTextAlignment(.center)
         .frame(maxWidth: .infinity)
@@ -95,7 +149,7 @@ struct WelcomeView: View {
         VStack(alignment: .leading, spacing: 10) {
             Divider()
             VStack(alignment: .leading, spacing: 2) {
-                Text("Where should it wait?")
+                Text(mode.edgeQuestion)
                     .font(.system(size: 13, weight: .semibold))
                 Text("Pick as many edges as you like. You can change this later.")
                     .font(.caption)
@@ -148,7 +202,7 @@ struct WelcomeView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
-                Button("Show Me Where It Lives", action: onFinish)
+                Button(mode.confirmTitle, action: onFinish)
                     .keyboardShortcut(.defaultAction)
             }
         }
@@ -233,7 +287,10 @@ private struct EdgeOption: View {
 
 /// One "gesture → what happens" line. The symbol carries no meaning the text does not
 /// also state, so it stays out of the accessibility tree.
-private struct Lesson: View {
+/// One illustrated line: a tinted symbol, a title, and a sentence. Shared with
+/// `WhatsNewView` so an update's notes are drawn in the same hand as the welcome's
+/// lessons — the two windows are the same window at different moments.
+struct Lesson: View {
     let symbol: String
     let title: String
     let detail: String
