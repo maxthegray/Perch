@@ -77,7 +77,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults on (an unset
     /// value reads as true), matching the original always-on behavior.
     private var shakeToSummonEnabled: Bool {
-        PerchSettings.flag(PerchSettings.shakeToSummon, default: true)
+        PerchSettings.flag(PerchSettings.shakeToSummon, default: false)
     }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
@@ -2439,9 +2439,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// selection first means the tabs are already rebuilt by the time they are lit.
     func completeFirstRun(enabling edges: Set<ShelfEdge>) {
         edgeSettings.setEnabledEdges(edges)
-        preferredEdge = Self.homeEdge(among: edges)
+        // Only retarget when the current home is no longer on offer. A returning user
+        // taking the tour again has a home edge they chose long ago; picking a new one
+        // out from under them because `homeEdge` prefers the left would move a shelf
+        // they never asked to move.
+        if !edges.contains(preferredEdge) {
+            preferredEdge = Self.homeEdge(among: edges)
+        }
         demonstrateShelfLocation()
     }
+
+    /// The edges currently enabled, for seeding a revisited welcome window with what the
+    /// user already has rather than with Perch's defaults.
+    var currentEnabledEdges: Set<ShelfEdge> { edgeSettings.enabledEdges }
 
     /// Which of the chosen edges the card itself comes out of. `revealAtPreferredEdge`
     /// would otherwise fall back to whichever dock happens to be nearest the pointer —

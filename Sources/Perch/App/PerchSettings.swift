@@ -21,6 +21,9 @@ enum PerchSettings {
     /// Set the first time a ⌘-drag actually moves the card. Retires the menu footnote
     /// that teaches the gesture — it has a job, and once it is done it should stop.
     static let moveHintRetired = "Perch.MoveHintRetired"
+    /// The last version whose What's New window was shown (or skipped, on a new install).
+    /// Anything newer than this on launch is an update the user has not been told about.
+    static let lastSeenVersion = "Perch.LastSeenVersion"
 
     // MARK: - Advanced ▸ Appearance
 

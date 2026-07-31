@@ -41,6 +41,14 @@ APPCAST="appcast.xml"
 DOWNLOAD_URL="https://github.com/maxthegray/Perch/releases/download/${TAG}/${ASSET_NAME}"
 NOTARY_PROFILE="${PERCH_NOTARY_PROFILE:-PerchNotary}"
 
+# What changed, written once in Resources/ReleaseNotes.json and published three ways: the
+# app's What's New window reads the bundled copy, the appcast description below is what
+# Sparkle shows *before* installing, and the same words become the release body. Resolved
+# now, before anything is built or notarized, so a release with no notes fails in a second
+# rather than after a trip to Apple.
+NOTES_HTML="$(python3 Scripts/release-notes.py "${VERSION}" --format html)"
+NOTES_MARKDOWN="$(python3 Scripts/release-notes.py "${VERSION}" --format markdown)"
+
 swift test
 
 create_release_zip() {
@@ -110,6 +118,9 @@ cat > "${APPCAST}" <<EOF
     <language>en</language>
     <item>
       <title>Version ${VERSION}</title>
+      <description><![CDATA[
+${NOTES_HTML}
+      ]]></description>
       <pubDate>${PUBDATE}</pubDate>
       <sparkle:version>${BUILD}</sparkle:version>
       <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
@@ -130,6 +141,6 @@ gh release create "${TAG}" "${ZIP}" \
   --repo maxthegray/Perch \
   --target "${TARGET_BRANCH}" \
   --title "${RELEASE_TITLE}" \
-  --notes "Download \`${ASSET_NAME}\`, unzip, and drag Perch to /Applications. Perch is signed and notarized by Apple. Smart Perch is included as an optional, local feature."
+  --notes "${NOTES_MARKDOWN}"
 
 echo "Released ${TAG}."

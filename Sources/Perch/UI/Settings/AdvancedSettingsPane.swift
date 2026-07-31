@@ -33,7 +33,7 @@ struct AdvancedSettingsPane: View {
 
     @State private var section: Section = .look
 
-    @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = true
+    @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
     @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
