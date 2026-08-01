@@ -3,10 +3,10 @@ import SwiftUI
 
 /// What an update changed, shown once after it installs.
 ///
-/// The welcome window's counterpart, and deliberately its twin: same width, same header
-/// shape, same illustrated rows. An update should feel like the app it updated, and a
-/// user who saw the welcome a month ago should recognize this immediately as the same
-/// voice rather than a marketing interruption.
+/// Deliberately smaller than the welcome window it used to mirror. The welcome earns a
+/// full sheet because it is teaching an unknown app; this is a note about a version the
+/// user already chose to run, and a hero icon over one line of text made a bug fix look
+/// like an announcement. Same voice, a quarter of the room.
 struct WhatsNewView: View {
     /// Newest first. More than one entry means the user skipped a release.
     let notes: [ReleaseNote]
@@ -33,37 +33,41 @@ struct WhatsNewView: View {
         VStack(spacing: 0) {
             header
             notesList
-                .padding(.top, 24)
-            Spacer(minLength: 18)
+                .padding(.top, 14)
+            Spacer(minLength: 14)
             footer
         }
-        .padding(.horizontal, 34)
-        .padding(.top, 18)
-        .padding(.bottom, 22)
-        .frame(width: 460)
+        .padding(.horizontal, 18)
+        .padding(.top, 14)
+        .padding(.bottom, 14)
+        .frame(width: 320)
         .background(.background)
     }
 
+    /// One line: the app's icon at menu-bar scale beside the version. Centering a large
+    /// icon over a short note is what made this read as a product announcement.
     private var header: some View {
-        VStack(spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let icon = NSApp.applicationIconImage {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 76, height: 76)
+                    .frame(width: 20, height: 20)
+                    .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 4 }
                     .accessibilityHidden(true)
             }
-            Text(title)
-                .font(.system(size: 22, weight: .semibold))
-                .padding(.top, 2)
-            if let subtitle {
-                Text(subtitle)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 14, weight: .semibold))
+                if let subtitle {
+                    Text(subtitle)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
+            Spacer(minLength: 0)
         }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
     }
 
     /// Several releases' worth of notes can outgrow the window, so the rows scroll while
@@ -76,9 +80,9 @@ struct WhatsNewView: View {
     /// the header and the button with an empty gap where every highlight should have been.
     private var notesList: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: 14) {
                 ForEach(notes, id: \.version) { note in
-                    VStack(alignment: .leading, spacing: 18) {
+                    VStack(alignment: .leading, spacing: 12) {
                         // Only worth labelling when the user is reading more than one
                         // release at a time; otherwise the title above already said it.
                         if notes.count > 1 {
@@ -88,7 +92,7 @@ struct WhatsNewView: View {
                                 .textCase(.uppercase)
                         }
                         ForEach(note.highlights, id: \.title) { highlight in
-                            Lesson(
+                            CompactHighlight(
                                 symbol: highlight.symbol,
                                 title: highlight.title,
                                 detail: highlight.detail
@@ -111,7 +115,7 @@ struct WhatsNewView: View {
         .scrollBounceBehavior(.basedOnSize)
         // Exactly as tall as the notes, capped so that catching up on several releases
         // cannot grow the window past the screen.
-        .frame(height: min(max(contentHeight, 1), 320))
+        .frame(height: min(max(contentHeight, 1), 240))
     }
 
     private var footer: some View {
@@ -119,6 +123,33 @@ struct WhatsNewView: View {
             Spacer(minLength: 8)
             Button("Continue", action: onDismiss)
                 .keyboardShortcut(.defaultAction)
+                .controlSize(.small)
+        }
+    }
+}
+
+/// The welcome window's `Lesson` row at note scale. Kept separate rather than shrinking
+/// `Lesson` itself, so the first-run window it belongs to is left exactly as it is.
+private struct CompactHighlight: View {
+    let symbol: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 9) {
+            Image(systemName: symbol)
+                .font(.system(size: 13))
+                .foregroundStyle(.tint)
+                .frame(width: 18, height: 16)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(detail)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }
