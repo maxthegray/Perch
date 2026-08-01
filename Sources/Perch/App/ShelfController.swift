@@ -175,6 +175,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// user is dragging the card off its edge; it decides pin vs. snap-back at mouse-up
     /// and holds the auto-retract machinery off while the card is mid-flight.
     private var dragOutDockedFrame: NSRect?
+    /// The edge a drag-out started from, excluded from snap candidates for the life of
+    /// that drag: releasing near home is settled by `pinDetachDistance`, and an outline
+    /// drawn under the card the moment it moves would only be noise. Derived rather than
+    /// stored, so it can never outlive the drag it belongs to.
+    private var dragOutSourceTarget: (screen: NSScreen, kind: DockSnapTargetKind)? {
+        guard dragOutDockedFrame != nil, let shownScreen else { return nil }
+        return (shownScreen, .edge(shownEdge))
+    }
     /// True while the free-floating shelf is locked in place ("Lock Position"): the
     /// grab handle hides and whole-card drags (and cursor summons) are refused, making
     /// the card a fixture — like another edge — until it's unlocked or closed.
@@ -1518,10 +1526,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// than this it snaps back to the edge and stays docked.
     private static let pinDetachDistance: CGFloat = 40
 
-    /// Mouse-up on a drag-to-pin gesture: far enough from the docked frame, the card
-    /// pins where it was dropped as a free-floating shelf (the same persistence as
-    /// shake-to-summon); otherwise it snaps back to its edge. A shelf that was already
-    /// free also gets a chance to re-dock at any enabled edge.
+    /// Mouse-up on a drag-to-pin gesture: released over another target the card snaps
+    /// straight there; far enough from the docked frame it pins where it was dropped as
+    /// a free-floating shelf (the same persistence as shake-to-summon); otherwise it
+    /// snaps back to its edge. A shelf that was already free gets the same choice.
     private func shelfDragDidEnd() {
         if revealMode == .free {
             let target = refreshedPreviewedDockTarget() ?? nearestDockSnapTarget()
@@ -1532,15 +1540,35 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             return
         }
-        clearDockSnapPreview()
-        guard let docked = dragOutDockedFrame else { return }
-        dragOutDockedFrame = nil
-        let moved = hypot(panel.frame.minX - docked.minX, panel.frame.minY - docked.minY)
-        if moved >= Self.pinDetachDistance {
-            pinShelfAtCurrentPosition()
-        } else {
-            windowController.resize(to: docked)
+        guard let docked = dragOutDockedFrame else {
+            clearDockSnapPreview()
+            return
         }
+        let moved = hypot(panel.frame.minX - docked.minX, panel.frame.minY - docked.minY)
+        guard moved >= Self.pinDetachDistance else {
+            dragOutDockedFrame = nil
+            clearDockSnapPreview()
+            windowController.resize(to: docked)
+            return
+        }
+        // Resolved while `dragOutDockedFrame` still marks the source edge, so the card's
+        // own home stays out of the candidates.
+        let target = refreshedPreviewedDockTarget() ?? nearestDockSnapTarget()
+        dragOutDockedFrame = nil
+        guard let target else {
+            clearDockSnapPreview()
+            pinShelfAtCurrentPosition()
+            return
+        }
+        if case .edge = target.kind {
+            snapFreeShelf(to: target)
+            return
+        }
+        // Landing beside the system Dock keeps the free-card layout, so the docked shelf
+        // has to become a free one before it flies there — otherwise it arrives with edge
+        // behavior (tabs, auto-retract) still attached.
+        enterFreeMode()
+        snapFreeShelfBesideDock(to: target)
     }
 
     /// The closest enabled, physically reachable dock whose resting frame is near the
@@ -1553,7 +1581,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func availableDockSnapTargets() -> [DockSnapTarget] {
-        let edgeTargets = edgeStrips.map { strip -> DockSnapTarget in
+        let source = dragOutSourceTarget
+        let edgeTargets = edgeStrips.compactMap { strip -> DockSnapTarget? in
+            if let source, strip.pinnedScreen == source.screen, source.kind == .edge(strip.edge) {
+                return nil
+            }
             let frame = panelFrame(for: strip.pinnedScreen, edge: strip.edge)
             let distance = hypot(panel.frame.midX - frame.midX, panel.frame.midY - frame.midY)
             return DockSnapTarget(
@@ -1674,10 +1706,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return refreshed
     }
 
-    /// Reveal the exact landing frame while a free shelf is inside the snap radius.
-    /// Moving away or dragging a still-docked shelf removes the preview immediately.
+    /// Reveal the exact landing frame while a dragged shelf is inside the snap radius —
+    /// for a free card, and for one being torn off its edge, which can land on any other
+    /// target without being set down first. Moving away removes the preview immediately.
     private func updateDockSnapPreview() {
-        guard revealMode == .free else {
+        guard revealMode == .free || dragOutDockedFrame != nil else {
             clearDockSnapPreview()
             return
         }
@@ -1926,6 +1959,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Convert the dragged-out card into a free-floating shelf pinned at its current
     /// position — the drag-out twin of `summonAtCursor`.
     private func pinShelfAtCurrentPosition() {
+        enterFreeMode()
+        windowController.resize(to: freePanelFrame())
+    }
+
+    /// Adopt the free-card lifecycle at the card's current position without moving it:
+    /// the shared half of pinning and of snapping a torn-off card beside the Dock, which
+    /// supplies its own destination frame.
+    private func enterFreeMode() {
         clearSystemDockAttachment()
         summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
             ?? NSScreen.main ?? NSScreen.screens.first
@@ -1945,7 +1986,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // ticks must not snap-resize the window mid-pin.
         suppressMeasuredHeightResizes()
         windowController.usesFreeAnimation = true
-        windowController.resize(to: freePanelFrame())
     }
 
     /// Toggle "Lock Position" on the free shelf. Reconcile through the same live
