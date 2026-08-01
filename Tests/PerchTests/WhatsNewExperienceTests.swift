@@ -27,9 +27,9 @@ final class WhatsNewExperienceTests: XCTestCase {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.1.0")!,
             lastSeenVersion: SemanticVersion("1.0.0")!,
-            notes: [note("1.1.0"), note("1.0.0")]
+            notes: [note("1.1.0", announces: true), note("1.0.0")]
         )
-        XCTAssertEqual(decision, .show([note("1.1.0")]))
+        XCTAssertEqual(decision, .show([note("1.1.0", announces: true)]))
     }
 
     func testSkippingReleasesShowsEverythingThatWasMissed() {
@@ -37,9 +37,12 @@ final class WhatsNewExperienceTests: XCTestCase {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.3.0")!,
             lastSeenVersion: SemanticVersion("1.0.0")!,
-            notes: [note("1.3.0"), note("1.2.0"), note("1.1.0"), note("1.0.0")]
+            notes: [note("1.3.0", announces: true), note("1.2.0", announces: true),
+                    note("1.1.0", announces: true), note("1.0.0")]
         )
-        XCTAssertEqual(decision, .show([note("1.3.0"), note("1.2.0"), note("1.1.0")]))
+        XCTAssertEqual(decision, .show([note("1.3.0", announces: true),
+                                       note("1.2.0", announces: true),
+                                       note("1.1.0", announces: true)]))
     }
 
     func testNotesNewerThanTheRunningVersionAreNotLeaked() {
@@ -48,16 +51,16 @@ final class WhatsNewExperienceTests: XCTestCase {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.1.0")!,
             lastSeenVersion: SemanticVersion("1.0.0")!,
-            notes: [note("1.2.0"), note("1.1.0")]
+            notes: [note("1.2.0", announces: true), note("1.1.0", announces: true)]
         )
-        XCTAssertEqual(decision, .show([note("1.1.0")]))
+        XCTAssertEqual(decision, .show([note("1.1.0", announces: true)]))
     }
 
     func testRelaunchingTheSameVersionSaysNothing() {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.1.0")!,
             lastSeenVersion: SemanticVersion("1.1.0")!,
-            notes: [note("1.1.0")]
+            notes: [note("1.1.0", announces: true)]
         )
         XCTAssertEqual(decision, .none)
     }
@@ -66,7 +69,7 @@ final class WhatsNewExperienceTests: XCTestCase {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.0.0")!,
             lastSeenVersion: SemanticVersion("1.1.0")!,
-            notes: [note("1.1.0"), note("1.0.0")]
+            notes: [note("1.1.0", announces: true), note("1.0.0")]
         )
         XCTAssertEqual(decision, .none)
     }
@@ -77,9 +80,9 @@ final class WhatsNewExperienceTests: XCTestCase {
         let decision = WhatsNewExperience.decide(
             currentVersion: SemanticVersion("1.1.0")!,
             lastSeenVersion: nil,
-            notes: [note("1.1.0"), note("1.0.0")]
+            notes: [note("1.1.0", announces: true), note("1.0.0")]
         )
-        XCTAssertEqual(decision, .show([note("1.1.0")]))
+        XCTAssertEqual(decision, .show([note("1.1.0", announces: true)]))
     }
 
     func testAReleaseWithNoNotesShowsNothing() {
@@ -89,6 +92,48 @@ final class WhatsNewExperienceTests: XCTestCase {
             notes: [note("1.0.0")]
         )
         XCTAssertEqual(decision, .none)
+    }
+
+    // MARK: - Staying quiet
+
+    func testAnOrdinaryReleaseOpensNoWindowAtAll() {
+        // The default. A fix does not earn an interruption; its notes still ship in the
+        // appcast and on the release page for anyone who goes looking.
+        let decision = WhatsNewExperience.decide(
+            currentVersion: SemanticVersion("1.1.1")!,
+            lastSeenVersion: SemanticVersion("1.1.0")!,
+            notes: [note("1.1.1"), note("1.1.0")]
+        )
+        XCTAssertEqual(decision, .none)
+    }
+
+    func testCatchingUpSkipsTheQuietReleasesAndKeepsTheNotableOne() {
+        let decision = WhatsNewExperience.decide(
+            currentVersion: SemanticVersion("1.3.0")!,
+            lastSeenVersion: SemanticVersion("1.0.0")!,
+            notes: [note("1.3.0"), note("1.2.0", announces: true), note("1.1.0")]
+        )
+        XCTAssertEqual(decision, .show([note("1.2.0", announces: true)]))
+    }
+
+    func testAFreshStampedInstallOnAQuietReleaseSaysNothing() {
+        // No last-seen stamp and the version it landed on is an ordinary release.
+        let decision = WhatsNewExperience.decide(
+            currentVersion: SemanticVersion("1.1.1")!,
+            lastSeenVersion: nil,
+            notes: [note("1.1.1"), note("1.1.0", announces: true)]
+        )
+        XCTAssertEqual(decision, .none)
+    }
+
+    func testRevisitingTheWelcomeCountsAsAnnouncingItself() {
+        // A release loud enough to redo the tour cannot also be a silent one.
+        let decision = WhatsNewExperience.decide(
+            currentVersion: SemanticVersion("2.0.0")!,
+            lastSeenVersion: SemanticVersion("1.1.0")!,
+            notes: [note("2.0.0", showsWelcome: true)]
+        )
+        XCTAssertEqual(decision, .show([note("2.0.0", showsWelcome: true)]))
     }
 
     // MARK: - Showing the tour again
@@ -136,14 +181,19 @@ final class WhatsNewExperienceTests: XCTestCase {
         }
     }
 
-    private func note(_ version: String, showsWelcome: Bool? = nil) -> ReleaseNote {
+    private func note(
+        _ version: String,
+        showsWelcome: Bool? = nil,
+        announces: Bool? = nil
+    ) -> ReleaseNote {
         ReleaseNote(
             version: SemanticVersion(version)!,
             headline: nil,
             highlights: [
                 ReleaseHighlight(symbol: "star", title: "Something", detail: "Happened.")
             ],
-            showsWelcome: showsWelcome
+            showsWelcome: showsWelcome,
+            showsWhatsNew: announces
         )
     }
 }

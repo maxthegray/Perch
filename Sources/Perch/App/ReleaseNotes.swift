@@ -19,8 +19,17 @@ struct ReleaseNote: Decodable, Equatable {
     /// where showing the thing beats describing it. Rare by design — it interrupts people
     /// who already know the app, so it has to earn the interruption.
     let showsWelcome: Bool?
+    /// When true, updating into this version opens the What's New window. Absent by
+    /// default: most releases are fixes, and a window explaining one of them is a poor
+    /// trade for the interruption. The notes are still published to the appcast and the
+    /// release page, so nothing goes unrecorded — they simply wait to be looked up.
+    let showsWhatsNew: Bool?
 
     var revisitsWelcome: Bool { showsWelcome == true }
+
+    /// Whether this release asked to be announced on launch. Revisiting the welcome is a
+    /// louder version of the same intent, so it implies this.
+    var announcesItself: Bool { showsWhatsNew == true || revisitsWelcome }
 }
 
 /// A `MAJOR.MINOR.PATCH` version that can be ordered, so "everything since the version

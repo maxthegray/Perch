@@ -22,8 +22,7 @@ enum WhatsNewExperience {
             // No stamp at all: an install that predates this window. There is no way to
             // know what it has already seen, so show only what is new *now* rather than
             // greeting a long-time user with the entire history of the app.
-            let current = notes.filter { $0.version == currentVersion }
-            return current.isEmpty ? .none : .show(current)
+            return announce(notes.filter { $0.version == currentVersion })
         }
 
         // A downgrade, or the same version relaunching. Nothing to announce either way.
@@ -34,7 +33,16 @@ enum WhatsNewExperience {
         let unseen = notes
             .filter { $0.version > lastSeenVersion && $0.version <= currentVersion }
             .sorted { $0.version > $1.version }
-        return unseen.isEmpty ? .none : .show(unseen)
+        return announce(unseen)
+    }
+
+    /// Keeps only the releases that asked to be announced. A quiet release still has
+    /// notes — in the appcast, on the release page, and in the bundle — it just does not
+    /// open a window to deliver them. Someone catching up across several releases sees
+    /// the notable ones alone rather than every fix in between.
+    private static func announce(_ notes: [ReleaseNote]) -> Decision {
+        let announced = notes.filter(\.announcesItself)
+        return announced.isEmpty ? .none : .show(announced)
     }
 
     /// Read the decision from disk and the app bundle.
