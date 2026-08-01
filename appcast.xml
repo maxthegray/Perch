@@ -2,21 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.1.1/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.1.2/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.1.1</title>
+      <title>Version 1.1.2</title>
       <description><![CDATA[
 <ul>
-  <li><b>snapping while you drag</b><br>pulling the shelf off its edge now offers the other edges — and the Dock, if you snap beside it — as you go, instead of only after you put it down and pick it up again.</li>
+  <li><b>quieter updates</b><br>the update prompt is a small note with a link to the changelog instead of a wall of release notes, and perch no longer opens a window after every update — only after the rare release worth stopping for.</li>
 </ul>
       ]]></description>
-      <pubDate>Sat, 01 Aug 2026 22:20:52 +0000</pubDate>
-      <sparkle:version>1010010</sparkle:version>
-      <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
+      <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
+      <pubDate>Sat, 01 Aug 2026 22:49:33 +0000</pubDate>
+      <sparkle:version>1010020</sparkle:version>
+      <sparkle:shortVersionString>1.1.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.1.1/Perch.zip" sparkle:edSignature="/LUT5FodEyBNr3YutHWHfSJVbngg/lhfzDaY8cbFNIUXMXaL2o07ta6XM72HrywvAKwxiIHy6y6v27C9f0VcDg==" length="3968933" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.1.2/Perch.zip" sparkle:edSignature="SojPH/DGHkYCCcoWW1eWsaXT8+9jW6Yd8PD5C9i6dpXfkN5edpuQx1fL9YIH8BQ1rLe/XnPj6vNa9kkJMiyyBA==" length="3982988" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
