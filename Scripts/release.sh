@@ -177,6 +177,7 @@ cat > "${APPCAST}" <<EOF
       <description><![CDATA[
 ${NOTES_HTML}
       ]]></description>
+      <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
       <pubDate>${PUBDATE}</pubDate>
       <sparkle:version>${BUILD}</sparkle:version>
       <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>

@@ -32,5 +32,11 @@
 	<string>https://raw.githubusercontent.com/maxthegray/Perch/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>A1Plel1yzsvq+JzhNs0xM35jcVKe/UzcV3JPJPZJWIw=</string>
+	<!-- Perch shows its own update offer (see PerchUpdateUserDriver), with the changelog
+	     as a link rather than a pane. This keeps Sparkle's own alert compact for the
+	     screens Perch does not replace — an already-downloaded update — instead of
+	     reserving a fixed, mostly-empty notes pane on those too. -->
+	<key>SUShowReleaseNotes</key>
+	<false/>
 </dict>
 </plist>
