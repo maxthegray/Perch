@@ -2,23 +2,21 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.1.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.1.1/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.1.0</title>
+      <title>Version 1.1.1</title>
       <description><![CDATA[
-<p>Perch now tells you what changed.</p>
 <ul>
-  <li><b>What's New after an update</b><br>Perch has no Dock or menu bar icon, so an update used to install and relaunch with nothing to show for it. Now it says what changed, once, and gets out of the way. Skip a few releases and you will see everything you missed.</li>
-  <li><b>Shake to summon is off by default</b><br>It could fire during ordinary vigorous mouse movement, which is a surprising way to meet a feature you did not know existed. Turn it back on under Settings, Advanced. If you had already switched it on, it stays on.</li>
+  <li><b>snapping while you drag</b><br>pulling the shelf off its edge now offers the other edges — and the Dock, if you snap beside it — as you go, instead of only after you put it down and pick it up again.</li>
 </ul>
       ]]></description>
-      <pubDate>Fri, 31 Jul 2026 20:46:19 +0000</pubDate>
-      <sparkle:version>1010000</sparkle:version>
-      <sparkle:shortVersionString>1.1.0</sparkle:shortVersionString>
+      <pubDate>Sat, 01 Aug 2026 22:20:52 +0000</pubDate>
+      <sparkle:version>1010010</sparkle:version>
+      <sparkle:shortVersionString>1.1.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.1.0/Perch.zip" sparkle:edSignature="fAw/0cS5dWiB2ooUk6OS4WKcIqUMhrmYazlkKn6InI14gQ+dpqks9vTojZeC033Wdh8fp8yH6BYvpmRDYk1qAw==" length="3968677" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.1.1/Perch.zip" sparkle:edSignature="/LUT5FodEyBNr3YutHWHfSJVbngg/lhfzDaY8cbFNIUXMXaL2o07ta6XM72HrywvAKwxiIHy6y6v27C9f0VcDg==" length="3968933" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
