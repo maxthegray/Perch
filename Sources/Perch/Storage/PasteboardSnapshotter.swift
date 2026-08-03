@@ -11,8 +11,8 @@ struct PasteboardSnapshotResult {
 }
 
 /// RECEIVE → STORE: snapshot every representation of every pasteboard item into a
-/// new `items/<uuid>/`, copy real files, and surface any promise receivers that
-/// still need to be materialized.
+/// new `items/<uuid>/`, take ownership of concrete files (or bookmark them when the
+/// opt-in reference mode is enabled), and surface promises that still need materializing.
 @MainActor
 struct PasteboardSnapshotter {
     let holding: HoldingDirectory
@@ -123,9 +123,14 @@ struct PasteboardSnapshotter {
         var representations: [RepRecord] = []
         var backingFileNames: [String] = []
         var originPaths: [String: String] = [:]
+        var referencedFiles: [String: ReferencedFile] = [:]
         var pendingCopies: [(source: URL, destination: URL)] = []
         var stringTitle: String?
         var repIndex = 0
+        var reservedBackingFileNames = Set<String>()
+        let referencesDroppedFiles = UserDefaults.standard.bool(
+            forKey: PerchSettings.referenceDroppedFiles
+        )
 
         for capturedItem in capturedItems {
             if stringTitle == nil { stringTitle = capturedItem.stringTitle }
@@ -162,26 +167,31 @@ struct PasteboardSnapshotter {
                     let destinationURL = uniqueDestinationURL(
                         for: sourceURL.lastPathComponent,
                         in: filesDir,
-                        fileManager: fileManager
+                        fileManager: fileManager,
+                        reservedFileNames: reservedBackingFileNames
                     )
-                    // Take ownership: MOVE the original into the shelf so it leaves
-                    // its source. Fall back to copy if the move isn't permitted
-                    // (e.g. read-only source or cross-volume restriction) so the drop
-                    // still succeeds rather than failing.
-                    do {
-                        try fileManager.moveItem(at: sourceURL, to: destinationURL)
-                        // Remember where it came from so the shelf can put it back.
-                        originPaths[destinationURL.lastPathComponent] = sourceURL.path
-                    } catch {
-                        NSLog("Perch could not move \(sourceURL.path) into shelf (\(error)); copying instead")
-                        // Copy fallback: the original is still in place, so no origin
-                        // to restore — removing the shelf copy already "puts it back".
-                        // Deferred off the main thread: a cross-volume copy of a large
-                        // file here would beachball the app mid-drop. The item is
-                        // stored now; the controller performs the copy right after.
-                        pendingCopies.append((source: sourceURL, destination: destinationURL))
+                    let backingFileName = destinationURL.lastPathComponent
+                    reservedBackingFileNames.insert(backingFileName)
+
+                    if referencesDroppedFiles {
+                        referencedFiles[backingFileName] = ReferencedFile(url: sourceURL)
+                    } else {
+                        // Take ownership: MOVE the original into the shelf so it leaves
+                        // its source. Fall back to copy if the move isn't permitted
+                        // (e.g. read-only source or cross-volume restriction) so the drop
+                        // still succeeds rather than failing.
+                        do {
+                            try fileManager.moveItem(at: sourceURL, to: destinationURL)
+                            // Remember where it came from so the shelf can put it back.
+                            originPaths[backingFileName] = sourceURL.path
+                        } catch {
+                            NSLog("Perch could not move \(sourceURL.path) into shelf (\(error)); copying instead")
+                            // Deferred off the main thread: a cross-volume copy of a
+                            // large file here would beachball the app mid-drop.
+                            pendingCopies.append((source: sourceURL, destination: destinationURL))
+                        }
                     }
-                    backingFileNames.append(destinationURL.lastPathComponent)
+                    backingFileNames.append(backingFileName)
                 }
             }
         }
@@ -193,7 +203,8 @@ struct PasteboardSnapshotter {
             representations: representations,
             backingFileNames: backingFileNames,
             primaryFileType: representations.first?.typeIdentifier,
-            originPaths: originPaths.isEmpty ? nil : originPaths
+            originPaths: originPaths.isEmpty ? nil : originPaths,
+            referencedFiles: referencedFiles.isEmpty ? nil : referencedFiles
         )
         let metaURL = directoryURL.appendingPathComponent("meta.json", isDirectory: false)
         try JSONEncoder().encode(metadata).write(to: metaURL, options: .atomic)
@@ -214,11 +225,13 @@ struct PasteboardSnapshotter {
     private func uniqueDestinationURL(
         for fileName: String,
         in directory: URL,
-        fileManager: FileManager
+        fileManager: FileManager,
+        reservedFileNames: Set<String> = []
     ) -> URL {
         let baseName = fileName.isEmpty ? "file" : fileName
         let initialURL = directory.appendingPathComponent(baseName, isDirectory: false)
-        guard fileManager.fileExists(atPath: initialURL.path) else {
+        guard reservedFileNames.contains(baseName)
+                || fileManager.fileExists(atPath: initialURL.path) else {
             return initialURL
         }
 
@@ -235,7 +248,8 @@ struct PasteboardSnapshotter {
             }
 
             let candidateURL = directory.appendingPathComponent(candidateName, isDirectory: false)
-            if !fileManager.fileExists(atPath: candidateURL.path) {
+            if !reservedFileNames.contains(candidateName),
+               !fileManager.fileExists(atPath: candidateURL.path) {
                 return candidateURL
             }
 

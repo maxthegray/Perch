@@ -204,14 +204,11 @@ final class ItemStore: ObservableObject {
             throw ItemStoreRenameError.extensionChanged
         }
 
-        let filesDirectory = item.directoryURL.appendingPathComponent(
-            "files",
-            isDirectory: true
-        )
-        let sourceURL = filesDirectory.appendingPathComponent(
-            oldFilename,
-            isDirectory: false
-        )
+        let filesDirectory = item.directoryURL.appendingPathComponent("files", isDirectory: true)
+        let isReferencedFile = item.isReferencedFile(named: oldFilename)
+        let sourceURL = isReferencedFile
+            ? item.backingFileURLs()[0]
+            : filesDirectory.appendingPathComponent(oldFilename, isDirectory: false)
         guard FileManager.default.fileExists(atPath: sourceURL.path) else {
             throw ItemStoreRenameError.backingFileMissing
         }
@@ -223,10 +220,17 @@ final class ItemStore: ObservableObject {
         // A case-only rename on a case-insensitive volume names the *same* file, so
         // the collision check must not treat the file as blocking itself (which would
         // silently hand back `Photo-2.png` for `photo.png` → `Photo.png`).
-        let destinationURL = Self.refersToSameFile(proposedURL, sourceURL)
-            ? proposedURL
-            : nonClobberingURL(for: proposedURL, fileManager: .default)
-        let finalFilename = destinationURL.lastPathComponent
+        let destinationURL: URL
+        let finalFilename: String
+        if isReferencedFile {
+            destinationURL = sourceURL
+            finalFilename = trimmedFilename
+        } else {
+            destinationURL = Self.refersToSameFile(proposedURL, sourceURL)
+                ? proposedURL
+                : nonClobberingURL(for: proposedURL, fileManager: .default)
+            finalFilename = destinationURL.lastPathComponent
+        }
 
         var metadata = item.metadata
         metadata.backingFileNames = [finalFilename]
@@ -236,6 +240,11 @@ final class ItemStore: ObservableObject {
             originPaths[finalFilename] = originPath
             metadata.originPaths = originPaths
         }
+        if var referencedFiles = metadata.referencedFiles,
+           let reference = referencedFiles.removeValue(forKey: oldFilename) {
+            referencedFiles[finalFilename] = reference
+            metadata.referencedFiles = referencedFiles
+        }
 
         let metadataURL = item.directoryURL.appendingPathComponent(
             "meta.json",
@@ -243,8 +252,10 @@ final class ItemStore: ObservableObject {
         )
         var movedFile = false
         do {
-            try Self.moveBackingFile(from: sourceURL, to: destinationURL)
-            movedFile = true
+            if !isReferencedFile {
+                try Self.moveBackingFile(from: sourceURL, to: destinationURL)
+                movedFile = true
+            }
             try JSONEncoder().encode(metadata).write(to: metadataURL, options: .atomic)
         } catch {
             if movedFile {
@@ -285,8 +296,9 @@ final class ItemStore: ObservableObject {
         return restored
     }
 
-    /// Move a selection's backing files into `folder` and take the filed items off the
-    /// shelf. Never overwrites: a name clash at the destination is uniquified.
+    /// Put a selection's backing files into `folder` and take the filed items off the
+    /// shelf. Owned files move; referenced files copy so their originals stay in place.
+    /// Never overwrites: a name clash at the destination is uniquified.
     ///
     /// Unlike `returnToOrigin`, an item is only removed once every one of its files
     /// arrived. A file Perch could not move stays in the holding directory with its row
@@ -301,27 +313,35 @@ final class ItemStore: ObservableObject {
             return []
         }
 
-        var moved: [URL] = []
+        var filedURLs: [URL] = []
         var filedItems: [StoredItem] = []
 
         for item in items {
-            let sources = item.backingFileURLs().filter {
-                fileManager.fileExists(atPath: $0.path)
+            let sources = Array(zip(
+                item.metadata.backingFileNames,
+                item.backingFileURLs()
+            )).filter {
+                fileManager.fileExists(atPath: $0.1.path)
             }
-            guard !sources.isEmpty else { continue }
+            guard !sources.isEmpty,
+                  sources.count == item.metadata.backingFileNames.count else { continue }
 
             var movedEverySource = true
-            for source in sources {
+            for (fileName, source) in sources {
                 let destination = nonClobberingURL(
                     for: folder.appendingPathComponent(
-                        source.lastPathComponent,
+                        fileName,
                         isDirectory: false
                     ),
                     fileManager: fileManager
                 )
                 do {
-                    try fileManager.moveItem(at: source, to: destination)
-                    moved.append(destination)
+                    if item.isReferencedFile(named: fileName) {
+                        try fileManager.copyItem(at: source, to: destination)
+                    } else {
+                        try fileManager.moveItem(at: source, to: destination)
+                    }
+                    filedURLs.append(destination)
                 } catch {
                     NSLog(
                         "Perch could not file \(source.lastPathComponent) into \(folder.path): \(error)"
@@ -338,12 +358,12 @@ final class ItemStore: ObservableObject {
         if !filedItems.isEmpty {
             remove(filedItems)
         }
-        if !moved.isEmpty {
+        if !filedURLs.isEmpty {
             // Filing into a watched folder (Downloads, Desktop) must not bounce the file
             // straight back onto the shelf as a fresh arrival ghost.
-            onFilesRestored?(moved)
+            onFilesRestored?(filedURLs)
         }
-        return moved
+        return filedURLs
     }
 
     private func restoreBackingFiles(of item: StoredItem) -> [URL] {

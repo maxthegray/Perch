@@ -39,6 +39,7 @@ struct AdvancedSettingsPane: View {
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
+    @AppStorage(PerchSettings.referenceDroppedFiles) private var referenceDroppedFiles = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -149,6 +150,22 @@ struct AdvancedSettingsPane: View {
                     }
                     Spacer(minLength: 12)
                     Toggle("Offer recent downloads", isOn: $offerRecentArrivals)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                .padding(.vertical, 2)
+            }
+
+            SwiftUI.Section("File storage") {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Leave dropped files in place")
+                        Text("Perch keeps a pointer to each original file instead of moving it into its holding folder.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Toggle("Leave dropped files in place", isOn: $referenceDroppedFiles)
                         .toggleStyle(.switch)
                         .labelsHidden()
                 }

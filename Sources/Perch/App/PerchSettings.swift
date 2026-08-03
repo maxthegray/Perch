@@ -59,6 +59,9 @@ enum PerchSettings {
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
     /// Offer recently downloaded files as ghost rows.
     static let offerRecentArrivals = "Perch.OfferRecentArrivals"
+    /// Keep concrete files at their source and persist a bookmark to them instead of
+    /// moving them into Perch's holding directory. Defaults off.
+    static let referenceDroppedFiles = "Perch.ReferenceDroppedFiles"
 
     // MARK: - Advanced ▸ Docking
 

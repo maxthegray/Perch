@@ -684,9 +684,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    /// Paths the shelf must never offer: files Perch itself recently vended into a
-    /// folder (ledger destinations), and the recorded origins of items currently
-    /// aboard (a copy-fallback stash leaves the original in place).
+    /// Paths the shelf must never offer: files Perch recently vended, the origins of
+    /// owned items, and originals deliberately left in place by reference mode.
     private func arrivalExclusions() -> Set<String> {
         var excluded = Set<String>()
         let cutoff = Date().addingTimeInterval(-RecentArrivals.window - 60)
@@ -694,8 +693,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             excluded.insert(entry.destination)
         }
         for item in store.items {
-            guard let origins = item.metadata.originPaths else { continue }
-            excluded.formUnion(origins.values)
+            if let origins = item.metadata.originPaths {
+                excluded.formUnion(origins.values)
+            }
+            if let references = item.metadata.referencedFiles, !references.isEmpty {
+                excluded.formUnion(references.values.map(\.originalPath))
+                excluded.formUnion(item.backingFileURLs().map(\.path))
+            }
         }
         return excluded
     }
@@ -2070,13 +2074,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             for result in results {
                 registerScreenshotPresentationIfNeeded(for: result.item)
             }
-            let movedSourcePaths = results.flatMap { result -> [String] in
-                guard let origins = result.item.metadata.originPaths else {
-                    return []
-                }
-                return Array(origins.values)
+            let sourcePaths = results.flatMap { result -> [String] in
+                let origins = result.item.metadata.originPaths?.values.map { $0 } ?? []
+                let references = result.item.metadata.referencedFiles?.values.map(\.originalPath) ?? []
+                return origins + references
             }
-            arrivals.excludePermanently(movedSourcePaths)
+            arrivals.excludePermanently(sourcePaths)
 
             let afterCount = store.items.count
             let backingFiles = results.flatMap { $0.item.backingFileURLs() }.map(\.lastPathComponent).joined(separator: ",")

@@ -8,6 +8,38 @@ struct RepRecord: Codable, Equatable {
     let isPromisePlaceholder: Bool
 }
 
+/// A durable pointer to a file that Perch deliberately left outside its holding
+/// directory. The path is a fallback for bookmark failures and keeps old metadata
+/// useful if bookmark resolution changes across macOS versions.
+struct ReferencedFile: Codable, Equatable {
+    let originalPath: String
+    let bookmarkData: Data?
+
+    init(url: URL) {
+        originalPath = url.path
+        bookmarkData = try? url.bookmarkData(
+            options: [],
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
+    }
+
+    func resolvedURL() -> URL {
+        if let bookmarkData {
+            var isStale = false
+            if let url = try? URL(
+                resolvingBookmarkData: bookmarkData,
+                options: [],
+                relativeTo: nil,
+                bookmarkDataIsStale: &isStale
+            ) {
+                return url
+            }
+        }
+        return URL(fileURLWithPath: originalPath)
+    }
+}
+
 /// On-disk metadata for a single stored item (`meta.json`).
 struct ItemMetadata: Codable, Equatable {
     let id: UUID
@@ -20,6 +52,9 @@ struct ItemMetadata: Codable, Equatable {
     /// path), so the shelf can put it back. Only set for file drops Perch took
     /// ownership of by moving; absent for clippings, promises, and copy fallbacks.
     var originPaths: [String: String]?
+    /// Files intentionally left at their source (logical backing name → bookmark).
+    /// Optional so metadata written by older Perch versions decodes unchanged.
+    var referencedFiles: [String: ReferencedFile]? = nil
 }
 
 /// A single item held by the shelf. Backed by `items/<uuid>/` on disk; reads
@@ -52,12 +87,20 @@ final class StoredItem: Identifiable {
         return try? Data(contentsOf: url)
     }
 
-    /// Real files this item can vend (everything under `files/`).
+    /// Real files this item can vend. Most live under `files/`; reference-mode items
+    /// resolve durable bookmarks to files that were deliberately left at their source.
     func backingFileURLs() -> [URL] {
         let filesDir = directoryURL.appendingPathComponent("files", isDirectory: true)
-        return metadata.backingFileNames.map {
-            filesDir.appendingPathComponent($0, isDirectory: false)
+        return metadata.backingFileNames.map { fileName in
+            if let reference = metadata.referencedFiles?[fileName] {
+                return reference.resolvedURL()
+            }
+            return filesDir.appendingPathComponent(fileName, isDirectory: false)
         }
+    }
+
+    func isReferencedFile(named fileName: String) -> Bool {
+        metadata.referencedFiles?[fileName] != nil
     }
 
     /// Display icon (Quick Look thumbnail or UTType icon).

@@ -138,7 +138,7 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
         _ filePromiseProvider: NSFilePromiseProvider,
         fileNameForType fileType: String
     ) -> String {
-        snapshot.backingFileURLs.first?.lastPathComponent ?? "\(snapshot.title).dat"
+        snapshot.promisedFileName
     }
 
     func filePromiseProvider(
@@ -154,7 +154,7 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
         let fileManager = FileManager.default
         let destinationURL = promisedDestinationURL(
             promiseURL: url,
-            fileName: sourceURL.lastPathComponent,
+            fileName: snapshot.promisedFileName,
             fileManager: fileManager
         )
         do {
@@ -258,6 +258,7 @@ private struct StoredItemDragSnapshot {
     let title: String
     let representations: [RepRecord]
     let backingFileURLs: [URL]
+    let promisedFileName: String
     let itemID: UUID
     /// Where the file this drag actually vends came from, captured for the provenance
     /// ledger. Looked up by the vended file's name rather than taking an arbitrary
@@ -274,9 +275,13 @@ private struct StoredItemDragSnapshot {
         representations = item.metadata.representations
         let resolvedBackingFileURLs = item.backingFileURLs()
         backingFileURLs = resolvedBackingFileURLs
+        promisedFileName = item.metadata.backingFileNames.first
+            ?? resolvedBackingFileURLs.first?.lastPathComponent
+            ?? "\(item.metadata.title).dat"
         itemID = item.id
-        origin = resolvedBackingFileURLs.first.flatMap {
-            item.metadata.originPaths?[$0.lastPathComponent]
+        origin = item.metadata.backingFileNames.first.flatMap { fileName in
+            item.metadata.originPaths?[fileName]
+                ?? item.metadata.referencedFiles?[fileName]?.originalPath
         }
         wasCopy = UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
 
