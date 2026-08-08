@@ -19,7 +19,9 @@ struct PasteboardSnapshotter {
 
     func snapshot(
         _ pasteboard: NSPasteboard,
-        into store: ItemStore
+        into store: ItemStore,
+        insertionIndex: Int? = nil,
+        referencesDroppedFiles: Bool? = nil
     ) throws -> [PasteboardSnapshotResult] {
         let pasteboardItems = pasteboard.pasteboardItems ?? []
         guard !pasteboardItems.isEmpty else { throw PasteboardSnapshotError.noItems }
@@ -58,7 +60,12 @@ struct PasteboardSnapshotter {
                         storeURL: directory.url
                     )
                 }
-                let (item, pendingCopies) = try writeSnapshot(group, id: directory.id, directoryURL: directory.url)
+                let (item, pendingCopies) = try writeSnapshot(
+                    group,
+                    id: directory.id,
+                    directoryURL: directory.url,
+                    referencesDroppedFiles: referencesDroppedFiles
+                )
                 results.append(PasteboardSnapshotResult(
                     item: item,
                     pendingPromises: receivers,
@@ -66,7 +73,11 @@ struct PasteboardSnapshotter {
                 ))
             }
 
-            if receivers.isEmpty {
+            if receivers.isEmpty, let insertionIndex {
+                for (offset, result) in results.enumerated() {
+                    store.insert(result.item, at: insertionIndex + offset)
+                }
+            } else if receivers.isEmpty {
                 // insert-at-front reverses its input, so insert backwards to preserve
                 // Finder's selection order on the shelf.
                 for result in results.reversed() { store.insert(result.item, at: nil) }
@@ -76,6 +87,31 @@ struct PasteboardSnapshotter {
             for directory in createdDirectories { try? FileManager.default.removeItem(at: directory) }
             throw error
         }
+    }
+
+    func snapshotOwnedFile(
+        _ fileURL: URL,
+        into store: ItemStore,
+        at insertionIndex: Int
+    ) throws -> StoredItem {
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("Perch.Transform.\(UUID().uuidString)")
+        )
+        pasteboard.clearContents()
+        guard pasteboard.writeObjects([fileURL as NSURL]) else {
+            throw PasteboardSnapshotError.noReadableRepresentations
+        }
+        defer { pasteboard.clearContents() }
+        let results = try snapshot(
+            pasteboard,
+            into: store,
+            insertionIndex: insertionIndex,
+            referencesDroppedFiles: false
+        )
+        guard let item = results.first?.item else {
+            throw PasteboardSnapshotError.noReadableRepresentations
+        }
+        return item
     }
 
     private struct CapturedItem {
@@ -115,7 +151,8 @@ struct PasteboardSnapshotter {
     private func writeSnapshot(
         _ capturedItems: [CapturedItem],
         id: UUID,
-        directoryURL: URL
+        directoryURL: URL,
+        referencesDroppedFiles referenceOverride: Bool?
     ) throws -> (item: StoredItem, pendingCopies: [(source: URL, destination: URL)]) {
         let fileManager = FileManager.default
         let repsDir = directoryURL.appendingPathComponent("reps", isDirectory: true)
@@ -128,7 +165,7 @@ struct PasteboardSnapshotter {
         var stringTitle: String?
         var repIndex = 0
         var reservedBackingFileNames = Set<String>()
-        let referencesDroppedFiles = UserDefaults.standard.bool(
+        let referencesDroppedFiles = referenceOverride ?? UserDefaults.standard.bool(
             forKey: PerchSettings.referenceDroppedFiles
         )
 

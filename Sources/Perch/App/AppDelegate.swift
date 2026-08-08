@@ -26,6 +26,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        controller?.shutDown()
+    }
+
     /// Perch used to register its own login item on first launch without asking, which
     /// made the first thing a new user saw a system notice that Perch "added items that
     /// can run in the background". The default is still on — an accessory app with no

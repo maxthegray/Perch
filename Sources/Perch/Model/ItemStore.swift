@@ -428,7 +428,10 @@ final class ItemStore: ObservableObject {
     }
 
     /// `url` if it's free, otherwise the same name with a `-2`, `-3`, … suffix.
-    private func nonClobberingURL(for url: URL, fileManager: FileManager) -> URL {
+    nonisolated static func nonClobberingURL(
+        for url: URL,
+        fileManager: FileManager = .default
+    ) -> URL {
         guard fileManager.fileExists(atPath: url.path) else { return url }
         let directory = url.deletingLastPathComponent()
         let ext = url.pathExtension
@@ -440,6 +443,10 @@ final class ItemStore: ObservableObject {
             if !fileManager.fileExists(atPath: candidate.path) { return candidate }
             suffix += 1
         }
+    }
+
+    private func nonClobberingURL(for url: URL, fileManager: FileManager) -> URL {
+        Self.nonClobberingURL(for: url, fileManager: fileManager)
     }
 
     /// Remove a vended item from the shelf but leave its `items/<uuid>/` directory on

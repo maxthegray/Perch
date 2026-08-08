@@ -50,6 +50,25 @@ final class PasteboardSnapshotterReferenceTests: XCTestCase {
         }
     }
 
+    func testTransformOutputIsOwnedEvenWhenReferenceModeIsEnabled() throws {
+        try withReferenceSetting(true) {
+            let fixture = try SnapshotterReferenceFixture()
+            defer { fixture.remove() }
+            let output = try fixture.makeSourceFile(named: "converted.jpg")
+
+            let item = try PasteboardSnapshotter(holding: fixture.holding).snapshotOwnedFile(
+                output,
+                into: fixture.store,
+                at: 0
+            )
+
+            XCTAssertFalse(FileManager.default.fileExists(atPath: output.path))
+            XCTAssertNil(item.metadata.referencedFiles)
+            XCTAssertEqual(item.metadata.backingFileNames, ["converted.jpg"])
+            XCTAssertEqual(try Data(contentsOf: item.backingFileURLs()[0]), Data("payload".utf8))
+        }
+    }
+
     func testFilingAReferenceCopiesItsContentAndRemovesOnlyThePointer() throws {
         let fixture = try SnapshotterReferenceFixture()
         defer { fixture.remove() }

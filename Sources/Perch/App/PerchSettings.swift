@@ -62,6 +62,8 @@ enum PerchSettings {
     /// Keep concrete files at their source and persist a bookmark to them instead of
     /// moving them into Perch's holding directory. Defaults off.
     static let referenceDroppedFiles = "Perch.ReferenceDroppedFiles"
+    /// Whether transforms keep their source rows or replace them after success.
+    static let transformOutputMode = "Perch.TransformOutputMode"
 
     // MARK: - Advanced ▸ Docking
 

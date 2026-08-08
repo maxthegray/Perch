@@ -17,6 +17,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let historyWindow: HistoryWindowController
     private let settingsWindow: SettingsWindowController
     private let snapshotter: PasteboardSnapshotter
+    private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
     private let smartPerch: SmartPerchCoordinator
     private let dropView: ShelfDropView
@@ -143,6 +144,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var edgeTabCancellable: AnyCancellable?
     private var arrivalsCancellable: AnyCancellable?
     private var arrivalNamesCancellable: AnyCancellable?
+    private var transformPlaceholdersCancellable: AnyCancellable?
     /// Coalesces asynchronous OCR/arrival label changes so the text can settle before
     /// the outer panel smoothly adopts its new content-hugging width.
     private var asynchronousNameResizeTask: Task<Void, Never>?
@@ -235,6 +237,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             arrivals: arrivals,
             smartNames: smartPerch.smartNames,
             routeSuggestions: smartPerch.routeSuggestions
+        )
+        transformCoordinator = ShelfTransformCoordinator(
+            holding: holding,
+            store: store,
+            snapshotter: snapshotter,
+            interaction: hostView.interaction
         )
         dropView.autoresizingMask = [.width, .height]
         // Layer-backed so the reveal/hide can animate a content-layer transform.
@@ -344,6 +352,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onFileItemAtSuggestedRoute = { [weak self] item in
             self?.fileItemAtSuggestedRoute(item)
+        }
+        hostView.onPerformTransform = { [weak self] action, items, outputMode in
+            self?.transformCoordinator.perform(action, on: items, outputMode: outputMode)
         }
 
         // Grow/shrink the window to the SwiftUI content's actual measured height.
@@ -625,7 +636,25 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .sink { [weak self] _ in
                 self?.scheduleAsynchronousNameResize()
             }
+        transformPlaceholdersCancellable = hostView.interaction.$transformPlaceholders
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.transformPlaceholdersDidChange()
+            }
 
+    }
+
+    func shutDown() {
+        transformCoordinator.shutDown()
+    }
+
+    private func transformPlaceholdersDidChange() {
+        resizeToFitVisible(animated: false)
+        let isEmpty = store.items.isEmpty && hostView.transformPlaceholderCount == 0
+        guard isEmpty != wasEmpty else { return }
+        wasEmpty = isEmpty
+        shelfContentDidChange(isEmpty: isEmpty)
     }
 
     // MARK: Recent arrivals (ghost rows)
@@ -906,7 +935,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         sizingItems = items
         smartPerch.itemsDidChange(items, countChanged: items.count != previousCount)
         lastItemCount = items.count
-        let isEmpty = items.isEmpty
+        let isEmpty = items.isEmpty && hostView.transformPlaceholderCount == 0
         if items.count < previousCount, !isEmpty {
             animateRemovalResize()
         } else if items.count > previousCount {
@@ -2206,7 +2235,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             && themeStore.showsGrabHandle
             && (revealMode != .free || !freeShelfLocked)
         let ghostCount = arrivals.suppressed ? 0 : arrivals.visibleGhosts.count
-        let rowCount = itemCount + ghostCount
+        let rowCount = itemCount + ghostCount + hostView.transformPlaceholderCount
         guard rowCount > 0 else {
             return (dragActive ? Self.dropTargetHeight : Self.emptyStateHeight)
                 + (showsGrabber ? RowMetrics.grabberZoneHeight : 0)
@@ -2270,7 +2299,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// rather than a fixed amount of empty card.
     private func cardWidth(for edge: ShelfEdge) -> CGFloat {
         let showsGhosts = !arrivals.suppressed && !arrivals.visibleGhosts.isEmpty
-        if sizingItems.isEmpty && !showsGhosts {
+        if sizingItems.isEmpty && hostView.transformPlaceholderCount == 0 && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }
         guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
@@ -2317,8 +2346,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 showsRouteAction: false
             )
         } : []
+        let transformRows = hostView.interaction.transformPlaceholders.map {
+            (title: $0.title, showsAction: false, showsRouteAction: false)
+        }
         let contentWidth = RowMetrics.contentHuggingCardWidth(
-            rows: itemRows + ghostRows,
+            rows: itemRows + transformRows + ghostRows,
             theme: theme,
             maximumWidth: maximumListWidth
         )

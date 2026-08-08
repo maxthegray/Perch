@@ -3,6 +3,14 @@ import Quartz
 import SmartPerchCore
 import SwiftUI
 
+private final class ShelfTransformActionBox: NSObject {
+    let action: ShelfTransformAction
+
+    init(_ action: ShelfTransformAction) {
+        self.action = action
+    }
+}
+
 /// AppKit host (`NSView`) for the SwiftUI shelf content, hosting `ShelfContentView`
 /// via `NSHostingView`. This is the **primary** path (Decision M) for both:
 ///  - row drag-initiation (`mouseDragged(_:)` → owns/retains an `ItemDragSource`), and
@@ -16,7 +24,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private let arrivals: RecentArrivals
     private let smartNames: SmartNameStore
     private let routeSuggestions: RouteSuggestionStore
-    private let interaction = RowInteractionState()
+    let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
@@ -37,6 +45,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// The temporary arrival row under the right-click, acted on without touching
     /// unrelated files in the watched folder.
     private var menuTargetArrival: ArrivalGhost?
+    /// Stable operand order for the transform submenu while AppKit tracks it.
+    private var menuTransformItems: [StoredItem] = []
     /// True while the right-click context menu (or one of its submenus) is open. The
     /// controller checks this so an empty shelf doesn't retract out from under the menu
     /// when the pointer moves into a submenu outside the card.
@@ -131,6 +141,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Accepting a learned route moves files and appends to the event log, so the
     /// controller performs it for the same reason.
     var onFileItemAtSuggestedRoute: ((StoredItem) -> Void)?
+
+    /// User-invoked transforms are coordinated outside the view so their file work and
+    /// cancellation never run in AppKit's mouse or menu event path.
+    var onPerformTransform: ((ShelfTransformAction, [StoredItem], ShelfTransformOutputMode) -> Void)?
 
     /// Fires when the user acts on the card — a press the card claimed, or a right-click
     /// that opens its menu. The controller stops treating a hover reveal as provisional
@@ -322,9 +336,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func trailingButtonContains(_ point: NSPoint) -> Bool {
         guard !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels
         else { return false }
-        return visibleItems.indices.contains {
-            deleteHitRect(forRow: $0).contains(point)
-                || routeActionHitRect(forRow: $0).contains(point)
+        return visibleRows.indices.contains {
+            item(atRow: $0) != nil
+                && (deleteHitRect(forRow: $0).contains(point)
+                    || routeActionHitRect(forRow: $0).contains(point))
         }
     }
 
@@ -490,13 +505,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
 
         if !usesStackedRows, themeStore.theme.showsDeleteButton, themeStore.showsLabels,
-           let index = rowIndex(at: point) {
+           let index = rowIndex(at: point),
+           let rowItem = item(atRow: index) {
             if deleteHitRect(forRow: index).contains(point) {
-                pendingDeleteItem = visibleItems[index]
+                pendingDeleteItem = rowItem
                 return
             }
             if routeActionHitRect(forRow: index).contains(point) {
-                pendingRouteActionItem = visibleItems[index]
+                pendingRouteActionItem = rowItem
                 return
             }
         }
@@ -628,8 +644,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             pendingDeleteItem = nil
             let point = convert(event.locationInWindow, from: nil)
             if let index = rowIndex(at: point),
-               index < visibleItems.count,
-               visibleItems[index].id == item.id,
+               self.item(atRow: index)?.id == item.id,
                deleteHitRect(forRow: index).contains(point) {
                 // The ✕ puts the file back where it came from (right-click ▸ Delete
                 // removes it for good).
@@ -639,8 +654,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             pendingRouteActionItem = nil
             let point = convert(event.locationInWindow, from: nil)
             if let index = rowIndex(at: point),
-               index < visibleItems.count,
-               visibleItems[index].id == item.id,
+               self.item(atRow: index)?.id == item.id,
                routeActionHitRect(forRow: index).contains(point) {
                 onFileItemAtSuggestedRoute?(item)
             }
@@ -699,7 +713,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let pitch = usesStackedRows ? stackedRowPitch : theme.rowHeight + theme.rowSpacing
         guard pitch > 0.001 else { return }
         let raw = Int((point.y - contentTopOffset + contentScrollOffsetY() - rowsTopInset) / pitch)
-        let target = max(0, min(count - 1, raw))
+        let visualIndex = max(0, min(max(visibleRows.count - 1, 0), raw))
+        let target = max(
+            0,
+            visibleRows.prefix(visualIndex + 1).reduce(into: 0) { result, row in
+                if case .item = row { result += 1 }
+            } - 1
+        )
 
         let reorderedIDs = ShelfSelectionReorderPolicy.reorder(
             reorderBaseOrder.map(\.id),
@@ -880,7 +900,16 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// The items as currently rendered: a row vended out in a move-mode drag is hidden
     /// until the drag resolves, so hit-testing must skip it too.
     private var visibleItems: [StoredItem] {
-        store.items.filter { !interaction.vendingItemIDs.contains($0.id) }
+        (interaction.previewOrder ?? store.items)
+            .filter { !interaction.vendingItemIDs.contains($0.id) }
+    }
+
+    private var visibleRows: [ShelfDisplayEntry] {
+        interaction.displayEntries(for: visibleItems)
+    }
+
+    var transformPlaceholderCount: Int {
+        interaction.transformPlaceholders.count
     }
 
     private var usesStackedRows: Bool {
@@ -888,7 +917,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     private func item(at point: NSPoint) -> StoredItem? {
-        rowIndex(at: point).map { visibleItems[$0] }
+        rowIndex(at: point).flatMap(item(atRow:))
+    }
+
+    private func item(atRow index: Int) -> StoredItem? {
+        guard visibleRows.indices.contains(index),
+              case let .item(item) = visibleRows[index] else { return nil }
+        return item
     }
 
     /// Whether the card currently shows the grab handle. Handle mode reveals it only
@@ -919,7 +954,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var usesContentHuggingRows: Bool {
         !usesStackedRows
             && themeStore.showsLabels
-            && (!visibleItems.isEmpty || !ghostRows.isEmpty)
+            && (!visibleRows.isEmpty || !ghostRows.isEmpty)
     }
 
     private func rowLaneContains(x: CGFloat) -> Bool {
@@ -974,7 +1009,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let grabber = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         return RowMetrics.stackedRowPitch(
             availableHeight: max(0, bounds.height - grabber),
-            rowCount: visibleItems.count + ghostRows.count,
+            rowCount: visibleRows.count + ghostRows.count,
             rowHeight: stackedPreviewSide,
             rowSpacing: theme.rowSpacing,
             contentPadding: theme.contentPadding
@@ -986,7 +1021,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func stackedGlobalRowIndex(at point: NSPoint) -> Int? {
         guard stackedPreviewContains(x: point.x) else { return nil }
         let theme = themeStore.theme
-        let count = visibleItems.count + ghostRows.count
+        let count = visibleRows.count + ghostRows.count
         guard count > 0 else { return nil }
         let contentY = point.y - contentTopOffset + contentScrollOffsetY()
             - theme.contentPadding
@@ -1032,7 +1067,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func rowIndex(at point: NSPoint) -> Int? {
         if usesStackedRows {
             guard let index = stackedGlobalRowIndex(at: point),
-                  index < visibleItems.count else { return nil }
+                  index < visibleRows.count else { return nil }
             return index
         }
         let theme = themeStore.theme
@@ -1045,7 +1080,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // fractions up there would all collapse onto row 0.
         guard contentY >= topInset else { return nil }
         let index = Int((contentY - topInset) / rowHeight)
-        guard index < visibleItems.count else { return nil }
+        guard index < visibleRows.count else { return nil }
         let rowRect = itemRowRect(forRow: index)
         guard point.x >= rowRect.minX, point.x <= rowRect.maxX else {
             return nil
@@ -1064,8 +1099,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// inboard of the delete button. Empty for rows with no learned route, so a click
     /// there falls through to the ordinary row gesture.
     private func routeActionHitRect(forRow index: Int) -> NSRect {
-        guard index < visibleItems.count,
-              routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        guard let item = item(atRow: index),
+              routeSuggestions.suggestion(for: item.id) != nil
         else {
             return .zero
         }
@@ -1079,8 +1114,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let rowMaxX = usesStackedRows
             ? bounds.midX + stackedPreviewSide / 2
             : itemRowRect(forRow: index).maxX
-        let hasNeighbor = index < visibleItems.count
-            && routeSuggestions.suggestion(for: visibleItems[index].id) != nil
+        let hasNeighbor = item(atRow: index).flatMap {
+            routeSuggestions.suggestion(for: $0.id)
+        } != nil
         return trailingButtonHitRect(
             rowTop: rowTop,
             rowMaxX: rowMaxX,
@@ -1129,13 +1165,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let theme = themeStore.theme
         if usesStackedRows {
             return contentTopOffset + theme.contentPadding
-                + CGFloat(visibleItems.count + index) * stackedRowPitch
+                + CGFloat(visibleRows.count + index) * stackedRowPitch
         }
         let pitch = theme.rowHeight + theme.rowSpacing
         if store.items.isEmpty {
             return contentTopOffset + theme.contentPadding + CGFloat(index) * pitch
         }
-        return contentTopOffset + rowsTopInset + CGFloat(visibleItems.count + index) * pitch
+        return contentTopOffset + rowsTopInset + CGFloat(visibleRows.count + index) * pitch
     }
 
     /// The index of the ghost row under `point`, or nil.
@@ -1144,7 +1180,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard !ghosts.isEmpty else { return nil }
         if usesStackedRows {
             guard let index = stackedGlobalRowIndex(at: point) else { return nil }
-            let ghostIndex = index - visibleItems.count
+            let ghostIndex = index - visibleRows.count
             return ghosts.indices.contains(ghostIndex) ? ghostIndex : nil
         }
         guard rowLaneContains(x: point.x) else { return nil }
@@ -1250,6 +1286,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         interaction.isCardHovered = false
         interaction.grabberRevealProgress = 0
         interaction.clearSelection()
+        interaction.dismissTransformFailures()
         interaction.deletingItemIDs.removeAll()
         pendingDeleteItem = nil
         resetDragState()
@@ -1279,6 +1316,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menuTargetItem = nil
             menuTargetFilenameSuggestion = nil
             menuTargetArrival = ghost
+            menuTransformItems = []
             interaction.clearSelection()
 
             let adopt = NSMenuItem(
@@ -1302,6 +1340,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction.contextClickSelection(item.id)
             menuTargetItem = item
             let targets = actionItems(for: item)
+            menuTransformItems = targets
 
             if targets.count == 1,
                item.metadata.backingFileNames.count == 1,
@@ -1364,6 +1403,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menu.addItem(.separator())
             }
 
+            addTransformMenu(to: menu, for: targets)
+
             let quickLook = NSMenuItem(
                 title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
                 action: #selector(quickLookMenuAction(_:)),
@@ -1394,6 +1435,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menuTargetItem = nil
             menuTargetFilenameSuggestion = nil
             menuTargetArrival = nil
+            menuTransformItems = []
             interaction.clearSelection()
         }
 
@@ -1493,6 +1535,106 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         return menu
     }
 
+    private func addTransformMenu(to menu: NSMenu, for items: [StoredItem]) {
+        let selection = ShelfTransformCoordinator.selection(for: items)
+        let actions = ShelfTransformAction.availableActions(for: selection)
+        guard !actions.isEmpty else { return }
+
+        let transformItem = NSMenuItem(title: "Transform", action: nil, keyEquivalent: "")
+        let transformMenu = NSMenu(title: "Transform")
+        transformMenu.autoenablesItems = false
+        let outputMode = ShelfTransformOutputMode.load()
+        let outputItem = NSMenuItem(
+            title: "Output: \(outputMode.displayName)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        let outputMenu = NSMenu(title: "Output")
+        outputMenu.autoenablesItems = false
+        for mode in ShelfTransformOutputMode.allCases {
+            let item = NSMenuItem(
+                title: mode.displayName,
+                action: #selector(setTransformOutputMode(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = mode.rawValue
+            item.state = mode == outputMode ? .on : .off
+            outputMenu.addItem(item)
+        }
+        outputItem.submenu = outputMenu
+        transformMenu.addItem(outputItem)
+        transformMenu.addItem(.separator())
+
+        let convertActions = ImageTransformFormat.allCases.map(ShelfTransformAction.convert)
+            .filter { actions.contains($0) }
+        if !convertActions.isEmpty {
+            let convertItem = NSMenuItem(title: "Convert Image", action: nil, keyEquivalent: "")
+            let convertMenu = NSMenu(title: "Convert Image")
+            convertMenu.autoenablesItems = false
+            for format in ImageTransformFormat.allCases
+                where convertActions.contains(.convert(format)) {
+                convertMenu.addItem(transformMenuItem(
+                    title: format.displayName,
+                    action: .convert(format)
+                ))
+            }
+            convertItem.submenu = convertMenu
+            transformMenu.addItem(convertItem)
+        }
+
+        let resizeActions = ImageResizePreset.allCases.map(ShelfTransformAction.resize)
+            .filter { actions.contains($0) }
+        if !resizeActions.isEmpty {
+            let resizeItem = NSMenuItem(title: "Resize", action: nil, keyEquivalent: "")
+            let resizeMenu = NSMenu(title: "Resize")
+            resizeMenu.autoenablesItems = false
+            for preset in ImageResizePreset.allCases
+                where resizeActions.contains(.resize(preset)) {
+                resizeMenu.addItem(transformMenuItem(
+                    title: preset.displayName,
+                    action: .resize(preset)
+                ))
+            }
+            resizeItem.submenu = resizeMenu
+            transformMenu.addItem(resizeItem)
+        }
+
+        if actions.contains(.stripMetadata) {
+            transformMenu.addItem(transformMenuItem(
+                title: "Remove Metadata",
+                action: .stripMetadata
+            ))
+        }
+        if actions.contains(.zip) {
+            if transformMenu.items.last?.isSeparatorItem == false {
+                transformMenu.addItem(.separator())
+            }
+            transformMenu.addItem(transformMenuItem(
+                title: "Compress as ZIP",
+                action: .zip
+            ))
+        }
+
+        transformItem.submenu = transformMenu
+        menu.addItem(transformItem)
+        menu.addItem(.separator())
+    }
+
+    private func transformMenuItem(
+        title: String,
+        action: ShelfTransformAction
+    ) -> NSMenuItem {
+        let item = NSMenuItem(
+            title: title,
+            action: #selector(performTransformMenuAction(_:)),
+            keyEquivalent: ""
+        )
+        item.target = self
+        item.representedObject = ShelfTransformActionBox(action)
+        return item
+    }
+
     private func arrivalAdoptMenuTitle(for ghost: ArrivalGhost) -> String {
         switch ghost {
         case .summary(_, .expand):
@@ -1575,6 +1717,20 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         guard let item = menuTargetItem else { return }
         onFileItemAtSuggestedRoute?(item)
         menuTargetItem = nil
+    }
+
+    @objc private func performTransformMenuAction(_ sender: NSMenuItem) {
+        guard let action = (sender.representedObject as? ShelfTransformActionBox)?.action,
+              !menuTransformItems.isEmpty else { return }
+        let items = menuTransformItems
+        menuTransformItems = []
+        onPerformTransform?(action, items, ShelfTransformOutputMode.load())
+    }
+
+    @objc private func setTransformOutputMode(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let mode = ShelfTransformOutputMode(rawValue: rawValue) else { return }
+        mode.save()
     }
 
     /// Waving off a route is a local presentation decision — no file moves, nothing to

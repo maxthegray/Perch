@@ -33,6 +33,10 @@ struct HoldingDirectory {
         root.appendingPathComponent("ledger.json", isDirectory: false)
     }
 
+    var transformWorkDir: URL {
+        root.appendingPathComponent("transform-tmp", isDirectory: true)
+    }
+
     var smartEventLogFile: URL {
         root.appendingPathComponent("smart-perch.sqlite", isDirectory: false)
     }

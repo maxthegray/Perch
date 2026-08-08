@@ -204,7 +204,7 @@ struct ShelfContentView: View {
                 .offset(y: (1 - grabberProgress) * 7)
                 .frame(height: grabberHeight, alignment: .bottom)
                 .clipped()
-            if store.items.isEmpty {
+            if store.items.isEmpty && interaction.transformPlaceholders.isEmpty {
                 Group {
                     if ghostRows.isEmpty {
                         emptyState
@@ -249,7 +249,7 @@ struct ShelfContentView: View {
                         }
                             .background(heightReader(addingGrabberStrip: grabberHeight))
                             .frame(minHeight: proxy.size.height)
-                            .animation(.easeOut(duration: 0.18), value: displayedItems.map(\.id))
+                            .animation(.easeOut(duration: 0.18), value: displayedEntries.map(\.id))
                     }
                     .scrollIndicators(.hidden)
                 }
@@ -263,6 +263,10 @@ struct ShelfContentView: View {
     private var displayedItems: [StoredItem] {
         (interaction.previewOrder ?? store.items)
             .filter { !interaction.vendingItemIDs.contains($0.id) }
+    }
+
+    private var displayedEntries: [ShelfDisplayEntry] {
+        interaction.displayEntries(for: displayedItems)
     }
 
     /// Recent-arrival ghosts, hidden while a drag is in flight (`suppressed`) so they
@@ -314,12 +318,21 @@ struct ShelfContentView: View {
         )
 
         return VStack(alignment: .leading, spacing: theme.rowSpacing) {
-            ForEach(displayedItems) { item in
-                itemRow(
-                    item,
-                    showsSeparator: theme.usesRowSeparators && item.id != displayedItems.last?.id,
-                    maximumWidth: maximumRowWidth
-                )
+            ForEach(displayedEntries) { entry in
+                switch entry {
+                case let .item(item):
+                    itemRow(
+                        item,
+                        showsSeparator: theme.usesRowSeparators && entry.id != displayedEntries.last?.id,
+                        maximumWidth: maximumRowWidth
+                    )
+                case let .transform(placeholder):
+                    transformPlaceholderRow(
+                        placeholder,
+                        showsSeparator: theme.usesRowSeparators && entry.id != displayedEntries.last?.id,
+                        maximumWidth: maximumRowWidth
+                    )
+                }
             }
             if !ghostRows.isEmpty {
                 ghostStack
@@ -338,7 +351,7 @@ struct ShelfContentView: View {
             interaction.previewOrder != nil
                 ? .spring(response: 0.34, dampingFraction: 0.86)
                 : .easeOut(duration: 0.18),
-            value: displayedItems.map(\.id)
+            value: displayedEntries.map(\.id)
         )
     }
 
@@ -349,7 +362,7 @@ struct ShelfContentView: View {
         availableWidth: CGFloat,
         availableHeight: CGFloat
     ) -> some View {
-        let itemCount = displayedItems.count
+        let itemCount = displayedEntries.count
         let rowCount = itemCount + ghostRows.count
         let previewSide = RowMetrics.stackedPreviewSide(
             availableWidth: availableWidth,
@@ -372,10 +385,17 @@ struct ShelfContentView: View {
         )
 
         return ZStack(alignment: .topLeading) {
-            ForEach(Array(displayedItems.enumerated()), id: \.element.id) { index, item in
-                stackedItemPreview(item, side: previewSide)
-                    .offset(y: CGFloat(index) * pitch)
-                    .zIndex(stackZIndex(for: item, index: index, rowCount: rowCount))
+            ForEach(Array(displayedEntries.enumerated()), id: \.element.id) { index, entry in
+                Group {
+                    switch entry {
+                    case let .item(item):
+                        stackedItemPreview(item, side: previewSide)
+                    case let .transform(placeholder):
+                        stackedTransformPlaceholder(placeholder, side: previewSide)
+                    }
+                }
+                .offset(y: CGFloat(index) * pitch)
+                .zIndex(stackZIndex(for: entry, index: index, rowCount: rowCount))
             }
 
             ForEach(Array(ghostRows.enumerated()), id: \.element.id) { index, ghost in
@@ -394,7 +414,7 @@ struct ShelfContentView: View {
             interaction.previewOrder != nil
                 ? .spring(response: 0.34, dampingFraction: 0.86)
                 : .easeOut(duration: 0.18),
-            value: displayedItems.map(\.id)
+            value: displayedEntries.map(\.id)
         )
     }
 
@@ -490,10 +510,91 @@ struct ShelfContentView: View {
         ))
     }
 
+    private func transformPlaceholderRow(
+        _ placeholder: TransformPlaceholder,
+        showsSeparator: Bool,
+        maximumWidth: CGFloat
+    ) -> some View {
+        HStack(spacing: RowMetrics.labeledRowSpacing) {
+            transformPlaceholderIcon(placeholder)
+                .frame(width: theme.iconSize, height: theme.iconSize)
+
+            if themeStore.showsLabels {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(placeholder.title)
+                        .font(.system(size: theme.titleSize, weight: theme.titleWeight))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                    Text(transformPlaceholderSubtitle(placeholder))
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(transformPlaceholderFailed(placeholder) ? AnyShapeStyle(Color.red) : AnyShapeStyle(.tertiary))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+            }
+        }
+        .padding(.horizontal, themeStore.showsLabels ? RowMetrics.labeledRowHorizontalPadding : 0)
+        .frame(width: maximumWidth, alignment: themeStore.showsLabels ? .leading : .center)
+        .frame(minHeight: theme.rowHeight, maxHeight: theme.rowHeight)
+        .background(
+            RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
+                .fill(theme.rowFill)
+        )
+        .overlay(alignment: .bottom) {
+            if showsSeparator {
+                Rectangle()
+                    .fill(theme.separatorColor)
+                    .frame(height: 0.5)
+                    .padding(.leading, theme.iconSize + 20)
+                    .padding(.trailing, 10)
+            }
+        }
+        .transition(.opacity.combined(with: .scale(scale: 0.92)))
+    }
+
+    private func stackedTransformPlaceholder(
+        _ placeholder: TransformPlaceholder,
+        side: CGFloat
+    ) -> some View {
+        transformPlaceholderIcon(placeholder)
+            .frame(width: side * 0.5, height: side * 0.5)
+            .frame(width: side, height: side)
+            .background(
+                RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
+                    .fill(theme.rowFill)
+            )
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+
+    @ViewBuilder
+    private func transformPlaceholderIcon(_ placeholder: TransformPlaceholder) -> some View {
+        switch placeholder.state {
+        case .pending:
+            ProgressView()
+                .controlSize(.small)
+        case .failed:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.red)
+        }
+    }
+
+    private func transformPlaceholderSubtitle(_ placeholder: TransformPlaceholder) -> String {
+        switch placeholder.state {
+        case .pending: return "Working…"
+        case let .failed(message): return message
+        }
+    }
+
+    private func transformPlaceholderFailed(_ placeholder: TransformPlaceholder) -> Bool {
+        if case .failed = placeholder.state { return true }
+        return false
+    }
+
     /// Keep the card being manipulated above the rest of the deck even when it was
     /// originally near the back.
-    private func stackZIndex(for item: StoredItem, index: Int, rowCount: Int) -> Double {
-        if interaction.draggingItemIDs.contains(item.id) || interaction.deletingItemIDs.contains(item.id) {
+    private func stackZIndex(for entry: ShelfDisplayEntry, index: Int, rowCount: Int) -> Double {
+        if case let .item(item) = entry,
+           interaction.draggingItemIDs.contains(item.id) || interaction.deletingItemIDs.contains(item.id) {
             return Double(rowCount + 1)
         }
         return Double(index)
@@ -515,7 +616,9 @@ struct ShelfContentView: View {
     private var rowLaneWidthScale: CGFloat {
         !themeStore.stacksItems
             && themeStore.showsLabels
-            && (!store.items.isEmpty || !ghostRows.isEmpty)
+            && (!store.items.isEmpty
+                || !interaction.transformPlaceholders.isEmpty
+                || !ghostRows.isEmpty)
             ? 1
             : themeStore.widthScale
     }

@@ -3,6 +3,35 @@ import Combine
 import CoreGraphics
 import Foundation
 
+struct TransformPlaceholder: Identifiable, Equatable {
+    enum State: Equatable {
+        case pending
+        case failed(String)
+    }
+
+    let id: UUID
+    let sourceItemID: UUID
+    let title: String
+    var state: State
+}
+
+enum ShelfDisplayEntryID: Hashable {
+    case item(UUID)
+    case transform(UUID)
+}
+
+enum ShelfDisplayEntry: Identifiable {
+    case item(StoredItem)
+    case transform(TransformPlaceholder)
+
+    var id: ShelfDisplayEntryID {
+        switch self {
+        case let .item(item): return .item(item.id)
+        case let .transform(placeholder): return .transform(placeholder.id)
+        }
+    }
+}
+
 /// Which row the pointer is currently over. Updated by `ShelfHostView`'s AppKit
 /// mouse-tracking (the SwiftUI content never receives mouse events, since the host
 /// view intercepts hit-testing) and observed by the SwiftUI rows to show the hover
@@ -27,6 +56,8 @@ final class RowInteractionState: ObservableObject {
     /// the drag is in flight — the item travels with the cursor instead of appearing to
     /// clone — and comes back if the drag ends nowhere valid.
     @Published var vendingItemIDs: Set<UUID> = []
+    /// Transform rows are presentation-only and never enter ItemStore or index.json.
+    @Published private(set) var transformPlaceholders: [TransformPlaceholder] = []
     /// While a reorder drag is in progress, the live previewed ordering the rows should
     /// render in. Nil when not reordering (rows follow the store's order).
     @Published var previewOrder: [StoredItem]?
@@ -89,6 +120,47 @@ final class RowInteractionState: ObservableObject {
     func clearSelection() {
         selectionPolicy.clearSelection()
         selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
+
+    func addTransformPlaceholder(_ placeholder: TransformPlaceholder) {
+        transformPlaceholders.append(placeholder)
+    }
+
+    func failTransformPlaceholder(_ id: UUID, message: String) {
+        guard let index = transformPlaceholders.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        transformPlaceholders[index].state = .failed(message)
+    }
+
+    func removeTransformPlaceholder(_ id: UUID) {
+        transformPlaceholders.removeAll { $0.id == id }
+    }
+
+    func clearTransformPlaceholders() {
+        transformPlaceholders.removeAll()
+    }
+
+    func dismissTransformFailures() {
+        transformPlaceholders.removeAll {
+            if case .failed = $0.state { return true }
+            return false
+        }
+    }
+
+    func displayEntries(for items: [StoredItem]) -> [ShelfDisplayEntry] {
+        let itemIDs = Set(items.map(\.id))
+        var entries: [ShelfDisplayEntry] = []
+        for item in items {
+            entries.append(.item(item))
+            entries.append(contentsOf: transformPlaceholders
+                .filter { $0.sourceItemID == item.id }
+                .map(ShelfDisplayEntry.transform))
+        }
+        entries.append(contentsOf: transformPlaceholders
+            .filter { !itemIDs.contains($0.sourceItemID) }
+            .map(ShelfDisplayEntry.transform))
+        return entries
     }
 }
 
