@@ -9,7 +9,7 @@ import UniformTypeIdentifiers
 /// visible shelf or briefly reveals a hidden one. Anti-annoyance rules:
 ///  - only files added within the last `window` (15 min), newest first;
 ///  - Downloads files completed within five seconds collapse into one session;
-///  - at most three sessions/individual Desktop files are presented;
+///  - at most five sessions/individual Desktop files are presented;
 ///  - a file is offered in at most `maxReveals` reveals, then never again;
 ///  - dismissing a ghost from its context menu silences that file permanently;
 ///  - files Perch itself placed (vends, return-to-origin) are excluded by the caller;
@@ -22,7 +22,7 @@ final class RecentArrivals: ObservableObject {
     static let enabledKey = PerchSettings.offerRecentArrivals
 
     static let window: TimeInterval = 15 * 60
-    static let maxSessions = 3
+    static let maxSessions = 5
     static let maxReveals = 3
 
     private static let dismissedKey = PerchSettings.arrivalDismissed

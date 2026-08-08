@@ -3,6 +3,11 @@ import XCTest
 @testable import Perch
 
 final class DownloadSessionGrouperTests: XCTestCase {
+    @MainActor
+    func testRecentArrivalsPresentsUpToFiveSessions() {
+        XCTAssertEqual(RecentArrivals.maxSessions, 5)
+    }
+
     func testThreeDownloadsWithinFiveSecondsBecomeOneSession() {
         let now = Date()
         let offers = [
