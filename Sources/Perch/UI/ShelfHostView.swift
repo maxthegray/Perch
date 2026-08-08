@@ -56,12 +56,17 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private var dragStartPoint: NSPoint = .zero
     /// A normal press on an already-selected row keeps the batch intact until we know
     /// whether this is a drag. If it remains a click, mouse-up restores the usual
-    /// normal-click behavior by clearing the Shift-selection.
+    /// normal-click behavior by collapsing the selection to that row.
     private var preservesSelectionForDrag = false
+    /// Command-click is resolved on mouse-up so the same press can still become the
+    /// configured Command-drag shelf movement after crossing the drag threshold.
+    private var pendingCommandSelectionItem: StoredItem?
     /// True once a reorder is underway (rows live-shuffle a preview order).
     private var reorderActive = false
     /// Item order captured at the start of a reorder, used to recompute the preview.
     private var reorderBaseOrder: [StoredItem] = []
+    /// The selected block being moved, retained in shelf order by the reorder policy.
+    private var reorderMovingItemIDs: Set<UUID> = []
     /// True once the gesture has handed off to a system drag (vend); local tracking stops.
     private var vendStarted = false
     /// True only after this view receives the left mouse-down for the current gesture.
@@ -476,6 +481,9 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             : event.modifierFlags.contains(.command)
         if requestedShelfDrag, canBeginShelfDrag?() == true {
             shelfDragArmed = true
+            if event.modifierFlags.contains(.command) {
+                pendingCommandSelectionItem = item(at: point)
+            }
             dragStartPoint = point
             shelfDragScreenStart = NSEvent.mouseLocation
             return
@@ -504,23 +512,26 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         dragItem = item(at: point)
         if let item = dragItem {
             if event.modifierFlags.contains(.shift) {
-                if interaction.selectedItemIDs.contains(item.id) {
-                    interaction.selectedItemIDs.remove(item.id)
-                    dragItem = nil
-                } else {
-                    interaction.selectedItemIDs.insert(item.id)
-                }
+                interaction.clickSelection(
+                    item.id,
+                    modifier: .shift,
+                    orderedItemIDs: store.items.map(\.id)
+                )
+            } else if event.modifierFlags.contains(.command) {
+                pendingCommandSelectionItem = item
             } else if interaction.selectedItemIDs.contains(item.id) {
-                // Do not throw away a Shift-selected batch on the very press that is
+                // Do not throw away a selected batch on the very press that is
                 // meant to drag it. We can still clear it on mouse-up if no drag occurs.
                 preservesSelectionForDrag = true
             } else {
-                // A normal press acts on this row without selecting it. Selection is
-                // reserved for explicit Shift-click batches.
-                interaction.selectedItemIDs.removeAll()
+                interaction.clickSelection(
+                    item.id,
+                    modifier: .plain,
+                    orderedItemIDs: store.items.map(\.id)
+                )
             }
         } else {
-            interaction.selectedItemIDs.removeAll()
+            interaction.clearSelection()
         }
         dragStartPoint = point
         shelfDragScreenStart = NSEvent.mouseLocation
@@ -550,7 +561,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 return
             }
             if adoptedItems.count > 1 {
-                interaction.selectedItemIDs = Set(adoptedItems.map(\.id))
+                interaction.replaceSelection(
+                    Set(adoptedItems.map(\.id)),
+                    anchorItemID: adoptedItems.first?.id
+                )
             }
             dragItem = item
             startVend(item, event: event)
@@ -567,18 +581,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         }
         guard let item = dragItem else { return }
         let point = convert(event.locationInWindow, from: nil)
-
-        // A selected batch vends as a unit. Moving inside the card must not begin a
-        // one-row reorder first; wait until the pointer exits, then hand the entire
-        // selection to AppKit's dragging session.
-        if interaction.selectedItemIDs.contains(item.id),
-           interaction.selectedItemIDs.count > 1 {
-            let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
-            guard moved >= 4 else { return }
-            guard !bounds.contains(point) else { return }
-            startVend(item, event: event)
-            return
-        }
 
         if !reorderActive {
             let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
@@ -646,6 +648,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             commitReorder()
         } else if shelfDragActive {
             onShelfDragEnded?()
+        } else if let item = pendingCommandSelectionItem {
+            interaction.clickSelection(
+                item.id,
+                modifier: .command,
+                orderedItemIDs: store.items.map(\.id)
+            )
         } else if isFreeMode, store.items.isEmpty, !shelfDragArmed {
             // A plain tap (no drag) on the empty tile body dismisses it — but not on
             // the grab handle, which is a drag affordance, not a close button.
@@ -658,8 +666,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         if preservesSelectionForDrag {
             let point = convert(event.locationInWindow, from: nil)
             let moved = hypot(point.x - dragStartPoint.x, point.y - dragStartPoint.y)
-            if moved < 4 {
-                interaction.selectedItemIDs.removeAll()
+            if moved < 4, let dragItem {
+                interaction.clickSelection(
+                    dragItem.id,
+                    modifier: .plain,
+                    orderedItemIDs: store.items.map(\.id)
+                )
             }
         }
         resetDragState()
@@ -671,7 +683,11 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func beginReorder(_ item: StoredItem) {
         reorderActive = true
         reorderBaseOrder = store.items
-        interaction.draggingItemID = item.id
+        let movingItemIDs = interaction.selectedItemIDs.contains(item.id)
+            ? interaction.selectedItemIDs
+            : [item.id]
+        reorderMovingItemIDs = movingItemIDs
+        interaction.draggingItemIDs = movingItemIDs
         interaction.previewOrder = store.items
     }
 
@@ -685,9 +701,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let raw = Int((point.y - contentTopOffset + contentScrollOffsetY() - rowsTopInset) / pitch)
         let target = max(0, min(count - 1, raw))
 
-        var order = reorderBaseOrder.filter { $0.id != item.id }
-        order.insert(item, at: min(target, order.count))
-        interaction.previewOrder = order
+        let reorderedIDs = ShelfSelectionReorderPolicy.reorder(
+            reorderBaseOrder.map(\.id),
+            moving: reorderMovingItemIDs,
+            draggedItemID: item.id,
+            to: target
+        )
+        let itemsByID = Dictionary(uniqueKeysWithValues: reorderBaseOrder.map { ($0.id, $0) })
+        interaction.previewOrder = reorderedIDs.compactMap { itemsByID[$0] }
     }
 
     private func commitReorder() {
@@ -700,12 +721,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     private func cancelReorder() {
         reorderActive = false
         reorderBaseOrder = []
-        interaction.draggingItemID = nil
+        reorderMovingItemIDs = []
+        interaction.draggingItemIDs = []
         interaction.previewOrder = nil
     }
 
     private func startVend(_ item: StoredItem, event: NSEvent) {
         vendStarted = true
+        pendingCommandSelectionItem = nil
         onVendSessionChange?(true)
         preservesSelectionForDrag = false
         let items = interaction.selectedItemIDs.contains(item.id)
@@ -802,7 +825,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             delivery.dragDidLand()
             guard isMove else { return }
             self.interaction.vendingItemIDs.removeAll()
-            self.interaction.selectedItemIDs.subtract(itemIDs)
+            self.interaction.removeFromSelection(itemIDs)
         }
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
@@ -843,12 +866,14 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         pendingArrival = nil
         pendingRouteActionItem = nil
         preservesSelectionForDrag = false
+        pendingCommandSelectionItem = nil
         reorderActive = false
         vendStarted = false
         shelfDragActive = false
         shelfDragArmed = false
         reorderBaseOrder = []
-        interaction.draggingItemID = nil
+        reorderMovingItemIDs = []
+        interaction.draggingItemIDs = []
         interaction.previewOrder = nil
     }
 
@@ -1156,7 +1181,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             } else {
                 self.store.remove(items)
             }
-            self.interaction.selectedItemIDs.subtract(itemIDs)
+            self.interaction.removeFromSelection(itemIDs)
             self.interaction.deletingItemIDs.subtract(itemIDs)
             guard !emptiesShelf else { return }
             // The next row slides up under the stationary cursor; re-derive hover so it
@@ -1224,7 +1249,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // would only fight the hide animation. The controller reads the live flag.
         interaction.isCardHovered = false
         interaction.grabberRevealProgress = 0
-        interaction.selectedItemIDs.removeAll()
+        interaction.clearSelection()
         interaction.deletingItemIDs.removeAll()
         pendingDeleteItem = nil
         resetDragState()
@@ -1254,7 +1279,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menuTargetItem = nil
             menuTargetFilenameSuggestion = nil
             menuTargetArrival = ghost
-            interaction.selectedItemIDs.removeAll()
+            interaction.clearSelection()
 
             let adopt = NSMenuItem(
                 title: arrivalAdoptMenuTitle(for: ghost),
@@ -1274,10 +1299,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(.separator())
         } else if let item = item(at: point) {
             menuTargetArrival = nil
-            // A context click outside the Shift-selection targets only this row.
-            if !interaction.selectedItemIDs.contains(item.id) {
-                interaction.selectedItemIDs.removeAll()
-            }
+            interaction.contextClickSelection(item.id)
             menuTargetItem = item
             let targets = actionItems(for: item)
 
@@ -1372,7 +1394,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menuTargetItem = nil
             menuTargetFilenameSuggestion = nil
             menuTargetArrival = nil
-            interaction.selectedItemIDs.removeAll()
+            interaction.clearSelection()
         }
 
         let returnAll = NSMenuItem(
@@ -1591,6 +1613,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     @objc private func returnAllMenuAction(_ sender: NSMenuItem) {
         store.returnToOrigin(store.items)
+        interaction.clearSelection()
         menuTargetItem = nil
     }
 

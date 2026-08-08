@@ -32,7 +32,7 @@ enum ShelfHitTestPolicy {
         var isScrollEvent = false
         /// A free-floating shelf's empty tile is dismissed by a plain click on its body.
         var dismissesEmptyFreeShelf = false
-        /// A Shift-selected batch is cleared by clicking off it, so while one exists the
+        /// A selected batch is cleared by clicking off it, so while one exists the
         /// background is a real target instead of a click-eater.
         var hasActiveSelection = false
         /// A press this card already claimed keeps the rest of its gesture, wherever the

@@ -422,10 +422,10 @@ struct ShelfContentView: View {
         .contentShape(Rectangle())
         .scaleEffect(
             interaction.deletingItemIDs.contains(item.id) ? 1.06
-                : (interaction.draggingItemID == item.id ? 1.035
+                : (interaction.draggingItemIDs.contains(item.id) ? 1.035
                     : (interaction.hoveredItemID == item.id ? 1.02 : 1))
         )
-        .opacity(interaction.draggingItemID == item.id ? 0.94 : 1)
+        .opacity(interaction.draggingItemIDs.contains(item.id) ? 0.94 : 1)
         .frame(maxWidth: .infinity, alignment: .center)
         .animation(.easeOut(duration: 0.14), value: interaction.hoveredItemID == item.id)
         .animation(.easeOut(duration: 0.18), value: thumbnail != nil)
@@ -472,7 +472,7 @@ struct ShelfContentView: View {
             theme: theme,
             isHovered: interaction.hoveredItemID == item.id,
             isSelected: interaction.selectedItemIDs.contains(item.id),
-            isDragging: interaction.draggingItemID == item.id,
+            isDragging: interaction.draggingItemIDs.contains(item.id),
             isDeleting: interaction.deletingItemIDs.contains(item.id),
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,
@@ -493,7 +493,7 @@ struct ShelfContentView: View {
     /// Keep the card being manipulated above the rest of the deck even when it was
     /// originally near the back.
     private func stackZIndex(for item: StoredItem, index: Int, rowCount: Int) -> Double {
-        if interaction.draggingItemID == item.id || interaction.deletingItemIDs.contains(item.id) {
+        if interaction.draggingItemIDs.contains(item.id) || interaction.deletingItemIDs.contains(item.id) {
             return Double(rowCount + 1)
         }
         return Double(index)

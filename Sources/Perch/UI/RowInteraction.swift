@@ -12,11 +12,12 @@ final class RowInteractionState: ObservableObject {
     @Published var hoveredItemID: UUID?
     /// The recent-arrival ghost row under the pointer (its offer id), or nil.
     @Published var hoveredArrivalID: String?
-    /// Rows selected for a multi-item vend. Shift-click toggles membership.
-    @Published var selectedItemIDs: Set<UUID> = []
+    /// Rows selected for a multi-item action.
+    @Published private(set) var selectedItemIDs: Set<UUID> = []
+    private var selectionPolicy = ShelfSelectionPolicy<UUID>()
 
-    /// The item currently being dragged to reorder (lifted styling), or nil.
-    @Published var draggingItemID: UUID?
+    /// Items currently being dragged to reorder (lifted styling).
+    @Published var draggingItemIDs: Set<UUID> = []
 
     /// The item mid-delete: its row does a quick affirmative pop (slight scale-up) before
     /// shrinking away. Set for ~110ms between the click and the actual removal.
@@ -60,6 +61,35 @@ final class RowInteractionState: ObservableObject {
     /// True while a free-floating shelf is locked in place: the grab handle hides and
     /// whole-card drags are refused until it's unlocked or closed.
     @Published var isLockedInPlace = false
+
+    func clickSelection(
+        _ itemID: UUID,
+        modifier: ShelfSelectionPolicy<UUID>.Modifier,
+        orderedItemIDs: [UUID]
+    ) {
+        selectionPolicy.click(itemID, modifier: modifier, orderedItemIDs: orderedItemIDs)
+        selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
+
+    func contextClickSelection(_ itemID: UUID) {
+        selectionPolicy.contextClick(itemID)
+        selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
+
+    func replaceSelection(_ itemIDs: Set<UUID>, anchorItemID: UUID? = nil) {
+        selectionPolicy.replaceSelection(itemIDs, anchorItemID: anchorItemID)
+        selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
+
+    func removeFromSelection(_ itemIDs: Set<UUID>) {
+        selectionPolicy.removeFromSelection(itemIDs)
+        selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
+
+    func clearSelection() {
+        selectionPolicy.clearSelection()
+        selectedItemIDs = selectionPolicy.selectedItemIDs
+    }
 }
 
 /// Delete-button layout constants shared between the SwiftUI rendering (`ItemRowView`)
