@@ -2,6 +2,17 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch — a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself, or \"showsWelcome\": true to show updating users the welcome window itself instead of these notes, for a release that changes how Perch introduces itself. Their existing settings are pre-filled, so the window changes nothing they do not change.",
   "versions": [
     {
+      "version": "1.3.1",
+      "headline": "Replacing a transformed file now feels like one action.",
+      "highlights": [
+        {
+          "symbol": "arrow.trianglehead.2.clockwise.rotate.90",
+          "title": "smoother transform replacements",
+          "detail": "The original row now becomes the working state and resolves directly into the converted file, without briefly adding and deleting extra rows."
+        }
+      ]
+    },
+    {
       "version": "1.3.0",
       "headline": "Settings now follow the way your files move.",
       "showsWhatsNew": true,

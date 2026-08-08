@@ -909,7 +909,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     }
 
     var transformPlaceholderCount: Int {
-        interaction.transformPlaceholders.count
+        max(0, visibleRows.count - visibleItems.count)
     }
 
     private var usesStackedRows: Bool {

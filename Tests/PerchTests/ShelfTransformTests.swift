@@ -273,9 +273,21 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         let source = try fixture.addReferencedImage(named: "referenced.png")
         let sourceURL = try XCTUnwrap(source.backingFileURLs().first)
         let original = try Data(contentsOf: sourceURL)
+        var publishedItemIDs: [[UUID]] = []
+        let cancellable = fixture.store.$items.dropFirst().sink { items in
+            publishedItemIDs.append(items.map(\.id))
+        }
 
         fixture.coordinator.perform(.resize(.half), on: [source], outputMode: .replace)
 
+        let placeholder = try XCTUnwrap(fixture.interaction.transformPlaceholders.first)
+        XCTAssertTrue(placeholder.replacesSource)
+        let pendingEntries = fixture.interaction.displayEntries(for: fixture.store.items)
+        XCTAssertEqual(pendingEntries.count, 1)
+        XCTAssertEqual(pendingEntries[0].id, .item(source.id))
+        guard case .transform = pendingEntries[0] else {
+            return XCTFail("Expected the working row to replace its source")
+        }
         let completed = await eventually {
             fixture.store.items.count == 1
                 && fixture.store.items[0].id != source.id
@@ -286,6 +298,10 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: sourceURL.path))
         XCTAssertEqual(try Data(contentsOf: sourceURL), original)
         XCTAssertNil(fixture.store.items[0].metadata.referencedFiles)
+        XCTAssertFalse(publishedItemIDs.contains { ids in
+            ids.contains(source.id) && ids.count > 1
+        })
+        withExtendedLifetime(cancellable) {}
     }
 
     func testReplaceRemovesSuccessfulSourceAndKeepsFailedSource() async throws {

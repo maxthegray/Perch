@@ -21,7 +21,8 @@ struct PasteboardSnapshotter {
         _ pasteboard: NSPasteboard,
         into store: ItemStore,
         insertionIndex: Int? = nil,
-        referencesDroppedFiles: Bool? = nil
+        referencesDroppedFiles: Bool? = nil,
+        insertsIntoStore: Bool = true
     ) throws -> [PasteboardSnapshotResult] {
         let pasteboardItems = pasteboard.pasteboardItems ?? []
         guard !pasteboardItems.isEmpty else { throw PasteboardSnapshotError.noItems }
@@ -73,14 +74,16 @@ struct PasteboardSnapshotter {
                 ))
             }
 
-            if receivers.isEmpty, let insertionIndex {
-                for (offset, result) in results.enumerated() {
-                    store.insert(result.item, at: insertionIndex + offset)
+            if insertsIntoStore {
+                if receivers.isEmpty, let insertionIndex {
+                    for (offset, result) in results.enumerated() {
+                        store.insert(result.item, at: insertionIndex + offset)
+                    }
+                } else if receivers.isEmpty {
+                    // insert-at-front reverses its input, so insert backwards to preserve
+                    // Finder's selection order on the shelf.
+                    for result in results.reversed() { store.insert(result.item, at: nil) }
                 }
-            } else if receivers.isEmpty {
-                // insert-at-front reverses its input, so insert backwards to preserve
-                // Finder's selection order on the shelf.
-                for result in results.reversed() { store.insert(result.item, at: nil) }
             }
             return results
         } catch {
@@ -92,7 +95,8 @@ struct PasteboardSnapshotter {
     func snapshotOwnedFile(
         _ fileURL: URL,
         into store: ItemStore,
-        at insertionIndex: Int
+        at insertionIndex: Int,
+        insertsIntoStore: Bool = true
     ) throws -> StoredItem {
         let pasteboard = NSPasteboard(
             name: NSPasteboard.Name("Perch.Transform.\(UUID().uuidString)")
@@ -106,7 +110,8 @@ struct PasteboardSnapshotter {
             pasteboard,
             into: store,
             insertionIndex: insertionIndex,
-            referencesDroppedFiles: false
+            referencesDroppedFiles: false,
+            insertsIntoStore: insertsIntoStore
         )
         guard let item = results.first?.item else {
             throw PasteboardSnapshotError.noReadableRepresentations

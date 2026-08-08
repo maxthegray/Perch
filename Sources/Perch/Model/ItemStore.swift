@@ -169,6 +169,26 @@ final class ItemStore: ObservableObject {
         return true
     }
 
+    /// Swap a source row for a transformed item in one published update.
+    @discardableResult
+    func replace(_ source: StoredItem, with replacement: StoredItem) -> Bool {
+        guard let index = items.firstIndex(where: { $0.id == source.id }) else {
+            return false
+        }
+        var updatedItems = items
+        updatedItems[index] = replacement
+        items = updatedItems
+
+        do {
+            try FileManager.default.removeItem(at: source.directoryURL)
+        } catch CocoaError.fileNoSuchFile {
+        } catch {
+            NSLog("Perch failed to remove transformed source directory \(source.directoryURL.path): \(error)")
+        }
+        persistIndexOrLogFailure()
+        return true
+    }
+
     /// Rename a one-file shelf item in place and atomically persist its updated
     /// metadata. Name collisions are uniquified instead of overwriting another file.
     @discardableResult

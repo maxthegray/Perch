@@ -50,6 +50,10 @@ final class ShelfTransformCoordinator {
         guard action.isApplicable(to: selection) else { return }
 
         let inputs = Self.inputs(for: items)
+        let expectedInputCountsBySource = Dictionary(
+            grouping: inputs,
+            by: \.sourceItemID
+        ).mapValues(\.count)
         let operationID = UUID()
         let operationDirectory = holding.transformWorkDir.appendingPathComponent(
             operationID.uuidString,
@@ -82,6 +86,8 @@ final class ShelfTransformCoordinator {
                     id: input.id,
                     sourceItemID: input.sourceItemID,
                     title: action.pendingTitle(for: input.filename),
+                    replacesSource: outputMode == .replace
+                        && expectedInputCountsBySource[input.sourceItemID] == 1,
                     state: .pending
                 ))
             }
@@ -97,10 +103,7 @@ final class ShelfTransformCoordinator {
             sourceIDByInputID: Dictionary(uniqueKeysWithValues: inputs.map {
                 ($0.id, $0.sourceItemID)
             }),
-            expectedInputCountsBySource: Dictionary(
-                grouping: inputs,
-                by: \.sourceItemID
-            ).mapValues(\.count)
+            expectedInputCountsBySource: expectedInputCountsBySource
         )
 
         tasks[operationID] = Task { @MainActor [weak self] in
@@ -195,7 +198,23 @@ final class ShelfTransformCoordinator {
                 insertionIndex = min(store.items.count, operation.fallbackInsertionIndex + offset)
             }
             do {
-                _ = try snapshotter.snapshotOwnedFile(fileURL, into: store, at: insertionIndex)
+                let replacesSingleInputSource = operation.outputMode == .replace
+                    && !operation.action.producesAggregateOutput
+                    && operation.expectedInputCountsBySource[sourceItemID] == 1
+                let output = try snapshotter.snapshotOwnedFile(
+                    fileURL,
+                    into: store,
+                    at: insertionIndex,
+                    insertsIntoStore: !replacesSingleInputSource
+                )
+                if replacesSingleInputSource,
+                   let source = operation.sourceItemsByID[sourceItemID] {
+                    if store.replace(source, with: output) {
+                        interaction.removeFromSelection([sourceItemID])
+                    } else {
+                        store.insert(output, at: insertionIndex)
+                    }
+                }
                 operation.insertionOffsetsBySource[sourceItemID, default: 0] += 1
                 if inputID != nil {
                     operation.successfulInputCountsBySource[sourceItemID, default: 0] += 1

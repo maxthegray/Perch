@@ -12,7 +12,28 @@ struct TransformPlaceholder: Identifiable, Equatable {
     let id: UUID
     let sourceItemID: UUID
     let title: String
+    let replacesSource: Bool
     var state: State
+
+    init(
+        id: UUID,
+        sourceItemID: UUID,
+        title: String,
+        replacesSource: Bool = false,
+        state: State
+    ) {
+        self.id = id
+        self.sourceItemID = sourceItemID
+        self.title = title
+        self.replacesSource = replacesSource
+        self.state = state
+    }
+
+    var isPendingReplacement: Bool {
+        guard replacesSource else { return false }
+        if case .pending = state { return true }
+        return false
+    }
 }
 
 enum ShelfDisplayEntryID: Hashable {
@@ -27,7 +48,10 @@ enum ShelfDisplayEntry: Identifiable {
     var id: ShelfDisplayEntryID {
         switch self {
         case let .item(item): return .item(item.id)
-        case let .transform(placeholder): return .transform(placeholder.id)
+        case let .transform(placeholder):
+            return placeholder.isPendingReplacement
+                ? .item(placeholder.sourceItemID)
+                : .transform(placeholder.id)
         }
     }
 }
@@ -152,10 +176,16 @@ final class RowInteractionState: ObservableObject {
         let itemIDs = Set(items.map(\.id))
         var entries: [ShelfDisplayEntry] = []
         for item in items {
-            entries.append(.item(item))
-            entries.append(contentsOf: transformPlaceholders
-                .filter { $0.sourceItemID == item.id }
-                .map(ShelfDisplayEntry.transform))
+            let placeholders = transformPlaceholders.filter { $0.sourceItemID == item.id }
+            if let replacement = placeholders.first(where: \.isPendingReplacement) {
+                entries.append(.transform(replacement))
+                entries.append(contentsOf: placeholders
+                    .filter { $0.id != replacement.id }
+                    .map(ShelfDisplayEntry.transform))
+            } else {
+                entries.append(.item(item))
+                entries.append(contentsOf: placeholders.map(ShelfDisplayEntry.transform))
+            }
         }
         entries.append(contentsOf: transformPlaceholders
             .filter { !itemIDs.contains($0.sourceItemID) }
