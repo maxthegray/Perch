@@ -58,9 +58,10 @@ def as_markdown(entry):
         lines.append(entry["headline"])
         lines.append("")
     for highlight in entry.get("highlights", []):
-        lines.append(f"**{highlight['title']}** — {highlight['detail']}")
+        lines.append(f"{highlight['title']}.")
+        lines.append(highlight["detail"])
         lines.append("")
-    lines.append("Download `Perch.zip`, unzip, and drag Perch to /Applications.")
+    lines.append("Download Perch.zip, unzip it, and move Perch into the Applications folder.")
     lines.append("")
     lines.append(
         "Perch is signed and notarized by Apple, and requires macOS 14 or later. "
