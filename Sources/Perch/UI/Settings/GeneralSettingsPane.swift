@@ -15,6 +15,8 @@ struct GeneralSettingsPane: View {
     @State private var showsSmartPerchPrompt = false
 
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
+    @AppStorage(PerchSettings.transformOutputMode)
+    private var transformOutputMode = ShelfTransformOutputMode.duplicate
 
     var body: some View {
         Form {
@@ -40,6 +42,29 @@ struct GeneralSettingsPane: View {
                     Picker("Drag out", selection: $vendCopies) {
                         Text("Move").tag(false)
                         Text("Copy").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                }
+                .padding(.vertical, 2)
+            }
+
+            Section("Transforms") {
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Output")
+                        Text(transformOutputMode == .duplicate
+                            ? "Keep source rows and add transformed copies."
+                            : "Remove source rows after their transforms succeed.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 12)
+                    Picker("Transform output", selection: $transformOutputMode) {
+                        ForEach(ShelfTransformOutputMode.allCases, id: \.rawValue) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()

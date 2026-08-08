@@ -1543,28 +1543,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let transformItem = NSMenuItem(title: "Transform", action: nil, keyEquivalent: "")
         let transformMenu = NSMenu(title: "Transform")
         transformMenu.autoenablesItems = false
-        let outputMode = ShelfTransformOutputMode.load()
-        let outputItem = NSMenuItem(
-            title: "Output: \(outputMode.displayName)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        let outputMenu = NSMenu(title: "Output")
-        outputMenu.autoenablesItems = false
-        for mode in ShelfTransformOutputMode.allCases {
-            let item = NSMenuItem(
-                title: mode.displayName,
-                action: #selector(setTransformOutputMode(_:)),
-                keyEquivalent: ""
-            )
-            item.target = self
-            item.representedObject = mode.rawValue
-            item.state = mode == outputMode ? .on : .off
-            outputMenu.addItem(item)
-        }
-        outputItem.submenu = outputMenu
-        transformMenu.addItem(outputItem)
-        transformMenu.addItem(.separator())
 
         let convertActions = ImageTransformFormat.allCases.map(ShelfTransformAction.convert)
             .filter { actions.contains($0) }
@@ -1731,12 +1709,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         let items = menuTransformItems
         menuTransformItems = []
         onPerformTransform?(action, items, ShelfTransformOutputMode.load())
-    }
-
-    @objc private func setTransformOutputMode(_ sender: NSMenuItem) {
-        guard let rawValue = sender.representedObject as? String,
-              let mode = ShelfTransformOutputMode(rawValue: rawValue) else { return }
-        mode.save()
     }
 
     /// Waving off a route is a local presentation decision — no file moves, nothing to
