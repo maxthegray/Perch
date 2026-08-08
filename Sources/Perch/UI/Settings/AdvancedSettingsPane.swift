@@ -18,11 +18,11 @@ struct AdvancedSettingsPane: View {
         /// How tall the window should be for this section. Each list is a different
         /// length, and one shared height would mean either a wall of empty space under
         /// Look or Docking falling below the fold in Behavior.
-        var preferredHeight: CGFloat {
+        func preferredHeight(for layout: SettingsLayout) -> CGFloat {
             switch self {
             case .look: return 440
-            case .behavior: return 820
-            case .docking: return 380
+            case .behavior: return layout == .beautiful ? 560 : 820
+            case .docking: return layout == .beautiful ? 280 : 380
             }
         }
     }
@@ -33,6 +33,8 @@ struct AdvancedSettingsPane: View {
 
     @State private var section: Section = .look
 
+    @AppStorage(PerchSettings.settingsLayout)
+    private var settingsLayout = SettingsLayout.beautiful
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
     @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
@@ -62,6 +64,7 @@ struct AdvancedSettingsPane: View {
         }
         .onAppear { onSectionChanged?(section) }
         .onChange(of: section) { _, new in onSectionChanged?(new) }
+        .onChange(of: settingsLayout) { _, _ in onSectionChanged?(section) }
     }
 
     // MARK: - Look
@@ -115,12 +118,14 @@ struct AdvancedSettingsPane: View {
                     caption: "The shelf slides out when the pointer rests at its edge. Off leaves that edge alone until you drag something to it.",
                     isOn: $revealOnHover
                 )
-                behaviorRow(
-                    demo: .revealOnDrag,
-                    title: "Auto-show while dragging",
-                    caption: "The shelf slides out when you start dragging a file.",
-                    isOn: $revealOnDragStart
-                )
+                if settingsLayout == .ugly {
+                    behaviorRow(
+                        demo: .revealOnDrag,
+                        title: "Auto-show while dragging",
+                        caption: "The shelf slides out when you start dragging a file.",
+                        isOn: $revealOnDragStart
+                    )
+                }
                 behaviorRow(
                     demo: .shakeToSummon,
                     title: "Shake to summon",
@@ -140,36 +145,38 @@ struct AdvancedSettingsPane: View {
                 )
             }
 
-            SwiftUI.Section("Recent downloads") {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Offer recent downloads")
-                        Text("Files that just landed in Downloads or on the Desktop appear as dimmed rows — click one to bring it aboard.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            if settingsLayout == .ugly {
+                SwiftUI.Section("Recent downloads") {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Offer recent downloads")
+                            Text("Files that just landed in Downloads or on the Desktop appear as dimmed rows — click one to bring it aboard.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Toggle("Offer recent downloads", isOn: $offerRecentArrivals)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
                     }
-                    Spacer(minLength: 12)
-                    Toggle("Offer recent downloads", isOn: $offerRecentArrivals)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
-            }
 
-            SwiftUI.Section("File storage") {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Leave dropped files in place")
-                        Text("Perch keeps a pointer to each original file instead of moving it into its holding folder.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                SwiftUI.Section("File storage") {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Leave dropped files in place")
+                            Text("Perch keeps a pointer to each original file instead of moving it into its holding folder.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Toggle("Leave dropped files in place", isOn: $referenceDroppedFiles)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
                     }
-                    Spacer(minLength: 12)
-                    Toggle("Leave dropped files in place", isOn: $referenceDroppedFiles)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
         }
         .formStyle(.grouped)
@@ -179,33 +186,127 @@ struct AdvancedSettingsPane: View {
 
     private var dockingForm: some View {
         Form {
-            SwiftUI.Section("Edges") {
-                dockEdgeToggles
-            }
-
-            SwiftUI.Section("Snapping") {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Beside the Dock")
-                        Text(dockSnapCaption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("Beside the Dock", isOn: $snapBesideDock)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+            if settingsLayout == .beautiful {
+                SwiftUI.Section("Locations") {
+                    dockLocationPicker
                 }
-                .padding(.vertical, 2)
-                .onChange(of: snapBesideDock) { _, enabled in
-                    if enabled { DockGeometryReader.requestPermissionIfNeeded() }
+            } else {
+                SwiftUI.Section("Edges") {
+                    dockEdgeToggles
+                }
+
+                SwiftUI.Section("Snapping") {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Beside the Dock")
+                            Text(dockCaption)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Toggle("Beside the Dock", isOn: $snapBesideDock)
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                    .padding(.vertical, 2)
+                    .onChange(of: snapBesideDock) { _, enabled in
+                        if enabled { DockGeometryReader.requestPermissionIfNeeded() }
+                    }
                 }
             }
         }
         .formStyle(.grouped)
     }
 
-    private var dockSnapCaption: String {
+    private var dockLocationPicker: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                locationToggle(
+                    title: "Left",
+                    symbol: "rectangle.leftthird.inset.filled",
+                    isOn: edgeBinding(.left),
+                    disabled: edgeIsLastEnabled(.left)
+                )
+
+                locationToggle(
+                    title: "Notch",
+                    symbol: "rectangle.topthird.inset.filled",
+                    isOn: edgeBinding(.notch),
+                    disabled: edgeIsLastEnabled(.notch)
+                )
+
+                locationToggle(
+                    title: "Right",
+                    symbol: "rectangle.rightthird.inset.filled",
+                    isOn: edgeBinding(.right),
+                    disabled: edgeIsLastEnabled(.right)
+                )
+            }
+
+            Divider()
+
+            HStack(alignment: .center, spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label("Beside the Dock", systemImage: "dock.rectangle")
+                    Text(dockCaption)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer(minLength: 12)
+
+                Toggle("Beside the Dock", isOn: $snapBesideDock)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .onChange(of: snapBesideDock) { _, enabled in
+                        if enabled { DockGeometryReader.requestPermissionIfNeeded() }
+                    }
+            }
+        }
+    }
+
+    private func edgeBinding(_ edge: ShelfEdge) -> Binding<Bool> {
+        Binding(
+            get: { edgeSettings.isEnabled(edge) },
+            set: { _ in edgeSettings.toggle(edge) }
+        )
+    }
+
+    private func edgeIsLastEnabled(_ edge: ShelfEdge) -> Bool {
+        edgeSettings.isEnabled(edge) && edgeSettings.enabledEdges.count == 1
+    }
+
+    @ViewBuilder
+    private var dockEdgeToggles: some View {
+        let entries: [(String, ShelfEdge)] = [
+            ("Left edge", .left), ("Right edge", .right), ("Top (Notch)", .notch)
+        ]
+        ForEach(entries, id: \.1) { title, edge in
+            Toggle(title, isOn: edgeBinding(edge))
+                .disabled(edgeIsLastEnabled(edge))
+        }
+    }
+
+    private func locationToggle(
+        title: String,
+        symbol: String,
+        isOn: Binding<Bool>,
+        disabled: Bool = false
+    ) -> some View {
+        Toggle(isOn: isOn) {
+            Label(title, systemImage: symbol)
+                .font(.subheadline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 3)
+        }
+        .toggleStyle(.button)
+        .buttonStyle(.bordered)
+        .controlSize(.regular)
+        .disabled(disabled)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var dockCaption: String {
         if snapBesideDock, !DockGeometryReader.isTrusted {
             return "Accessibility access is required; enable Perch in System Settings."
         }
@@ -220,22 +321,6 @@ struct AdvancedSettingsPane: View {
                 themeStore.showsLabels = showsNames
             }
         )
-    }
-
-    /// One toggle per dockable edge. The last enabled edge is disabled rather than
-    /// silently refused (EdgeSettings won't drop below one), so the constraint is visible.
-    @ViewBuilder
-    private var dockEdgeToggles: some View {
-        let entries: [(String, ShelfEdge)] = [
-            ("Left edge", .left), ("Right edge", .right), ("Top (Notch)", .notch)
-        ]
-        ForEach(entries, id: \.1) { title, edge in
-            Toggle(title, isOn: Binding(
-                get: { edgeSettings.isEnabled(edge) },
-                set: { _ in edgeSettings.toggle(edge) }
-            ))
-            .disabled(edgeSettings.isEnabled(edge) && edgeSettings.enabledEdges.count == 1)
-        }
     }
 
     private func behaviorRow(

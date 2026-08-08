@@ -16,6 +16,8 @@ enum PerchSettings {
     /// When true, dragging an item out leaves the original on the shelf (copy); otherwise
     /// it is removed once it lands somewhere (move — the default).
     static let vendCopies = "Perch.VendCopies"
+    /// Controls whether Settings uses the visual file flow or its original forms.
+    static let settingsLayout = "Perch.SettingsLayout"
     /// Raw values of the edges the shelf is allowed to dock to.
     static let enabledEdges = "Perch.EnabledEdges"
     /// Set the first time a ⌘-drag actually moves the card. Retires the menu footnote

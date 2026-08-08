@@ -1,12 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Tier one: what someone who just downloaded Perch needs and nothing else.
-///
-/// The bar for appearing here is that getting it wrong would surprise the user about what
-/// happened to their files — which is really just drag-out's move-or-copy. Everything
-/// else, including where the shelf docks, lives in Advanced, and the learning stack lives
-/// further in still.
+/// App-level controls and the entry point for choosing the Settings layout.
 struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
     @ObservedObject var smartPerch: SmartPerchCoordinator
@@ -14,6 +9,8 @@ struct GeneralSettingsPane: View {
     @State private var versionClicks = 0
     @State private var showsSmartPerchPrompt = false
 
+    @AppStorage(PerchSettings.settingsLayout)
+    private var settingsLayout = SettingsLayout.beautiful
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
     @AppStorage(PerchSettings.transformOutputMode)
     private var transformOutputMode = ShelfTransformOutputMode.duplicate
@@ -27,50 +24,61 @@ struct GeneralSettingsPane: View {
                 }
             }
 
-            Section("Drag out") {
-                HStack(alignment: .center, spacing: 12) {
-                    BehaviorDemo(kind: .dragOut, flag: vendCopies)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Drag out")
-                        Text(vendCopies
-                            ? "Dragging an item out leaves it on the shelf."
-                            : "Dragging an item out removes it from the shelf.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            Section("Settings") {
+                Picker("Interface", selection: $settingsLayout) {
+                    ForEach(SettingsLayout.allCases, id: \.rawValue) { layout in
+                        Text(layout.displayName).tag(layout)
                     }
-                    Spacer(minLength: 12)
-                    Picker("Drag out", selection: $vendCopies) {
-                        Text("Move").tag(false)
-                        Text("Copy").tag(true)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
                 }
-                .padding(.vertical, 2)
+                .pickerStyle(.segmented)
             }
 
-            Section("Transforms") {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Output")
-                        Text(transformOutputMode == .duplicate
-                            ? "Keep source rows and add transformed copies."
-                            : "Remove source rows after their transforms succeed.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 12)
-                    Picker("Transform output", selection: $transformOutputMode) {
-                        ForEach(ShelfTransformOutputMode.allCases, id: \.rawValue) { mode in
-                            Text(mode.displayName).tag(mode)
+            if settingsLayout == .ugly {
+                Section("Drag out") {
+                    HStack(alignment: .center, spacing: 12) {
+                        BehaviorDemo(kind: .dragOut, flag: vendCopies)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Drag out")
+                            Text(vendCopies
+                                ? "Dragging an item out leaves it on the shelf."
+                                : "Dragging an item out removes it from the shelf.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
+                        Spacer(minLength: 12)
+                        Picker("Drag out", selection: $vendCopies) {
+                            Text("Move").tag(false)
+                            Text("Copy").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
                     }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
+
+                Section("Transforms") {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Output")
+                            Text(transformOutputMode == .duplicate
+                                ? "Keep source rows and add transformed copies."
+                                : "Remove source rows after their transforms succeed.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 12)
+                        Picker("Transform output", selection: $transformOutputMode) {
+                            ForEach(ShelfTransformOutputMode.allCases, id: \.rawValue) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                    }
+                    .padding(.vertical, 2)
+                }
             }
 
             Section {

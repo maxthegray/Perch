@@ -9,6 +9,7 @@ final class SettingsWindowController {
     /// The pane that carries the appearance controls, and therefore the one that summons
     /// the live preview shelf.
     private static let advancedPaneLabel = "Advanced"
+    private static let fileFlowPaneLabel = "File Flow"
     private static let smartPerchPaneLabel = "Smart Perch"
 
     private let themeStore: ThemeStore
@@ -24,6 +25,7 @@ final class SettingsWindowController {
     private var advancedSection: AdvancedSettingsPane.Section = .look
     /// Held so the pane can be resized when its section changes; the three lists are
     /// different lengths and one shared height suits none of them.
+    private weak var generalPane: NSViewController?
     private weak var advancedPane: NSViewController?
 
     /// Fires when the Appearance pane comes up, with the settings window's frame.
@@ -59,6 +61,7 @@ final class SettingsWindowController {
         }
 
         let tabs = SettingsTabViewController()
+        let settingsLayout = SettingsLayout.load()
         tabs.tabStyle = .toolbar
         tabs.onPaneSelected = { [weak self] label in
             guard let self else { return }
@@ -66,11 +69,16 @@ final class SettingsWindowController {
             self.reconcileAppearancePreview()
         }
 
+        let general = NSHostingController(
+            rootView: GeneralSettingsPane(smartPerch: smartPerch)
+        )
+        generalPane = general
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 560, height: 340),
-            view: GeneralSettingsPane(smartPerch: smartPerch)
+            size: Self.generalPaneSize(for: settingsLayout),
+            controller: general
         )
+        syncFileFlowPane(in: tabs, layout: settingsLayout)
         let advanced = NSHostingController(
             rootView: AdvancedSettingsPane(
                 themeStore: themeStore,
@@ -80,7 +88,7 @@ final class SettingsWindowController {
                     self.advancedSection = section
                     self.advancedPane?.preferredContentSize = NSSize(
                         width: 560,
-                        height: section.preferredHeight
+                        height: section.preferredHeight(for: SettingsLayout.load())
                     )
                     self.reconcileAppearancePreview()
                 }
@@ -89,7 +97,10 @@ final class SettingsWindowController {
         advancedPane = advanced
         addPane(
             to: tabs, label: Self.advancedPaneLabel, symbol: "slider.horizontal.3",
-            size: NSSize(width: 560, height: advancedSection.preferredHeight),
+            size: NSSize(
+                width: 560,
+                height: advancedSection.preferredHeight(for: settingsLayout)
+            ),
             controller: advanced
         )
         syncSmartPerchPane(in: tabs)
@@ -97,7 +108,7 @@ final class SettingsWindowController {
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = tabs.tabViewItems.first?.label ?? "Settings"
-        window.setContentSize(NSSize(width: 560, height: 240))
+        window.setContentSize(Self.generalPaneSize(for: settingsLayout))
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
@@ -117,12 +128,55 @@ final class SettingsWindowController {
         ) { [weak self, weak tabs] _ in
             MainActor.assumeIsolated {
                 guard let self, let tabs else { return }
+                self.syncSettingsLayout(in: tabs)
                 self.syncSmartPerchPane(in: tabs)
             }
         }
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func syncSettingsLayout(in tabs: NSTabViewController) {
+        let layout = SettingsLayout.load()
+        generalPane?.preferredContentSize = Self.generalPaneSize(for: layout)
+        advancedPane?.preferredContentSize = NSSize(
+            width: 560,
+            height: advancedSection.preferredHeight(for: layout)
+        )
+        syncFileFlowPane(in: tabs, layout: layout)
+    }
+
+    private func syncFileFlowPane(
+        in tabs: NSTabViewController,
+        layout: SettingsLayout
+    ) {
+        let existing = tabs.tabViewItems.firstIndex {
+            $0.label == Self.fileFlowPaneLabel
+        }
+
+        guard layout == .beautiful else {
+            guard let existing else { return }
+            if tabs.selectedTabViewItemIndex == existing {
+                tabs.selectedTabViewItemIndex = 0
+            }
+            tabs.removeTabViewItem(tabs.tabViewItems[existing])
+            return
+        }
+
+        guard existing == nil else { return }
+        addPane(
+            to: tabs,
+            label: Self.fileFlowPaneLabel,
+            symbol: "arrow.right",
+            size: NSSize(width: 660, height: 260),
+            at: min(1, tabs.tabViewItems.count),
+            view: FileFlowSettingsPane()
+        )
+    }
+
+    private static func generalPaneSize(for layout: SettingsLayout) -> NSSize {
+        NSSize(width: 560, height: layout == .beautiful ? 300 : 500)
     }
 
     /// Adds or removes the Smart Perch tab to match its access flag.
@@ -178,13 +232,19 @@ final class SettingsWindowController {
     /// Each pane keeps a fixed preferred size so the toolbar tab style can animate the
     /// window between them; taller content scrolls inside its grouped form.
     private func addPane<V: View>(
-        to tabs: NSTabViewController, label: String, symbol: String, size: NSSize, view: V
+        to tabs: NSTabViewController,
+        label: String,
+        symbol: String,
+        size: NSSize,
+        at index: Int? = nil,
+        view: V
     ) {
         addPane(
             to: tabs,
             label: label,
             symbol: symbol,
             size: size,
+            at: index,
             controller: NSHostingController(rootView: view)
         )
     }
@@ -194,6 +254,7 @@ final class SettingsWindowController {
         label: String,
         symbol: String,
         size: NSSize,
+        at index: Int? = nil,
         controller hosting: NSViewController
     ) {
         hosting.preferredContentSize = size
@@ -203,7 +264,11 @@ final class SettingsWindowController {
         let item = NSTabViewItem(viewController: hosting)
         item.label = label
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-        tabs.addTabViewItem(item)
+        if let index {
+            tabs.insertTabViewItem(item, at: index)
+        } else {
+            tabs.addTabViewItem(item)
+        }
     }
 }
 
