@@ -2,26 +2,25 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.2.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.3.0/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.2.0</title>
+      <title>Version 1.3.0</title>
       <description><![CDATA[
-<p>Perch can now transform what you are holding.</p>
+<p>Settings now follow the way your files move.</p>
 <ul>
-  <li><b>transform files without leaving the shelf</b><br>Convert images between JPEG, PNG, HEIC, and TIFF, resize them, or remove metadata. Perch keeps the source by default, and you can choose Replace in Settings.</li>
-  <li><b>merge documents in the right order</b><br>Select PDFs and images, arrange them as document tiles, then merge them into one PDF.</li>
-  <li><b>select and rearrange like Finder</b><br>Command and Shift selection now follow Finder, and selected items move together when you reorder them.</li>
-  <li><b>five recent download sessions</b><br>Perch now offers the five most recent download sessions instead of three.</li>
+  <li><b>see the whole file flow at once</b><br>Drag in, transform, and drag out settings now live together along one path, so it is easier to understand what happens at each step.</li>
+  <li><b>choose shelf locations with less clutter</b><br>Left, Notch, and Right are now one compact control, with Dock snapping directly below.</li>
+  <li><b>keep the original settings if you want them</b><br>Choose Ugly under General to bring back the old forms. Beautiful is the default, and both layouts edit the same preferences.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Sat, 08 Aug 2026 06:33:00 +0000</pubDate>
-      <sparkle:version>1020000</sparkle:version>
-      <sparkle:shortVersionString>1.2.0</sparkle:shortVersionString>
+      <pubDate>Sat, 08 Aug 2026 07:52:31 +0000</pubDate>
+      <sparkle:version>1030000</sparkle:version>
+      <sparkle:shortVersionString>1.3.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.2.0/Perch.zip" sparkle:edSignature="2RvHkrXSAkb0b19zb33OhKIvzWvwBP/f1uTeMIVbZphxi1gQhaW4zmECkYsEyWRTg0r06xzXRfbsnnHC+60HBg==" length="4125326" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.3.0/Perch.zip" sparkle:edSignature="HNNjLWaok9jLy1v7IEfHR866uxLixZldPCzzizaIU0ePYgeG7GbI34HNpAJfd2a9v2HtOgEJeEASYyhI0mT9AA==" length="4172939" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
