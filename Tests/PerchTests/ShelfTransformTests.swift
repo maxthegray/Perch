@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import ImageIO
+import PDFKit
 import UniformTypeIdentifiers
 import XCTest
 @testable import Perch
@@ -21,11 +22,16 @@ final class ShelfTransformTests: XCTestCase {
         let pdfs = ShelfTransformSelection(operandTypes: [[.pdf], [.pdf]])
         let mixed = ShelfTransformSelection(operandTypes: [[.png], [.pdf]])
         let single = ShelfTransformSelection(operandTypes: [[.tiff]])
+        let invalidMerge = ShelfTransformSelection(operandTypes: [[.png], [.plainText]])
 
-        XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: images)), expectedImageActions)
-        XCTAssertEqual(ShelfTransformAction.availableActions(for: pdfs), [.zip])
-        XCTAssertEqual(ShelfTransformAction.availableActions(for: mixed), [.zip])
+        XCTAssertEqual(
+            Set(ShelfTransformAction.availableActions(for: images)),
+            expectedImageActions.union([.mergePDF])
+        )
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: pdfs), [.mergePDF, .zip])
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: mixed), [.mergePDF, .zip])
         XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: single)), expectedImageActions)
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: invalidMerge), [.zip])
     }
 
     func testConversionWritesEveryRequestedTypeWithoutChangingSource() async throws {
@@ -135,6 +141,63 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertNotNil(archive.range(of: Data("two.txt".utf8)))
         XCTAssertEqual(try String(contentsOf: first), "one")
         XCTAssertEqual(try String(contentsOf: second), "two")
+    }
+
+    func testMergePDFPreservesDocumentAndPageOrder() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let first = try fixture.makePDF(named: "first.pdf", pageWidths: [101, 102])
+        let second = try fixture.makePDF(named: "second.pdf", pageWidths: [201])
+        let originals = try [first, second].map { try Data(contentsOf: $0) }
+
+        let events = await collect(
+            .mergePDF,
+            inputs: [fixture.input(for: second), fixture.input(for: first)],
+            outputDirectory: fixture.outputDirectory
+        )
+        let output = try XCTUnwrap(events.outputURL)
+        let document = try XCTUnwrap(PDFDocument(url: output))
+        let widths = (0..<document.pageCount).compactMap {
+            document.page(at: $0)?.bounds(for: .mediaBox).width
+        }
+
+        XCTAssertEqual(widths, [201, 101, 102])
+        XCTAssertEqual(try Data(contentsOf: first), originals[0])
+        XCTAssertEqual(try Data(contentsOf: second), originals[1])
+    }
+
+    func testMergePDFAcceptsMixedImageAndPDFInputs() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let image = try fixture.makeImage(named: "cover.png", type: .png)
+        let pdf = try fixture.makePDF(named: "pages.pdf", pageWidths: [120, 130])
+        let originals = try [image, pdf].map { try Data(contentsOf: $0) }
+
+        let events = await collect(
+            .mergePDF,
+            inputs: [fixture.input(for: image), fixture.input(for: pdf)],
+            outputDirectory: fixture.outputDirectory
+        )
+        let output = try XCTUnwrap(events.outputURL)
+        let document = try XCTUnwrap(PDFDocument(url: output))
+
+        XCTAssertEqual(document.pageCount, 3)
+        XCTAssertEqual(try Data(contentsOf: image), originals[0])
+        XCTAssertEqual(try Data(contentsOf: pdf), originals[1])
+    }
+
+    func testMultiPagePDFPreviewReportsItsDocumentPageCount() throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let pdf = try fixture.makePDF(
+            named: "twelve-pages.pdf",
+            pageWidths: Array(repeating: 120, count: 12)
+        )
+
+        let count = MergePDFPreviewPageCounter.pageCount(for: [pdf])
+
+        XCTAssertEqual(count, 12)
+        XCTAssertEqual(MergePDFPageCountPresentation.badge(for: count), "12 pages")
     }
 
     private var expectedImageActions: Set<ShelfTransformAction> {
@@ -281,6 +344,59 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         })
     }
 
+    func testReplaceMergePDFUsesConfirmedOrderAndRemovesSources() async throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let first = try fixture.addOwnedPDF(named: "first.pdf", pageWidths: [101, 102])
+        let second = try fixture.addOwnedPDF(named: "second.pdf", pageWidths: [201])
+        let sourceDirectories = [first.directoryURL, second.directoryURL]
+
+        fixture.coordinator.perform(
+            .mergePDF,
+            on: [second, first],
+            outputMode: .replace
+        )
+
+        let completed = await eventually {
+            fixture.store.items.count == 1
+                && fixture.interaction.transformPlaceholders.isEmpty
+        }
+        XCTAssertTrue(completed)
+        let output = try XCTUnwrap(fixture.store.items.first?.backingFileURLs().first)
+        XCTAssertEqual(output.lastPathComponent, "Merged.pdf")
+        let document = try XCTUnwrap(PDFDocument(url: output))
+        let widths = (0..<document.pageCount).compactMap {
+            document.page(at: $0)?.bounds(for: .mediaBox).width
+        }
+        XCTAssertEqual(widths, [201, 101, 102])
+        XCTAssertTrue(sourceDirectories.allSatisfy {
+            !FileManager.default.fileExists(atPath: $0.path)
+        })
+    }
+
+    func testCancellingMergeWindowCreatesNoOutputOrWorkingFiles() throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let first = try fixture.addOwnedPDF(named: "first.pdf", pageWidths: [101])
+        let second = try fixture.addOwnedPDF(named: "second.pdf", pageWidths: [201])
+        let windowController = MergePDFWindowController()
+        var didConfirm = false
+        windowController.show(items: [first, second]) { orderedItems in
+            didConfirm = true
+            fixture.coordinator.perform(.mergePDF, on: orderedItems)
+        }
+        let reorderController = try XCTUnwrap(NSApp.windows.first {
+            $0.isVisible && $0.contentViewController is MergePDFViewController
+        }?.contentViewController as? MergePDFViewController)
+
+        reorderController.cancelOperation(nil)
+
+        XCTAssertFalse(didConfirm)
+        XCTAssertEqual(fixture.store.items.map(\.id), [first.id, second.id])
+        XCTAssertTrue(fixture.interaction.transformPlaceholders.isEmpty)
+        XCTAssertTrue(fixture.transformWorkDirectoryIsEmpty)
+    }
+
     func testShutdownClearsTransientRowsAndWorkingFiles() throws {
         let fixture = try CoordinatorFixture()
         defer { fixture.remove() }
@@ -415,6 +531,12 @@ private final class TransformFixture {
         return url
     }
 
+    func makePDF(named name: String, pageWidths: [CGFloat]) throws -> URL {
+        let url = root.appendingPathComponent(name, isDirectory: false)
+        try writeTestPDF(to: url, pageWidths: pageWidths)
+        return url
+    }
+
     func makeImage(
         named name: String,
         type: UTType,
@@ -444,10 +566,9 @@ private final class TransformFixture {
             1,
             nil
         ))
-        var properties: [CFString: Any] = [:]
-        if let orientation {
-            properties[kCGImagePropertyOrientation] = orientation
-        }
+        var properties: [CFString: Any] = [
+            kCGImagePropertyOrientation: orientation ?? 1
+        ]
         if exifAndGPS {
             properties[kCGImagePropertyExifDictionary] = [
                 kCGImagePropertyExifUserComment: "private"
@@ -472,6 +593,10 @@ private final class TransformFixture {
     func remove() {
         try? FileManager.default.removeItem(at: root)
     }
+}
+
+private enum TransformFixtureError: Error {
+    case pdfWriteFailed
 }
 
 @MainActor
@@ -523,6 +648,14 @@ private final class CoordinatorFixture {
         try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
         let sourceURL = sourceDirectory.appendingPathComponent(name, isDirectory: false)
         try Data(contents.utf8).write(to: sourceURL)
+        return try snapshotOwnedFile(sourceURL)
+    }
+
+    func addOwnedPDF(named name: String, pageWidths: [CGFloat]) throws -> StoredItem {
+        let sourceDirectory = root.appendingPathComponent("Sources", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourceDirectory, withIntermediateDirectories: true)
+        let sourceURL = sourceDirectory.appendingPathComponent(name, isDirectory: false)
+        try writeTestPDF(to: sourceURL, pageWidths: pageWidths)
         return try snapshotOwnedFile(sourceURL)
     }
 
@@ -632,4 +765,36 @@ private enum CoordinatorFixtureError: Error {
     case pasteboardWriteFailed
     case snapshotFailed
     case imageWriteFailed
+}
+
+private func writeTestPDF(to url: URL, pageWidths: [CGFloat]) throws {
+    let document = PDFDocument()
+    for width in pageWidths {
+        let pixelWidth = max(1, Int(width.rounded(.up)))
+        guard let context = CGContext(
+            data: nil,
+            width: pixelWidth,
+            height: 300,
+            bitsPerComponent: 8,
+            bytesPerRow: pixelWidth * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else {
+            throw TransformFixtureError.pdfWriteFailed
+        }
+        context.setFillColor(red: 0.9, green: 0.9, blue: 0.92, alpha: 1)
+        context.fill(CGRect(x: 0, y: 0, width: pixelWidth, height: 300))
+        guard let cgImage = context.makeImage(),
+              let page = PDFPage(image: NSImage(
+                cgImage: cgImage,
+                size: NSSize(width: width, height: 300)
+              )) else {
+            throw TransformFixtureError.pdfWriteFailed
+        }
+        page.setBounds(CGRect(x: 0, y: 0, width: width, height: 300), for: .mediaBox)
+        document.insert(page, at: document.pageCount)
+    }
+    guard document.write(to: url) else {
+        throw TransformFixtureError.pdfWriteFailed
+    }
 }

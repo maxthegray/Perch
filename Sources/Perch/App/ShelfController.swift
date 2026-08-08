@@ -16,6 +16,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let ledger: ProvenanceLedger
     private let historyWindow: HistoryWindowController
     private let settingsWindow: SettingsWindowController
+    private let mergePDFWindow: MergePDFWindowController
     private let snapshotter: PasteboardSnapshotter
     private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
@@ -225,6 +226,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             edgeSettings: edgeSettings,
             smartPerch: smartPerch
         )
+        mergePDFWindow = MergePDFWindowController()
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
@@ -354,7 +356,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.fileItemAtSuggestedRoute(item)
         }
         hostView.onPerformTransform = { [weak self] action, items, outputMode in
-            self?.transformCoordinator.perform(action, on: items, outputMode: outputMode)
+            guard let self else { return }
+            if action == .mergePDF {
+                self.mergePDFWindow.show(items: items) { [weak self] orderedItems in
+                    self?.transformCoordinator.perform(
+                        .mergePDF,
+                        on: orderedItems,
+                        outputMode: outputMode
+                    )
+                }
+            } else {
+                self.transformCoordinator.perform(action, on: items, outputMode: outputMode)
+            }
         }
 
         // Grow/shrink the window to the SwiftUI content's actual measured height.

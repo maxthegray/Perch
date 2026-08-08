@@ -1606,6 +1606,12 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 action: .stripMetadata
             ))
         }
+        if actions.contains(.mergePDF) {
+            transformMenu.addItem(transformMenuItem(
+                title: "Merge to PDF…",
+                action: .mergePDF
+            ))
+        }
         if actions.contains(.zip) {
             if transformMenu.items.last?.isSeparatorItem == false {
                 transformMenu.addItem(.separator())

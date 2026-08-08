@@ -56,14 +56,17 @@ final class ShelfTransformCoordinator {
             isDirectory: true
         )
         let orderedSourceIDs = items.map(\.id)
-        let insertionAnchorItemID = orderedSourceIDs.last ?? items[0].id
+        let selectedSourceIDs = Set(orderedSourceIDs)
+        let insertionAnchorItemID = store.items.last {
+            selectedSourceIDs.contains($0.id)
+        }?.id ?? orderedSourceIDs.last ?? items[0].id
         let fallbackInsertionIndex = min(
             store.items.count,
             (store.items.firstIndex { $0.id == insertionAnchorItemID } ?? 0) + 1
         )
 
         let aggregatePlaceholderID: UUID?
-        if action == .zip {
+        if action.producesAggregateOutput {
             let id = UUID()
             aggregatePlaceholderID = id
             interaction.addTransformPlaceholder(TransformPlaceholder(
@@ -240,7 +243,7 @@ final class ShelfTransformCoordinator {
               operation.outputMode == .replace else { return }
 
         let replaceableSourceIDs: Set<UUID>
-        if operation.action == .zip {
+        if operation.action.producesAggregateOutput {
             guard operation.aggregateOutputInserted else { return }
             replaceableSourceIDs = Set(operation.sourceItemsByID.keys).subtracting(
                 operation.failedSourceIDs

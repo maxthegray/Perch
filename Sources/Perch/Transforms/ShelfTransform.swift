@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import ImageIO
+import PDFKit
 import UniformTypeIdentifiers
 
 struct ShelfTransformSelection {
@@ -10,6 +12,14 @@ struct ShelfTransformSelection {
     var containsOnlyImages: Bool {
         !operandTypes.isEmpty && operandTypes.allSatisfy { types in
             !types.isEmpty && types.allSatisfy { $0.conforms(to: .image) }
+        }
+    }
+
+    var containsOnlyPDFsAndImages: Bool {
+        !operandTypes.isEmpty && operandTypes.allSatisfy { types in
+            !types.isEmpty && types.allSatisfy {
+                $0.conforms(to: .pdf) || $0.conforms(to: .image)
+            }
         }
     }
 }
@@ -78,12 +88,13 @@ enum ShelfTransformAction: Hashable, Sendable {
     case convert(ImageTransformFormat)
     case resize(ImageResizePreset)
     case stripMetadata
+    case mergePDF
     case zip
 
     static var menuActions: [ShelfTransformAction] {
         ImageTransformFormat.allCases.map(Self.convert)
             + ImageResizePreset.allCases.map(Self.resize)
-            + [.stripMetadata, .zip]
+            + [.stripMetadata, .mergePDF, .zip]
     }
 
     static func availableActions(for selection: ShelfTransformSelection) -> [ShelfTransformAction] {
@@ -94,9 +105,15 @@ enum ShelfTransformAction: Hashable, Sendable {
         switch self {
         case .convert, .resize, .stripMetadata:
             return selection.containsOnlyImages
+        case .mergePDF:
+            return selection.count >= 2 && selection.containsOnlyPDFsAndImages
         case .zip:
             return selection.count >= 1
         }
+    }
+
+    var producesAggregateOutput: Bool {
+        self == .mergePDF || self == .zip
     }
 
     func pendingTitle(for filename: String) -> String {
@@ -107,6 +124,8 @@ enum ShelfTransformAction: Hashable, Sendable {
             return "Resizing \(filename) to \(preset.displayName)…"
         case .stripMetadata:
             return "Removing metadata from \(filename)…"
+        case .mergePDF:
+            return "Creating Merged.pdf…"
         case .zip:
             return "Creating Archive.zip…"
         }
@@ -134,6 +153,12 @@ enum ShelfTransformAction: Hashable, Sendable {
                 switch self {
                 case .zip:
                     Self.runZip(inputs, outputDirectory: outputDirectory, continuation: continuation)
+                case .mergePDF:
+                    Self.runMergePDF(
+                        inputs,
+                        outputDirectory: outputDirectory,
+                        continuation: continuation
+                    )
                 default:
                     for input in inputs {
                         guard !Task.isCancelled else { return }
@@ -216,8 +241,82 @@ enum ShelfTransformAction: Hashable, Sendable {
                 contentType: contentType
             )
 
-        case .zip:
+        case .mergePDF, .zip:
             throw ShelfTransformError.unsupportedOperation
+        }
+    }
+
+    private static func runMergePDF(
+        _ inputs: [ShelfTransformInput],
+        outputDirectory: URL,
+        continuation: AsyncStream<ShelfTransformEvent>.Continuation
+    ) {
+        let merged = PDFDocument()
+        let fileManager = FileManager.default
+
+        for input in inputs {
+            guard !Task.isCancelled else { return }
+            do {
+                guard fileManager.fileExists(atPath: input.sourceURL.path) else {
+                    throw ShelfTransformError.sourceMissing(input.filename)
+                }
+                let type = input.typeIdentifier.flatMap(UTType.init)
+                    ?? UTType(filenameExtension: input.sourceURL.pathExtension)
+                if type?.conforms(to: .pdf) == true {
+                    guard let source = PDFDocument(url: input.sourceURL),
+                          source.pageCount > 0 else {
+                        throw ShelfTransformError.unreadablePDF(input.filename)
+                    }
+                    let pages = (0..<source.pageCount).compactMap(source.page(at:))
+                    guard pages.count == source.pageCount else {
+                        throw ShelfTransformError.unreadablePDF(input.filename)
+                    }
+                    for page in pages {
+                        merged.insert(page, at: merged.pageCount)
+                    }
+                } else if type?.conforms(to: .image) == true {
+                    guard let image = NSImage(contentsOf: input.sourceURL),
+                          let page = PDFPage(image: image) else {
+                        throw ShelfTransformError.unreadableImage(input.filename)
+                    }
+                    merged.insert(page, at: merged.pageCount)
+                } else {
+                    throw ShelfTransformError.unsupportedMergeInput(input.filename)
+                }
+            } catch {
+                continuation.yield(.failure(
+                    inputID: input.id,
+                    sourceItemID: input.sourceItemID,
+                    filename: input.filename,
+                    message: error.localizedDescription
+                ))
+            }
+        }
+
+        guard merged.pageCount > 0, !Task.isCancelled else {
+            continuation.yield(.aggregateFailure("No available pages could be merged."))
+            return
+        }
+
+        let finalURL = ItemStore.nonClobberingURL(
+            for: outputDirectory.appendingPathComponent("Merged.pdf", isDirectory: false)
+        )
+        let partialURL = outputDirectory.appendingPathComponent(
+            ".Merged-\(UUID().uuidString).partial.pdf",
+            isDirectory: false
+        )
+        defer { try? fileManager.removeItem(at: partialURL) }
+        guard merged.write(to: partialURL) else {
+            continuation.yield(.aggregateFailure(
+                ShelfTransformError.writeFailed("Merged.pdf").localizedDescription
+            ))
+            return
+        }
+        do {
+            try fileManager.moveItem(at: partialURL, to: finalURL)
+            continuation.yield(.output(inputID: nil, fileURL: finalURL))
+        } catch {
+            continuation.yield(.aggregateFailure(error.localizedDescription))
         }
     }
 
@@ -413,6 +512,8 @@ enum ShelfTransformEvent: Sendable {
 private enum ShelfTransformError: LocalizedError {
     case sourceMissing(String)
     case unreadableImage(String)
+    case unreadablePDF(String)
+    case unsupportedMergeInput(String)
     case unwritableFormat(String)
     case writeFailed(String)
     case unsupportedOperation
@@ -423,6 +524,10 @@ private enum ShelfTransformError: LocalizedError {
             return "The source file \(filename) is no longer available."
         case let .unreadableImage(filename):
             return "\(filename) could not be read as an image."
+        case let .unreadablePDF(filename):
+            return "\(filename) could not be read as a PDF."
+        case let .unsupportedMergeInput(filename):
+            return "\(filename) is not an image or PDF."
         case let .unwritableFormat(type):
             return "ImageIO cannot write the source format \(type)."
         case let .writeFailed(filename):
