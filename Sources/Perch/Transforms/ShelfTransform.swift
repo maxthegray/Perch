@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Foundation
 import ImageIO
 import PDFKit
@@ -20,6 +21,20 @@ struct ShelfTransformSelection {
             !types.isEmpty && types.allSatisfy {
                 $0.conforms(to: .pdf) || $0.conforms(to: .image)
             }
+        }
+    }
+
+    var containsOnlyOptimizableImages: Bool {
+        !operandTypes.isEmpty && operandTypes.allSatisfy { types in
+            !types.isEmpty && types.allSatisfy {
+                $0.conforms(to: .jpeg) || $0.conforms(to: .heic)
+            }
+        }
+    }
+
+    var containsOnlyVideos: Bool {
+        !operandTypes.isEmpty && operandTypes.allSatisfy { types in
+            !types.isEmpty && types.allSatisfy { $0.conforms(to: .movie) }
         }
     }
 }
@@ -84,17 +99,36 @@ enum ImageResizePreset: Int, CaseIterable, Sendable {
     var displayName: String { "\(rawValue)%" }
 }
 
+enum ImageOptimizationPreset: Int, CaseIterable, Sendable {
+    case smaller = 55
+    case balanced = 72
+    case highQuality = 88
+
+    var quality: Double { Double(rawValue) / 100 }
+
+    var displayName: String {
+        switch self {
+        case .smaller: return "Smaller"
+        case .balanced: return "Balanced"
+        case .highQuality: return "High Quality"
+        }
+    }
+}
+
 enum ShelfTransformAction: Hashable, Sendable {
     case convert(ImageTransformFormat)
     case resize(ImageResizePreset)
+    case optimize(ImageOptimizationPreset)
     case stripMetadata
+    case extractAudio
     case mergePDF
     case zip
 
     static var menuActions: [ShelfTransformAction] {
         ImageTransformFormat.allCases.map(Self.convert)
             + ImageResizePreset.allCases.map(Self.resize)
-            + [.stripMetadata, .mergePDF, .zip]
+            + ImageOptimizationPreset.allCases.map(Self.optimize)
+            + [.stripMetadata, .extractAudio, .mergePDF, .zip]
     }
 
     static func availableActions(for selection: ShelfTransformSelection) -> [ShelfTransformAction] {
@@ -105,6 +139,10 @@ enum ShelfTransformAction: Hashable, Sendable {
         switch self {
         case .convert, .resize, .stripMetadata:
             return selection.containsOnlyImages
+        case .optimize:
+            return selection.containsOnlyOptimizableImages
+        case .extractAudio:
+            return selection.containsOnlyVideos
         case .mergePDF:
             return selection.count >= 2 && selection.containsOnlyPDFsAndImages
         case .zip:
@@ -122,8 +160,12 @@ enum ShelfTransformAction: Hashable, Sendable {
             return "Converting \(filename) to \(format.displayName)…"
         case let .resize(preset):
             return "Resizing \(filename) to \(preset.displayName)…"
+        case let .optimize(preset):
+            return "Optimizing \(filename) (\(preset.displayName))…"
         case .stripMetadata:
             return "Removing metadata from \(filename)…"
+        case .extractAudio:
+            return "Extracting audio from \(filename)…"
         case .mergePDF:
             return "Creating Merged.pdf…"
         case .zip:
@@ -159,6 +201,26 @@ enum ShelfTransformAction: Hashable, Sendable {
                         outputDirectory: outputDirectory,
                         continuation: continuation
                     )
+                case .extractAudio:
+                    for input in inputs {
+                        guard !Task.isCancelled else { return }
+                        do {
+                            let output = try await Self.extractAudio(
+                                from: input,
+                                outputDirectory: outputDirectory
+                            )
+                            continuation.yield(.output(inputID: input.id, fileURL: output))
+                        } catch is CancellationError {
+                            return
+                        } catch {
+                            continuation.yield(.failure(
+                                inputID: input.id,
+                                sourceItemID: input.sourceItemID,
+                                filename: input.filename,
+                                message: error.localizedDescription
+                            ))
+                        }
+                    }
                 default:
                     for input in inputs {
                         guard !Task.isCancelled else { return }
@@ -226,6 +288,20 @@ enum ShelfTransformAction: Hashable, Sendable {
                 contentType: contentType
             )
 
+        case let .optimize(preset):
+            let contentType = try writableSourceType(source, filename: input.filename)
+            guard contentType == UTType.jpeg.identifier
+                    || contentType == UTType.heic.identifier else {
+                throw ShelfTransformError.unsupportedOptimizationFormat(input.filename)
+            }
+            let desired = outputDirectory.appendingPathComponent(input.filename, isDirectory: false)
+            return try writeFromSource(
+                source,
+                to: ItemStore.nonClobberingURL(for: desired),
+                contentType: contentType,
+                options: [kCGImageDestinationLossyCompressionQuality: preset.quality]
+            )
+
         case .stripMetadata:
             let dimensions = try sourceDimensions(source, filename: input.filename)
             let image = try orientedThumbnail(
@@ -241,9 +317,64 @@ enum ShelfTransformAction: Hashable, Sendable {
                 contentType: contentType
             )
 
-        case .mergePDF, .zip:
+        case .extractAudio, .mergePDF, .zip:
             throw ShelfTransformError.unsupportedOperation
         }
+    }
+
+    private static func extractAudio(
+        from input: ShelfTransformInput,
+        outputDirectory: URL
+    ) async throws -> URL {
+        guard FileManager.default.fileExists(atPath: input.sourceURL.path) else {
+            throw ShelfTransformError.sourceMissing(input.filename)
+        }
+        let asset = AVURLAsset(url: input.sourceURL)
+        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
+        guard !audioTracks.isEmpty else {
+            throw ShelfTransformError.noAudioTrack(input.filename)
+        }
+        guard let exporter = AVAssetExportSession(
+            asset: asset,
+            presetName: AVAssetExportPresetAppleM4A
+        ), exporter.supportedFileTypes.contains(.m4a) else {
+            throw ShelfTransformError.audioExportUnavailable(input.filename)
+        }
+
+        let base = input.sourceURL.deletingPathExtension().lastPathComponent
+        let finalURL = ItemStore.nonClobberingURL(
+            for: outputDirectory.appendingPathComponent("\(base).m4a", isDirectory: false)
+        )
+        let partialURL = outputDirectory.appendingPathComponent(
+            ".\(base)-\(UUID().uuidString).partial.m4a",
+            isDirectory: false
+        )
+        defer { try? FileManager.default.removeItem(at: partialURL) }
+
+        exporter.outputURL = partialURL
+        exporter.outputFileType = .m4a
+        let exporterBox = SendableAudioExporter(exporter)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                exporterBox.session.exportAsynchronously {
+                    switch exporterBox.session.status {
+                    case .completed:
+                        continuation.resume()
+                    case .cancelled:
+                        continuation.resume(throwing: CancellationError())
+                    default:
+                        continuation.resume(throwing:
+                            exporterBox.session.error
+                                ?? ShelfTransformError.audioExportFailed(input.filename)
+                        )
+                    }
+                }
+            }
+        } onCancel: {
+            exporterBox.session.cancelExport()
+        }
+        try FileManager.default.moveItem(at: partialURL, to: finalURL)
+        return finalURL
     }
 
     private static func runMergePDF(
@@ -495,6 +626,14 @@ enum ShelfTransformAction: Hashable, Sendable {
     }
 }
 
+private final class SendableAudioExporter: @unchecked Sendable {
+    let session: AVAssetExportSession
+
+    init(_ session: AVAssetExportSession) {
+        self.session = session
+    }
+}
+
 struct ShelfTransformInput: Sendable {
     let id: UUID
     let sourceItemID: UUID
@@ -514,6 +653,10 @@ private enum ShelfTransformError: LocalizedError {
     case unreadableImage(String)
     case unreadablePDF(String)
     case unsupportedMergeInput(String)
+    case unsupportedOptimizationFormat(String)
+    case noAudioTrack(String)
+    case audioExportUnavailable(String)
+    case audioExportFailed(String)
     case unwritableFormat(String)
     case writeFailed(String)
     case unsupportedOperation
@@ -528,6 +671,14 @@ private enum ShelfTransformError: LocalizedError {
             return "\(filename) could not be read as a PDF."
         case let .unsupportedMergeInput(filename):
             return "\(filename) is not an image or PDF."
+        case let .unsupportedOptimizationFormat(filename):
+            return "\(filename) is not a JPEG or HEIC image."
+        case let .noAudioTrack(filename):
+            return "\(filename) does not contain an audio track."
+        case let .audioExportUnavailable(filename):
+            return "Audio cannot be extracted from \(filename) as M4A."
+        case let .audioExportFailed(filename):
+            return "The audio in \(filename) could not be extracted."
         case let .unwritableFormat(type):
             return "ImageIO cannot write the source format \(type)."
         case let .writeFailed(filename):

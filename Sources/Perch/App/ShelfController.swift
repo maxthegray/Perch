@@ -146,6 +146,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var arrivalsCancellable: AnyCancellable?
     private var arrivalNamesCancellable: AnyCancellable?
     private var transformPlaceholdersCancellable: AnyCancellable?
+    private var transformResultDetailsCancellable: AnyCancellable?
     /// Coalesces asynchronous OCR/arrival label changes so the text can settle before
     /// the outer panel smoothly adopts its new content-hugging width.
     private var asynchronousNameResizeTask: Task<Void, Never>?
@@ -654,6 +655,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
                 self?.transformPlaceholdersDidChange()
+            }
+        transformResultDetailsCancellable = hostView.interaction.$transformResultDetails
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.resizeToFitVisible()
             }
 
     }
@@ -2315,7 +2322,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         if sizingItems.isEmpty && hostView.transformPlaceholderCount == 0 && !showsGhosts {
             return Self.emptyCardWidth * themeStore.widthScale
         }
-        guard themeStore.showsLabels else { return compactCardWidth * themeStore.widthScale }
+        let resultDetails = hostView.interaction.transformResultDetails
+        guard themeStore.showsLabels || !resultDetails.isEmpty else {
+            return compactCardWidth * themeStore.widthScale
+        }
 
         let maximumListWidth = (edge == .notch ? 360 : 300)
             * themeStore.widthScale
@@ -2323,6 +2333,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         var usesStabilizedNameWidth = false
         let itemRows = sizingItems.compactMap { item
             -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
+            guard themeStore.showsLabels || resultDetails[item.id] != nil else {
+                return nil
+            }
             let name = smartPerch.smartNames.presentation(
                 for: item.id,
                 originalTitle: item.metadata.title
@@ -2333,11 +2346,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             return (
                 title: name.title,
-                showsAction: theme.showsDeleteButton,
-                showsRouteAction: smartPerch.routeSuggestions.suggestion(for: item.id) != nil
+                showsAction: theme.showsDeleteButton && themeStore.showsLabels,
+                showsRouteAction: themeStore.showsLabels
+                    && smartPerch.routeSuggestions.suggestion(for: item.id) != nil
             )
         }
-        let ghostRows = showsGhosts ? arrivals.visibleGhosts.compactMap {
+        let ghostRows = showsGhosts && themeStore.showsLabels ? arrivals.visibleGhosts.compactMap {
             ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
             if smartPerch.smartNames.isEnabled,
                ghost.offer?.usesStableScreenshotName == true {
@@ -2359,11 +2373,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 showsRouteAction: false
             )
         } : []
-        let transformRows = hostView.interaction.transformPlaceholders.map {
+        let transformRows = themeStore.showsLabels ? hostView.interaction.transformPlaceholders.map {
             (title: $0.title, showsAction: false, showsRouteAction: false)
+        } : []
+        let resultRows = resultDetails.values.map {
+            (title: $0, showsAction: false, showsRouteAction: false)
         }
         let contentWidth = RowMetrics.contentHuggingCardWidth(
-            rows: itemRows + transformRows + ghostRows,
+            rows: itemRows + transformRows + resultRows + ghostRows,
             theme: theme,
             maximumWidth: maximumListWidth
         )

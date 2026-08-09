@@ -11,6 +11,7 @@ final class ShelfTransformCoordinator {
         let insertionAnchorItemID: UUID
         let fallbackInsertionIndex: Int
         let sourceItemsByID: [UUID: StoredItem]
+        let inputsByID: [UUID: ShelfTransformInput]
         let sourceIDByInputID: [UUID: UUID]
         let expectedInputCountsBySource: [UUID: Int]
         var insertionOffsetsBySource: [UUID: Int] = [:]
@@ -100,6 +101,7 @@ final class ShelfTransformCoordinator {
             insertionAnchorItemID: insertionAnchorItemID,
             fallbackInsertionIndex: fallbackInsertionIndex,
             sourceItemsByID: Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) }),
+            inputsByID: Dictionary(uniqueKeysWithValues: inputs.map { ($0.id, $0) }),
             sourceIDByInputID: Dictionary(uniqueKeysWithValues: inputs.map {
                 ($0.id, $0.sourceItemID)
             }),
@@ -129,6 +131,7 @@ final class ShelfTransformCoordinator {
         tasks.removeAll()
         operations.removeAll()
         interaction.clearTransformPlaceholders()
+        interaction.clearTransformResultDetails()
         try? FileManager.default.removeItem(at: holding.transformWorkDir)
     }
 
@@ -198,6 +201,15 @@ final class ShelfTransformCoordinator {
                 insertionIndex = min(store.items.count, operation.fallbackInsertionIndex + offset)
             }
             do {
+                let resultDetail = inputID.flatMap { inputID in
+                    operation.inputsByID[inputID].flatMap { input in
+                        Self.optimizationResultDetail(
+                            for: operation.action,
+                            sourceURL: input.sourceURL,
+                            outputURL: fileURL
+                        )
+                    }
+                }
                 let replacesSingleInputSource = operation.outputMode == .replace
                     && !operation.action.producesAggregateOutput
                     && operation.expectedInputCountsBySource[sourceItemID] == 1
@@ -214,6 +226,9 @@ final class ShelfTransformCoordinator {
                     } else {
                         store.insert(output, at: insertionIndex)
                     }
+                }
+                if let resultDetail {
+                    interaction.showTransformResultDetail(resultDetail, for: output.id)
                 }
                 operation.insertionOffsetsBySource[sourceItemID, default: 0] += 1
                 if inputID != nil {
@@ -282,6 +297,40 @@ final class ShelfTransformCoordinator {
         guard !replaceableItems.isEmpty else { return }
         store.remove(replaceableItems)
         interaction.removeFromSelection(Set(replaceableItems.map(\.id)))
+    }
+
+    private static func optimizationResultDetail(
+        for action: ShelfTransformAction,
+        sourceURL: URL,
+        outputURL: URL
+    ) -> String? {
+        guard case .optimize = action,
+              let sourceBytes = fileSize(at: sourceURL),
+              let outputBytes = fileSize(at: outputURL),
+              sourceBytes > 0 else { return nil }
+
+        let before = ByteCountFormatter.string(
+            fromByteCount: sourceBytes,
+            countStyle: .file
+        )
+        let after = ByteCountFormatter.string(
+            fromByteCount: outputBytes,
+            countStyle: .file
+        )
+        let change = Int((abs(Double(outputBytes - sourceBytes)) / Double(sourceBytes) * 100).rounded())
+        if change == 0 {
+            return "\(before) → \(after) · same size"
+        }
+        return outputBytes < sourceBytes
+            ? "\(before) → \(after) · \(change)% smaller"
+            : "\(before) → \(after) · \(change)% larger"
+    }
+
+    private static func fileSize(at url: URL) -> Int64? {
+        guard let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize else {
+            return nil
+        }
+        return Int64(size)
     }
 
     private func prepareWorkDirectory() {

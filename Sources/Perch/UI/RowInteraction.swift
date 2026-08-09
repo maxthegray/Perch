@@ -82,6 +82,8 @@ final class RowInteractionState: ObservableObject {
     @Published var vendingItemIDs: Set<UUID> = []
     /// Transform rows are presentation-only and never enter ItemStore or index.json.
     @Published private(set) var transformPlaceholders: [TransformPlaceholder] = []
+    @Published private(set) var transformResultDetails: [UUID: String] = [:]
+    private var transformResultClearTasks: [UUID: Task<Void, Never>] = [:]
     /// While a reorder drag is in progress, the live previewed ordering the rows should
     /// render in. Nil when not reordering (rows follow the store's order).
     @Published var previewOrder: [StoredItem]?
@@ -170,6 +172,23 @@ final class RowInteractionState: ObservableObject {
             if case .failed = $0.state { return true }
             return false
         }
+    }
+
+    func showTransformResultDetail(_ detail: String, for itemID: UUID) {
+        transformResultDetails[itemID] = detail
+        transformResultClearTasks[itemID]?.cancel()
+        transformResultClearTasks[itemID] = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            self?.transformResultDetails[itemID] = nil
+            self?.transformResultClearTasks[itemID] = nil
+        }
+    }
+
+    func clearTransformResultDetails() {
+        for task in transformResultClearTasks.values { task.cancel() }
+        transformResultClearTasks.removeAll()
+        transformResultDetails.removeAll()
     }
 
     func displayEntries(for items: [StoredItem]) -> [ShelfDisplayEntry] {

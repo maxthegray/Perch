@@ -953,7 +953,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private var usesContentHuggingRows: Bool {
         !usesStackedRows
-            && themeStore.showsLabels
+            && (themeStore.showsLabels || !interaction.transformResultDetails.isEmpty)
             && (!visibleRows.isEmpty || !ghostRows.isEmpty)
     }
 
@@ -1578,10 +1578,34 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             transformMenu.addItem(resizeItem)
         }
 
+        let optimizeActions = ImageOptimizationPreset.allCases.map(ShelfTransformAction.optimize)
+            .filter { actions.contains($0) }
+        if !optimizeActions.isEmpty {
+            let optimizeItem = NSMenuItem(title: "Optimize Image", action: nil, keyEquivalent: "")
+            let optimizeMenu = NSMenu(title: "Optimize Image")
+            optimizeMenu.autoenablesItems = false
+            for preset in ImageOptimizationPreset.allCases
+                where optimizeActions.contains(.optimize(preset)) {
+                optimizeMenu.addItem(transformMenuItem(
+                    title: "\(preset.displayName) (\(preset.rawValue)% quality)",
+                    action: .optimize(preset)
+                ))
+            }
+            optimizeItem.toolTip = "Lossy compression that keeps the current JPEG or HEIC format."
+            optimizeItem.submenu = optimizeMenu
+            transformMenu.addItem(optimizeItem)
+        }
+
         if actions.contains(.stripMetadata) {
             transformMenu.addItem(transformMenuItem(
                 title: "Remove Metadata",
                 action: .stripMetadata
+            ))
+        }
+        if actions.contains(.extractAudio) {
+            transformMenu.addItem(transformMenuItem(
+                title: "Extract Audio",
+                action: .extractAudio
             ))
         }
         if actions.contains(.mergePDF) {

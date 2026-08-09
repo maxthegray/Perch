@@ -483,6 +483,7 @@ struct ShelfContentView: View {
         showsSeparator: Bool,
         maximumWidth: CGFloat
     ) -> some View {
+        let transformResultDetail = interaction.transformResultDetails[item.id]
         let name = smartNames.presentation(
             for: item.id,
             originalTitle: item.metadata.title
@@ -496,10 +497,12 @@ struct ShelfContentView: View {
             isDeleting: interaction.deletingItemIDs.contains(item.id),
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,
-            showsLabels: themeStore.showsLabels,
+            showsLabels: themeStore.showsLabels || transformResultDetail != nil,
             maximumWidth: maximumWidth,
             displayTitle: name.title,
             isNameAnalysisPending: name.isAnalyzing,
+            transformResultDetail: transformResultDetail,
+            showsTrailingActions: themeStore.showsLabels,
             learnedDestinationName: routeSuggestions.suggestion(for: item.id).map {
                 RouteDestinationPresentation.shortName(for: $0.destination)
             }
@@ -615,7 +618,7 @@ struct ShelfContentView: View {
     /// width by the Width slider again would recreate a narrow centered lane inside it.
     private var rowLaneWidthScale: CGFloat {
         !themeStore.stacksItems
-            && themeStore.showsLabels
+            && (themeStore.showsLabels || !interaction.transformResultDetails.isEmpty)
             && (!store.items.isEmpty
                 || !interaction.transformPlaceholders.isEmpty
                 || !ghostRows.isEmpty)

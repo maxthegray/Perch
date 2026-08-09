@@ -31,6 +31,8 @@ struct ItemRowView: View {
     /// generic label and later crossfade to the generated name in the same geometry.
     let displayTitle: String
     let isNameAnalysisPending: Bool
+    let transformResultDetail: String?
+    let showsTrailingActions: Bool
     /// Short name of the folder this item has repeatedly been dragged to, if Perch has
     /// learned one. Its presence adds the file-it button and the destination subtitle.
     let learnedDestinationName: String?
@@ -92,6 +94,7 @@ struct ItemRowView: View {
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
         .animation(.easeOut(duration: 0.18), value: displayTitle)
         .animation(.easeOut(duration: 0.18), value: learnedDestinationName)
+        .animation(.easeOut(duration: 0.18), value: transformResultDetail)
         .animation(.easeOut(duration: 0.18), value: isNameAnalysisPending)
         .animation(.easeOut(duration: 0.16), value: isDragging)
         .animation(.spring(response: 0.16, dampingFraction: 0.5), value: isDeleting)
@@ -143,7 +146,7 @@ struct ItemRowView: View {
     /// keeps the corner position muscle memory already points at.
     @ViewBuilder
     private var trailingActions: some View {
-        if theme.showsDeleteButton && showsLabels && isHovered {
+        if theme.showsDeleteButton && showsLabels && showsTrailingActions && isHovered {
             HStack(spacing: RowMetrics.trailingActionSpacing) {
                 if learnedDestinationName != nil {
                     circularAction(symbol: "folder", isProminent: true)
@@ -194,6 +197,9 @@ struct ItemRowView: View {
     private var displayedSubtitle: String {
         if isNameAnalysisPending {
             return "Finding a useful name…"
+        }
+        if let transformResultDetail {
+            return transformResultDetail
         }
         if let learnedDestinationName {
             return "→ \(learnedDestinationName)"

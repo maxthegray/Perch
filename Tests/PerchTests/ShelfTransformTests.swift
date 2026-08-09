@@ -1,4 +1,5 @@
 import Combine
+import AVFoundation
 import Foundation
 import ImageIO
 import PDFKit
@@ -23,6 +24,9 @@ final class ShelfTransformTests: XCTestCase {
         let mixed = ShelfTransformSelection(operandTypes: [[.png], [.pdf]])
         let single = ShelfTransformSelection(operandTypes: [[.tiff]])
         let invalidMerge = ShelfTransformSelection(operandTypes: [[.png], [.plainText]])
+        let optimizableImages = ShelfTransformSelection(operandTypes: [[.jpeg], [.heic]])
+        let videos = ShelfTransformSelection(operandTypes: [[.mpeg4Movie], [.quickTimeMovie]])
+        let audio = ShelfTransformSelection(operandTypes: [[.mpeg4Audio]])
 
         XCTAssertEqual(
             Set(ShelfTransformAction.availableActions(for: images)),
@@ -32,6 +36,14 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertEqual(ShelfTransformAction.availableActions(for: mixed), [.mergePDF, .zip])
         XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: single)), expectedImageActions)
         XCTAssertEqual(ShelfTransformAction.availableActions(for: invalidMerge), [.zip])
+        XCTAssertEqual(
+            Set(ShelfTransformAction.availableActions(for: optimizableImages)),
+            expectedImageActions
+                .union(ImageOptimizationPreset.allCases.map(ShelfTransformAction.optimize))
+                .union([.mergePDF])
+        )
+        XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: videos)), [.extractAudio, .zip])
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: audio), [.zip])
     }
 
     func testConversionWritesEveryRequestedTypeWithoutChangingSource() async throws {
@@ -80,6 +92,82 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertEqual((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, 1)
         XCTAssertEqual((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, 2)
         XCTAssertNotEqual((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 6)
+    }
+
+    func testOptimizePreservesJPEGAndReducesAHighQualitySource() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let source = try fixture.makeImage(
+            named: "photo.jpg",
+            type: .jpeg,
+            width: 640,
+            height: 480,
+            compressionQuality: 1,
+            patterned: true
+        )
+        let original = try Data(contentsOf: source)
+
+        let events = await collect(
+            .optimize(.balanced),
+            input: fixture.input(for: source),
+            outputDirectory: fixture.outputDirectory
+        )
+        let output = try XCTUnwrap(events.outputURL)
+        let outputSource = try XCTUnwrap(CGImageSourceCreateWithURL(output as CFURL, nil))
+
+        XCTAssertEqual(output.lastPathComponent, source.lastPathComponent)
+        XCTAssertEqual(CGImageSourceGetType(outputSource) as String?, UTType.jpeg.identifier)
+        XCTAssertLessThan(try Data(contentsOf: output).count, original.count)
+        XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
+    func testOptimizeSupportsEveryPresetForHEIC() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let source = try fixture.makeImage(
+            named: "photo.heic",
+            type: .heic,
+            width: 320,
+            height: 240,
+            compressionQuality: 1,
+            patterned: true
+        )
+
+        for preset in ImageOptimizationPreset.allCases {
+            let outputDirectory = fixture.outputDirectory.appendingPathComponent(
+                String(preset.rawValue),
+                isDirectory: true
+            )
+            let events = await collect(
+                .optimize(preset),
+                input: fixture.input(for: source),
+                outputDirectory: outputDirectory
+            )
+            let output = try XCTUnwrap(events.outputURL)
+            let outputSource = try XCTUnwrap(CGImageSourceCreateWithURL(output as CFURL, nil))
+
+            XCTAssertEqual(CGImageSourceGetType(outputSource) as String?, UTType.heic.identifier)
+        }
+    }
+
+    func testExtractAudioWritesM4AWithoutChangingSource() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let source = try fixture.makeAudio(named: "clip.wav")
+        let original = try Data(contentsOf: source)
+
+        let events = await collect(
+            .extractAudio,
+            input: fixture.input(for: source),
+            outputDirectory: fixture.outputDirectory
+        )
+        let output = try XCTUnwrap(events.outputURL)
+        let audioTracks = try await AVURLAsset(url: output).loadTracks(withMediaType: .audio)
+
+        XCTAssertEqual(output.lastPathComponent, "clip.m4a")
+        XCTAssertEqual(output.pathExtension, "m4a")
+        XCTAssertFalse(audioTracks.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: source), original)
     }
 
     func testStripMetadataRemovesEXIFAndGPSWithoutChangingSource() async throws {
@@ -267,6 +355,29 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         XCTAssertTrue(cleanedUp)
     }
 
+    func testOptimizeShowsTheExactSizeChangeOnTheOutputRow() async throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let source = try fixture.addOwnedImage(named: "photo.jpg")
+
+        fixture.coordinator.perform(.optimize(.balanced), on: [source])
+
+        let completed = await eventually {
+            fixture.store.items.count == 2
+                && fixture.interaction.transformPlaceholders.isEmpty
+                && fixture.interaction.transformResultDetails.count == 1
+        }
+        XCTAssertTrue(completed)
+        let output = fixture.store.items[1]
+        let detail = try XCTUnwrap(fixture.interaction.transformResultDetails[output.id])
+        XCTAssertTrue(detail.contains("→"))
+        XCTAssertTrue(
+            detail.contains("smaller")
+                || detail.contains("larger")
+                || detail.contains("same size")
+        )
+    }
+
     func testReplaceRemovesReferenceRowWithoutTouchingExternalSource() async throws {
         let fixture = try CoordinatorFixture()
         defer { fixture.remove() }
@@ -424,10 +535,12 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
             title: "Working",
             state: .pending
         ))
+        fixture.interaction.showTransformResultDetail("1 MB → 500 KB", for: UUID())
 
         fixture.coordinator.shutDown()
 
         XCTAssertTrue(fixture.interaction.transformPlaceholders.isEmpty)
+        XCTAssertTrue(fixture.interaction.transformResultDetails.isEmpty)
         XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.holding.transformWorkDir.path))
     }
 
@@ -559,7 +672,9 @@ private final class TransformFixture {
         width: Int = 8,
         height: Int = 6,
         orientation: Int? = nil,
-        exifAndGPS: Bool = false
+        exifAndGPS: Bool = false,
+        compressionQuality: Double? = nil,
+        patterned: Bool = false
     ) throws -> URL {
         let bytesPerRow = width * 4
         let colorSpace = CGColorSpaceCreateDeviceRGB()
@@ -572,8 +687,22 @@ private final class TransformFixture {
             space: colorSpace,
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
         ))
-        context.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
-        context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        if patterned {
+            for y in stride(from: 0, to: height, by: 8) {
+                for x in stride(from: 0, to: width, by: 8) {
+                    context.setFillColor(
+                        red: CGFloat((x * 37 + y * 11) % 255) / 255,
+                        green: CGFloat((x * 13 + y * 41) % 255) / 255,
+                        blue: CGFloat((x * 29 + y * 17) % 255) / 255,
+                        alpha: 1
+                    )
+                    context.fill(CGRect(x: x, y: y, width: 8, height: 8))
+                }
+            }
+        } else {
+            context.setFillColor(red: 0.2, green: 0.5, blue: 0.8, alpha: 1)
+            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        }
         let image = try XCTUnwrap(context.makeImage())
         let url = root.appendingPathComponent(name, isDirectory: false)
         let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
@@ -585,6 +714,9 @@ private final class TransformFixture {
         var properties: [CFString: Any] = [
             kCGImagePropertyOrientation: orientation ?? 1
         ]
+        if let compressionQuality {
+            properties[kCGImageDestinationLossyCompressionQuality] = compressionQuality
+        }
         if exifAndGPS {
             properties[kCGImagePropertyExifDictionary] = [
                 kCGImagePropertyExifUserComment: "private"
@@ -596,6 +728,28 @@ private final class TransformFixture {
         }
         CGImageDestinationAddImage(destination, image, properties as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return url
+    }
+
+    func makeAudio(named name: String) throws -> URL {
+        let url = root.appendingPathComponent(name, isDirectory: false)
+        let sampleRate = 44_100.0
+        let frameCount = AVAudioFrameCount(sampleRate)
+        let format = try XCTUnwrap(AVAudioFormat(
+            standardFormatWithSampleRate: sampleRate,
+            channels: 1
+        ))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
+            pcmFormat: format,
+            frameCapacity: frameCount
+        ))
+        buffer.frameLength = frameCount
+        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
+        for frame in 0..<Int(frameCount) {
+            samples[frame] = sin(2 * .pi * 440 * Float(frame) / Float(sampleRate)) * 0.25
+        }
+        let file = try AVAudioFile(forWriting: url, settings: format.settings)
+        try file.write(from: buffer)
         return url
     }
 
@@ -764,9 +918,10 @@ private final class CoordinatorFixture {
         context.setFillColor(red: 0.3, green: 0.6, blue: 0.9, alpha: 1)
         context.fill(CGRect(x: 0, y: 0, width: width, height: height))
         let image = try XCTUnwrap(context.makeImage())
+        let type = UTType(filenameExtension: url.pathExtension) ?? .png
         let destination = try XCTUnwrap(CGImageDestinationCreateWithURL(
             url as CFURL,
-            UTType.png.identifier as CFString,
+            type.identifier as CFString,
             1,
             nil
         ))
