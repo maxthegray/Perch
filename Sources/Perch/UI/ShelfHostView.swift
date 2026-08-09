@@ -1439,6 +1439,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             interaction.clearSelection()
         }
 
+        let shelfItem = NSMenuItem(title: "Shelf", action: nil, keyEquivalent: "")
+        let shelfMenu = NSMenu(title: "Shelf")
+        shelfMenu.autoenablesItems = false
+
         let returnAll = NSMenuItem(
             title: "Return All",
             action: #selector(returnAllMenuAction(_:)),
@@ -1446,7 +1450,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         )
         returnAll.target = self
         returnAll.isEnabled = !store.items.isEmpty
-        menu.addItem(returnAll)
+        shelfMenu.addItem(returnAll)
 
         let history = NSMenuItem(
             title: "History",
@@ -1454,7 +1458,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             keyEquivalent: ""
         )
         history.target = self
-        menu.addItem(history)
+        shelfMenu.addItem(history)
+
+        shelfItem.submenu = shelfMenu
+        menu.addItem(shelfItem)
 
         // A free-floating shelf has no ✕ — this is how it's dismissed (items stay stored).
         // "Lock Position" turns it into a fixture: the bar hides and card drags are
@@ -1559,23 +1566,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
             convertItem.submenu = convertMenu
             transformMenu.addItem(convertItem)
-        }
-
-        let resizeActions = ImageResizePreset.allCases.map(ShelfTransformAction.resize)
-            .filter { actions.contains($0) }
-        if !resizeActions.isEmpty {
-            let resizeItem = NSMenuItem(title: "Resize", action: nil, keyEquivalent: "")
-            let resizeMenu = NSMenu(title: "Resize")
-            resizeMenu.autoenablesItems = false
-            for preset in ImageResizePreset.allCases
-                where resizeActions.contains(.resize(preset)) {
-                resizeMenu.addItem(transformMenuItem(
-                    title: preset.displayName,
-                    action: .resize(preset)
-                ))
-            }
-            resizeItem.submenu = resizeMenu
-            transformMenu.addItem(resizeItem)
         }
 
         let optimizeActions = ImageOptimizationPreset.allCases.map(ShelfTransformAction.optimize)

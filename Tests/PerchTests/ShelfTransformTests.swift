@@ -70,30 +70,6 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: source), original)
     }
 
-    func testResizeBakesOrientationAndUsesLongestEdgePreset() async throws {
-        let fixture = try TransformFixture()
-        defer { fixture.remove() }
-        let source = try fixture.makeImage(
-            named: "rotated.tiff",
-            type: .tiff,
-            width: 4,
-            height: 2,
-            orientation: 6
-        )
-
-        let events = await collect(
-            .resize(.half),
-            input: fixture.input(for: source),
-            outputDirectory: fixture.outputDirectory
-        )
-        let output = try XCTUnwrap(events.outputURL)
-        let properties = try fixture.properties(of: output)
-
-        XCTAssertEqual((properties[kCGImagePropertyPixelWidth] as? NSNumber)?.intValue, 1)
-        XCTAssertEqual((properties[kCGImagePropertyPixelHeight] as? NSNumber)?.intValue, 2)
-        XCTAssertNotEqual((properties[kCGImagePropertyOrientation] as? NSNumber)?.intValue, 6)
-    }
-
     func testOptimizePreservesJPEGAndReducesAHighQualitySource() async throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
@@ -285,12 +261,18 @@ final class ShelfTransformTests: XCTestCase {
         let count = MergePDFPreviewPageCounter.pageCount(for: [pdf])
 
         XCTAssertEqual(count, 12)
-        XCTAssertEqual(MergePDFPageCountPresentation.badge(for: count), "12 pages")
+    }
+
+    func testImagePreviewCountsAsOnePage() throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let image = try fixture.makeImage(named: "cover.png", type: .png)
+
+        XCTAssertEqual(MergePDFPreviewPageCounter.pageCount(for: [image]), 1)
     }
 
     private var expectedImageActions: Set<ShelfTransformAction> {
         Set(ImageTransformFormat.allCases.map(ShelfTransformAction.convert))
-            .union(ImageResizePreset.allCases.map(ShelfTransformAction.resize))
             .union([.stripMetadata, .zip])
     }
 
@@ -389,7 +371,7 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
             publishedItemIDs.append(items.map(\.id))
         }
 
-        fixture.coordinator.perform(.resize(.half), on: [source], outputMode: .replace)
+        fixture.coordinator.perform(.convert(.jpeg), on: [source], outputMode: .replace)
 
         let placeholder = try XCTUnwrap(fixture.interaction.transformPlaceholders.first)
         XCTAssertTrue(placeholder.replacesSource)
@@ -598,7 +580,7 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
             }
         }
 
-        fixture.coordinator.perform(.resize(.quarter), on: items)
+        fixture.coordinator.perform(.convert(.jpeg), on: items)
 
         XCTAssertEqual(fixture.store.items.count, 40)
         XCTAssertEqual(fixture.interaction.transformPlaceholders.count, 40)

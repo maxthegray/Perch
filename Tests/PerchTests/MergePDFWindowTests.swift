@@ -3,11 +3,19 @@ import XCTest
 @testable import Perch
 
 final class MergePDFReorderPolicyTests: XCTestCase {
-    func testMoveReordersDocumentsAtTheProposedInsertionPoint() {
+    func testMoveReordersDocumentsAtTheTargetPosition() {
         let first = UUID()
         let second = UUID()
         let third = UUID()
 
+        XCTAssertEqual(
+            MergePDFReorderPolicy.move(
+                [first, second, third],
+                itemID: first,
+                to: 1
+            ),
+            [second, first, third]
+        )
         XCTAssertEqual(
             MergePDFReorderPolicy.move(
                 [first, second, third],
@@ -25,12 +33,6 @@ final class MergePDFReorderPolicyTests: XCTestCase {
             [third, first, second]
         )
     }
-
-    func testPageCountBadgeUsesDocumentLanguage() {
-        XCTAssertEqual(MergePDFPageCountPresentation.badge(for: 1), "1 page")
-        XCTAssertEqual(MergePDFPageCountPresentation.badge(for: 12), "12 pages")
-        XCTAssertNil(MergePDFPageCountPresentation.badge(for: nil))
-    }
 }
 
 @MainActor
@@ -44,7 +46,7 @@ final class MergePDFViewControllerTests: XCTestCase {
         _ = controller.view
 
         let buttons = descendants(of: controller.view).compactMap { $0 as? NSButton }
-        let merge = try XCTUnwrap(buttons.first { $0.title == "Merge" })
+        let merge = try XCTUnwrap(buttons.first { $0.title == "Merge PDF" })
         let cancel = try XCTUnwrap(buttons.first { $0.title == "Cancel" })
 
         XCTAssertEqual(merge.keyEquivalent, "\r")
@@ -65,17 +67,34 @@ final class MergePDFViewControllerTests: XCTestCase {
         })
 
         XCTAssertTrue(window.canBecomeKey)
-        XCTAssertEqual(window.defaultButtonCell?.title, "Merge")
+        XCTAssertEqual(window.defaultButtonCell?.title, "Merge PDF")
         window.contentView?.layoutSubtreeIfNeeded()
-        let collectionView = try XCTUnwrap(
-            descendants(of: controllerView(in: window)).first { $0 is NSCollectionView }
-                as? NSCollectionView
+        let reorderView = try XCTUnwrap(
+            descendants(of: controllerView(in: window)).first { $0 is MergePDFReorderView }
+                as? MergePDFReorderView
         )
-        XCTAssertEqual(collectionView.numberOfItems(inSection: 0), 2)
-        XCTAssertGreaterThan(collectionView.frame.width, 0)
-        XCTAssertGreaterThan(collectionView.frame.height, 0)
+        XCTAssertEqual(reorderView.itemCount, 2)
+        XCTAssertGreaterThan(reorderView.frame.width, 0)
+        XCTAssertGreaterThan(reorderView.frame.height, 0)
         window.close()
         XCTAssertFalse(didConfirm)
+    }
+
+    func testLiveReorderMovesRowsAndPublishesTheNewOrder() {
+        let first = UUID()
+        let second = UUID()
+        let third = UUID()
+        let view = MergePDFReorderView()
+        view.configure([first, second, third].map {
+            MergePDFReorderEntry(id: $0, image: NSImage(), title: $0.uuidString)
+        })
+        var publishedOrder: [UUID] = []
+        view.onOrderChange = { publishedOrder = $0 }
+
+        view.moveItem(first, to: 2, animated: false)
+
+        XCTAssertEqual(view.orderedItemIDs, [second, third, first])
+        XCTAssertEqual(publishedOrder, [second, third, first])
     }
 
     private func descendants(of view: NSView) -> [NSView] {

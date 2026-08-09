@@ -8,38 +8,26 @@ enum MergePDFReorderPolicy {
         guard let sourceIndex = itemIDs.firstIndex(of: itemID) else { return itemIDs }
         var reordered = itemIDs
         let moved = reordered.remove(at: sourceIndex)
-        var destination = min(max(proposedIndex, 0), itemIDs.count)
-        if sourceIndex < destination {
-            destination -= 1
-        }
-        reordered.insert(moved, at: min(max(destination, 0), reordered.count))
+        let destination = min(max(proposedIndex, 0), reordered.count)
+        reordered.insert(moved, at: destination)
         return reordered
-    }
-}
-
-enum MergePDFPageCountPresentation {
-    static func badge(for pageCount: Int?) -> String? {
-        guard let pageCount, pageCount > 0 else { return nil }
-        return pageCount == 1 ? "1 page" : "\(pageCount) pages"
     }
 }
 
 enum MergePDFPreviewPageCounter {
     nonisolated static func pageCount(for fileURLs: [URL]) -> Int? {
         var pageCount = 0
-        var containsPDF = false
         for url in fileURLs {
             guard !Task.isCancelled else { return nil }
             let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType)
                 ?? UTType(filenameExtension: url.pathExtension)
             if type?.conforms(to: .pdf) == true {
-                containsPDF = true
                 pageCount += PDFDocument(url: url)?.pageCount ?? 0
             } else if type?.conforms(to: .image) == true {
                 pageCount += 1
             }
         }
-        return containsPDF && pageCount > 0 ? pageCount : nil
+        return pageCount > 0 ? pageCount : nil
     }
 }
 
@@ -65,6 +53,11 @@ final class MergePDFWindowController: NSObject, NSWindowDelegate {
         viewController.setItems(items)
 
         let window = window ?? makeWindow()
+        let fittedHeight = min(480, max(280, 118 + CGFloat(items.count) * 70))
+        window.setContentSize(NSSize(
+            width: max(window.contentLayoutRect.width, 470),
+            height: fittedHeight
+        ))
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(viewController.reorderView)
@@ -78,9 +71,9 @@ final class MergePDFWindowController: NSObject, NSWindowDelegate {
     private func makeWindow() -> NSWindow {
         let window = NSWindow(contentViewController: viewController)
         window.title = "Merge to PDF"
-        window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
-        window.setContentSize(NSSize(width: 700, height: 510))
-        window.minSize = NSSize(width: 520, height: 390)
+        window.styleMask = [.titled, .closable, .resizable]
+        window.setContentSize(NSSize(width: 470, height: 540))
+        window.minSize = NSSize(width: 410, height: 320)
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.defaultButtonCell = viewController.mergeDefaultButtonCell
@@ -105,23 +98,17 @@ final class MergePDFWindowController: NSObject, NSWindowDelegate {
 }
 
 @MainActor
-final class MergePDFViewController: NSViewController,
-    NSCollectionViewDataSource,
-    NSCollectionViewDelegate {
+final class MergePDFViewController: NSViewController {
     private struct PreviewSource: Sendable {
         let itemID: UUID
         let fileURLs: [URL]
     }
 
-    private static let itemIdentifier = NSUserInterfaceItemIdentifier("MergePDFDocument")
-    private static let reorderPasteboardType = NSPasteboard.PasteboardType(
-        "com.maximilianreich.perch.merge-pdf-document"
-    )
-
     private let thumbnails = ThumbnailStore()
-    private let collectionView = NSCollectionView()
+    private let arrangementView = MergePDFReorderView()
     private let scrollView = NSScrollView()
-    private let mergeButton = NSButton(title: "Merge", target: nil, action: nil)
+    private let summaryField = NSTextField(labelWithString: "")
+    private let mergeButton = NSButton(title: "Merge PDF", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private var items: [StoredItem] = []
     private var pageCounts: [UUID: Int] = [:]
@@ -133,15 +120,20 @@ final class MergePDFViewController: NSViewController,
     var onMerge: (([StoredItem]) -> Void)?
     var onCancel: (() -> Void)?
 
-    var reorderView: NSView { collectionView }
+    var reorderView: NSView { arrangementView }
     var mergeDefaultButtonCell: NSButtonCell? { mergeButton.cell as? NSButtonCell }
 
     override init(nibName nibNameOrNil: NSNib.Name?, bundle nibBundleOrNil: Bundle?) {
         super.init(nibName: nibNameOrNil, bundle: nibBundleOrNil)
         thumbnailCancellable = thumbnails.objectWillChange.sink { [weak self] in
             DispatchQueue.main.async {
-                self?.reloadCollection()
+                self?.reloadArrangement()
             }
+        }
+        arrangementView.onOrderChange = { [weak self] orderedIDs in
+            guard let self else { return }
+            let itemsByID = Dictionary(uniqueKeysWithValues: self.items.map { ($0.id, $0) })
+            self.items = orderedIDs.compactMap { itemsByID[$0] }
         }
     }
 
@@ -158,35 +150,16 @@ final class MergePDFViewController: NSViewController,
         root.wantsLayer = true
         root.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
 
-        let heading = NSTextField(labelWithString: "Arrange documents in page order")
-        heading.font = .systemFont(ofSize: 18, weight: .semibold)
-        let detail = NSTextField(
-            wrappingLabelWithString: "Drag tiles to reorder them. Each PDF stays together as one document."
-        )
-        detail.textColor = .secondaryLabelColor
-        detail.font = .systemFont(ofSize: 12)
+        let heading = NSTextField(labelWithString: "Put these in order")
+        heading.font = .systemFont(ofSize: 16, weight: .semibold)
 
-        let layout = NSCollectionViewFlowLayout()
-        layout.itemSize = NSSize(width: 148, height: 184)
-        layout.minimumInteritemSpacing = 14
-        layout.minimumLineSpacing = 14
-        layout.sectionInset = NSEdgeInsets(top: 14, left: 14, bottom: 14, right: 14)
-        collectionView.collectionViewLayout = layout
-        collectionView.dataSource = self
-        collectionView.delegate = self
-        collectionView.isSelectable = true
-        collectionView.backgroundColors = [.clear]
-        collectionView.register(
-            MergePDFCollectionItem.self,
-            forItemWithIdentifier: Self.itemIdentifier
-        )
-        collectionView.registerForDraggedTypes([Self.reorderPasteboardType])
-        collectionView.setDraggingSourceOperationMask(.move, forLocal: true)
-
-        scrollView.documentView = collectionView
+        scrollView.documentView = arrangementView
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         scrollView.borderType = .noBorder
+
+        summaryField.font = .systemFont(ofSize: 11, weight: .medium)
+        summaryField.textColor = .secondaryLabelColor
 
         mergeButton.bezelStyle = .rounded
         mergeButton.keyEquivalent = "\r"
@@ -199,32 +172,35 @@ final class MergePDFViewController: NSViewController,
         cancelButton.target = self
         cancelButton.action = #selector(cancelAction(_:))
 
-        let buttons = NSStackView(views: [cancelButton, mergeButton])
-        buttons.orientation = .horizontal
-        buttons.spacing = 8
-        buttons.alignment = .centerY
+        let footerSpacer = NSView()
+        let footer = NSStackView(views: [summaryField, footerSpacer, cancelButton, mergeButton])
+        footer.orientation = .horizontal
+        footer.spacing = 8
+        footer.alignment = .centerY
+        summaryField.setContentHuggingPriority(.required, for: .horizontal)
+        footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        footerSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        cancelButton.setContentHuggingPriority(.required, for: .horizontal)
+        mergeButton.setContentHuggingPriority(.required, for: .horizontal)
 
-        for subview in [heading, detail, scrollView, buttons] {
+        for subview in [heading, scrollView, footer] {
             subview.translatesAutoresizingMaskIntoConstraints = false
             root.addSubview(subview)
         }
 
         NSLayoutConstraint.activate([
-            heading.topAnchor.constraint(equalTo: root.topAnchor, constant: 20),
+            heading.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
             heading.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
             heading.trailingAnchor.constraint(lessThanOrEqualTo: root.trailingAnchor, constant: -22),
 
-            detail.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 4),
-            detail.leadingAnchor.constraint(equalTo: heading.leadingAnchor),
-            detail.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -22),
+            scrollView.topAnchor.constraint(equalTo: heading.bottomAnchor, constant: 14),
+            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
+            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
+            scrollView.bottomAnchor.constraint(equalTo: footer.topAnchor, constant: -14),
 
-            scrollView.topAnchor.constraint(equalTo: detail.bottomAnchor, constant: 14),
-            scrollView.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 8),
-            scrollView.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -8),
-            scrollView.bottomAnchor.constraint(equalTo: buttons.topAnchor, constant: -14),
-
-            buttons.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
-            buttons.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18)
+            footer.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 22),
+            footer.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -20),
+            footer.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -18)
         ])
 
         view = root
@@ -239,7 +215,7 @@ final class MergePDFViewController: NSViewController,
         loadViewIfNeeded()
         self.items = items
         pageCounts = [:]
-        reloadCollection()
+        reloadArrangement()
         requestPageCounts()
     }
 
@@ -252,80 +228,8 @@ final class MergePDFViewController: NSViewController,
         items = []
         pageCounts = [:]
         if isViewLoaded {
-            reloadCollection()
+            reloadArrangement()
         }
-    }
-
-    func numberOfSections(in collectionView: NSCollectionView) -> Int { 1 }
-
-    func collectionView(
-        _ collectionView: NSCollectionView,
-        numberOfItemsInSection section: Int
-    ) -> Int {
-        items.count
-    }
-
-    func collectionView(
-        _ collectionView: NSCollectionView,
-        itemForRepresentedObjectAt indexPath: IndexPath
-    ) -> NSCollectionViewItem {
-        let collectionItem = collectionView.makeItem(
-            withIdentifier: Self.itemIdentifier,
-            for: indexPath
-        ) as! MergePDFCollectionItem
-        let item = items[indexPath.item]
-        let thumbnail = thumbnails.thumbnail(for: item, pointSize: 112) ?? item.iconImage()
-        collectionItem.configure(
-            image: thumbnail,
-            title: item.metadata.title,
-            pageCountBadge: MergePDFPageCountPresentation.badge(for: pageCounts[item.id])
-        )
-        return collectionItem
-    }
-
-    func collectionView(
-        _ collectionView: NSCollectionView,
-        pasteboardWriterForItemAt indexPath: IndexPath
-    ) -> NSPasteboardWriting? {
-        guard items.indices.contains(indexPath.item) else { return nil }
-        let pasteboardItem = NSPasteboardItem()
-        pasteboardItem.setString(
-            items[indexPath.item].id.uuidString,
-            forType: Self.reorderPasteboardType
-        )
-        return pasteboardItem
-    }
-
-    func collectionView(
-        _ collectionView: NSCollectionView,
-        validateDrop draggingInfo: NSDraggingInfo,
-        proposedIndexPath proposedDropIndexPath: AutoreleasingUnsafeMutablePointer<NSIndexPath>,
-        dropOperation proposedDropOperation: UnsafeMutablePointer<NSCollectionView.DropOperation>
-    ) -> NSDragOperation {
-        guard draggingInfo.draggingPasteboard.string(forType: Self.reorderPasteboardType) != nil
-        else { return [] }
-        proposedDropOperation.pointee = .before
-        return .move
-    }
-
-    func collectionView(
-        _ collectionView: NSCollectionView,
-        acceptDrop draggingInfo: NSDraggingInfo,
-        indexPath: IndexPath,
-        dropOperation: NSCollectionView.DropOperation
-    ) -> Bool {
-        guard let rawID = draggingInfo.draggingPasteboard.string(
-            forType: Self.reorderPasteboardType
-        ), let itemID = UUID(uuidString: rawID) else { return false }
-        let reorderedIDs = MergePDFReorderPolicy.move(
-            items.map(\.id),
-            itemID: itemID,
-            to: indexPath.item
-        )
-        let itemsByID = Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) })
-        items = reorderedIDs.compactMap { itemsByID[$0] }
-        reloadCollection()
-        return true
     }
 
     private func requestPageCounts() {
@@ -358,33 +262,43 @@ final class MergePDFViewController: NSViewController,
                   !Task.isCancelled,
                   self.previewGeneration == generation else { return }
             self.pageCounts = counts
-            self.reloadCollection()
+            self.reloadArrangement()
         }
     }
 
-    private func reloadCollection() {
-        collectionView.reloadData()
-        collectionView.collectionViewLayout?.invalidateLayout()
+    private func reloadArrangement() {
+        updateSummary()
+        arrangementView.configure(items.map { item in
+            MergePDFReorderEntry(
+                id: item.id,
+                image: thumbnails.thumbnail(for: item, pointSize: 56) ?? item.iconImage(),
+                title: item.metadata.title
+            )
+        })
         updateCollectionFrame()
+    }
+
+    private func updateSummary() {
+        let itemLabel = items.count == 1 ? "1 item" : "\(items.count) items"
+        guard items.count == pageCounts.count else {
+            summaryField.stringValue = itemLabel
+            return
+        }
+        let totalPages = pageCounts.values.reduce(0, +)
+        let pageLabel = totalPages == 1 ? "1 page" : "\(totalPages) pages"
+        summaryField.stringValue = "\(itemLabel) · \(pageLabel)"
     }
 
     private func updateCollectionFrame() {
         guard isViewLoaded else { return }
         let viewport = scrollView.contentSize
         guard viewport.width > 0, viewport.height > 0 else { return }
-        if abs(collectionView.frame.width - viewport.width) > 0.5 {
-            collectionView.setFrameSize(NSSize(
-                width: viewport.width,
-                height: max(collectionView.frame.height, viewport.height)
-            ))
-            collectionView.collectionViewLayout?.invalidateLayout()
-        }
-        collectionView.layoutSubtreeIfNeeded()
-        let content = collectionView.collectionViewLayout?.collectionViewContentSize ?? .zero
-        collectionView.setFrameSize(NSSize(
+        arrangementView.setFrameSize(NSSize(
             width: viewport.width,
-            height: max(viewport.height, content.height)
+            height: max(viewport.height, arrangementView.requiredHeight)
         ))
+        arrangementView.needsLayout = true
+        arrangementView.layoutSubtreeIfNeeded()
     }
 
     @objc private func mergeAction(_ sender: NSButton) {
@@ -401,63 +315,290 @@ final class MergePDFViewController: NSViewController,
     }
 }
 
-private final class MergePDFCollectionItem: NSCollectionViewItem {
-    private let previewImageView = NSImageView()
-    private let titleField = NSTextField(labelWithString: "")
-    private let badgeField = NSTextField(labelWithString: "")
+struct MergePDFReorderEntry {
+    let id: UUID
+    let image: NSImage
+    let title: String
+}
 
-    override func loadView() {
-        let tile = NSView()
-        tile.wantsLayer = true
-        tile.layer?.cornerRadius = 12
-        tile.layer?.backgroundColor = NSColor.controlBackgroundColor.cgColor
-        tile.layer?.borderWidth = 1
-        tile.layer?.borderColor = NSColor.separatorColor.cgColor
+@MainActor
+final class MergePDFReorderView: NSView {
+    private static let rowHeight: CGFloat = 64
+    private static let rowSpacing: CGFloat = 6
+    private static let contentInset: CGFloat = 3
 
-        previewImageView.imageScaling = .scaleProportionallyUpOrDown
-        previewImageView.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(previewImageView)
+    private var orderedIDs: [UUID] = []
+    private var rows: [UUID: MergePDFReorderRowView] = [:]
+    private var draggedID: UUID?
+    private var dragOffsetY: CGFloat = 0
 
-        titleField.alignment = .center
-        titleField.font = .systemFont(ofSize: 11, weight: .medium)
-        titleField.lineBreakMode = .byTruncatingMiddle
-        titleField.maximumNumberOfLines = 2
-        titleField.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(titleField)
-
-        badgeField.font = .systemFont(ofSize: 10, weight: .semibold)
-        badgeField.textColor = .secondaryLabelColor
-        badgeField.alignment = .center
-        badgeField.wantsLayer = true
-        badgeField.layer?.cornerRadius = 7
-        badgeField.layer?.backgroundColor = NSColor.windowBackgroundColor.withAlphaComponent(0.9).cgColor
-        badgeField.translatesAutoresizingMaskIntoConstraints = false
-        tile.addSubview(badgeField)
-
-        NSLayoutConstraint.activate([
-            previewImageView.topAnchor.constraint(equalTo: tile.topAnchor, constant: 12),
-            previewImageView.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 12),
-            previewImageView.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -12),
-            previewImageView.heightAnchor.constraint(equalToConstant: 116),
-
-            titleField.topAnchor.constraint(equalTo: previewImageView.bottomAnchor, constant: 8),
-            titleField.leadingAnchor.constraint(equalTo: tile.leadingAnchor, constant: 8),
-            titleField.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -8),
-            titleField.bottomAnchor.constraint(lessThanOrEqualTo: tile.bottomAnchor, constant: -8),
-
-            badgeField.topAnchor.constraint(equalTo: tile.topAnchor, constant: 8),
-            badgeField.trailingAnchor.constraint(equalTo: tile.trailingAnchor, constant: -8),
-            badgeField.heightAnchor.constraint(equalToConstant: 18),
-            badgeField.widthAnchor.constraint(greaterThanOrEqualToConstant: 48)
-        ])
-
-        view = tile
+    var onOrderChange: (([UUID]) -> Void)?
+    var itemCount: Int { orderedIDs.count }
+    var orderedItemIDs: [UUID] { orderedIDs }
+    var requiredHeight: CGFloat {
+        let gaps = CGFloat(max(0, orderedIDs.count - 1)) * Self.rowSpacing
+        return Self.contentInset * 2 + CGFloat(orderedIDs.count) * Self.rowHeight + gaps
     }
 
-    func configure(image: NSImage, title: String, pageCountBadge: String?) {
+    override var isFlipped: Bool { true }
+
+    func configure(_ entries: [MergePDFReorderEntry]) {
+        let entryIDs = entries.map(\.id)
+        let staleIDs = Set(rows.keys).subtracting(entryIDs)
+        for id in staleIDs {
+            rows.removeValue(forKey: id)?.removeFromSuperview()
+        }
+
+        for entry in entries {
+            let row = rows[entry.id] ?? makeRow(for: entry.id)
+            row.configure(image: entry.image, title: entry.title)
+            rows[entry.id] = row
+        }
+        orderedIDs = entryIDs
+        needsLayout = true
+    }
+
+    override func layout() {
+        super.layout()
+        layoutRows(animated: false)
+    }
+
+    func moveItem(_ itemID: UUID, to index: Int, animated: Bool) {
+        let reordered = MergePDFReorderPolicy.move(orderedIDs, itemID: itemID, to: index)
+        guard reordered != orderedIDs else { return }
+        orderedIDs = reordered
+        layoutRows(animated: animated)
+        onOrderChange?(orderedIDs)
+    }
+
+    private func makeRow(for id: UUID) -> MergePDFReorderRowView {
+        let row = MergePDFReorderRowView(itemID: id)
+        row.onDragBegan = { [weak self] itemID, event in
+            self?.beginDragging(itemID, event: event)
+        }
+        row.onDragChanged = { [weak self] itemID, event in
+            self?.updateDragging(itemID, event: event)
+        }
+        row.onDragEnded = { [weak self] itemID in
+            self?.endDragging(itemID)
+        }
+        addSubview(row)
+        return row
+    }
+
+    private func beginDragging(_ itemID: UUID, event: NSEvent) {
+        guard draggedID == nil, let row = rows[itemID] else { return }
+        draggedID = itemID
+        let point = convert(event.locationInWindow, from: nil)
+        dragOffsetY = point.y - row.frame.minY
+        row.setDragging(true)
+    }
+
+    private func updateDragging(_ itemID: UUID, event: NSEvent) {
+        guard draggedID == itemID, let row = rows[itemID] else { return }
+        _ = autoscroll(with: event)
+        let point = convert(event.locationInWindow, from: nil)
+        let maximumY = max(Self.contentInset, bounds.height - Self.contentInset - Self.rowHeight)
+        let rowY = min(max(point.y - dragOffsetY, Self.contentInset), maximumY)
+        row.frame.origin.y = rowY
+
+        let firstCenter = Self.contentInset + Self.rowHeight / 2
+        let stride = Self.rowHeight + Self.rowSpacing
+        let rawIndex = ((row.frame.midY - firstCenter) / stride).rounded()
+        let targetIndex = min(max(Int(rawIndex), 0), max(0, orderedIDs.count - 1))
+        moveItem(itemID, to: targetIndex, animated: true)
+    }
+
+    private func endDragging(_ itemID: UUID) {
+        guard draggedID == itemID, let row = rows[itemID] else { return }
+        draggedID = nil
+        layoutRows(animated: true)
+        row.setDragging(false)
+    }
+
+    private func layoutRows(animated: Bool) {
+        let frames = Dictionary(uniqueKeysWithValues: orderedIDs.enumerated().compactMap {
+            index, id -> (UUID, NSRect)? in
+            guard rows[id] != nil else { return nil }
+            let y = Self.contentInset + CGFloat(index) * (Self.rowHeight + Self.rowSpacing)
+            return (id, NSRect(
+                x: Self.contentInset,
+                y: y,
+                width: max(1, bounds.width - Self.contentInset * 2),
+                height: Self.rowHeight
+            ))
+        })
+
+        let applyFrames = {
+            for (index, id) in self.orderedIDs.enumerated() {
+                guard let row = self.rows[id] else { continue }
+                row.setOrder(index + 1)
+                if id != self.draggedID, let frame = frames[id] {
+                    row.frame = frame
+                }
+            }
+        }
+
+        guard animated else {
+            applyFrames()
+            return
+        }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.allowsImplicitAnimation = true
+            applyFrames()
+        }
+    }
+}
+
+private final class MergePDFReorderRowView: NSView {
+    let itemID: UUID
+    private let orderField = NSTextField(labelWithString: "")
+    private let previewImageView = NSImageView()
+    private let titleField = NSTextField(labelWithString: "")
+    private var trackingArea: NSTrackingArea?
+    private var isHovered = false
+    private var cursorIsPushed = false
+
+    var onDragBegan: ((UUID, NSEvent) -> Void)?
+    var onDragChanged: ((UUID, NSEvent) -> Void)?
+    var onDragEnded: ((UUID) -> Void)?
+
+    init(itemID: UUID) {
+        self.itemID = itemID
+        super.init(frame: .zero)
+        buildView()
+    }
+
+    required init?(coder: NSCoder) {
+        return nil
+    }
+
+    private func buildView() {
+        wantsLayer = true
+        layer?.cornerRadius = 8
+        updateBackground()
+
+        orderField.font = .monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        orderField.textColor = .tertiaryLabelColor
+        orderField.alignment = .right
+        orderField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(orderField)
+
+        previewImageView.imageScaling = .scaleProportionallyUpOrDown
+        previewImageView.wantsLayer = true
+        previewImageView.layer?.cornerRadius = 4
+        previewImageView.layer?.masksToBounds = true
+        previewImageView.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(previewImageView)
+
+        titleField.font = .systemFont(ofSize: 13, weight: .medium)
+        titleField.lineBreakMode = .byTruncatingMiddle
+        titleField.maximumNumberOfLines = 1
+        titleField.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(titleField)
+
+        NSLayoutConstraint.activate([
+            orderField.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            orderField.centerYAnchor.constraint(equalTo: centerYAnchor),
+            orderField.widthAnchor.constraint(equalToConstant: 25),
+
+            previewImageView.leadingAnchor.constraint(equalTo: orderField.trailingAnchor, constant: 10),
+            previewImageView.centerYAnchor.constraint(equalTo: centerYAnchor),
+            previewImageView.widthAnchor.constraint(equalToConstant: 36),
+            previewImageView.heightAnchor.constraint(equalToConstant: 48),
+
+            titleField.leadingAnchor.constraint(equalTo: previewImageView.trailingAnchor, constant: 12),
+            titleField.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -14),
+            titleField.centerYAnchor.constraint(equalTo: centerYAnchor)
+        ])
+
+        toolTip = "Drag to reorder"
+        setAccessibilityElement(true)
+        setAccessibilityHelp("Drag to reorder")
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let trackingArea = NSTrackingArea(
+            rect: bounds,
+            options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(trackingArea)
+        self.trackingArea = trackingArea
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard super.hitTest(point) != nil else { return nil }
+        return self
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isHovered = true
+        updateBackground()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isHovered = false
+        updateBackground()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        NSCursor.closedHand.push()
+        cursorIsPushed = true
+        onDragBegan?(itemID, event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onDragChanged?(itemID, event)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if cursorIsPushed {
+            NSCursor.pop()
+            cursorIsPushed = false
+        }
+        onDragEnded?(itemID)
+    }
+
+    func configure(image: NSImage, title: String) {
         previewImageView.image = image
         titleField.stringValue = title
-        badgeField.stringValue = pageCountBadge ?? ""
-        badgeField.isHidden = pageCountBadge == nil
+        setAccessibilityLabel(title)
+    }
+
+    func setOrder(_ order: Int) {
+        orderField.stringValue = String(format: "%02d", order)
+        setAccessibilityLabel("\(order). \(titleField.stringValue)")
+    }
+
+    func setDragging(_ dragging: Bool) {
+        layer?.zPosition = dragging ? 10 : 0
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = dragging ? 0.22 : 0
+        layer?.shadowRadius = dragging ? 9 : 0
+        layer?.shadowOffset = NSSize(width: 0, height: -2)
+        updateBackground(dragging: dragging)
+    }
+
+    private func updateBackground(dragging: Bool = false) {
+        let color: NSColor
+        if dragging {
+            color = .controlBackgroundColor
+        } else if isHovered {
+            color = NSColor.labelColor.withAlphaComponent(0.055)
+        } else {
+            color = .clear
+        }
+        layer?.backgroundColor = color.cgColor
     }
 }

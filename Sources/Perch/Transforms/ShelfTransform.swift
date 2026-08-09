@@ -90,15 +90,6 @@ enum ImageTransformFormat: String, CaseIterable, Sendable {
     }
 }
 
-enum ImageResizePreset: Int, CaseIterable, Sendable {
-    case quarter = 25
-    case half = 50
-    case threeQuarters = 75
-
-    var scale: Double { Double(rawValue) / 100 }
-    var displayName: String { "\(rawValue)%" }
-}
-
 enum ImageOptimizationPreset: Int, CaseIterable, Sendable {
     case smaller = 55
     case balanced = 72
@@ -117,7 +108,6 @@ enum ImageOptimizationPreset: Int, CaseIterable, Sendable {
 
 enum ShelfTransformAction: Hashable, Sendable {
     case convert(ImageTransformFormat)
-    case resize(ImageResizePreset)
     case optimize(ImageOptimizationPreset)
     case stripMetadata
     case extractAudio
@@ -126,7 +116,6 @@ enum ShelfTransformAction: Hashable, Sendable {
 
     static var menuActions: [ShelfTransformAction] {
         ImageTransformFormat.allCases.map(Self.convert)
-            + ImageResizePreset.allCases.map(Self.resize)
             + ImageOptimizationPreset.allCases.map(Self.optimize)
             + [.stripMetadata, .extractAudio, .mergePDF, .zip]
     }
@@ -137,7 +126,7 @@ enum ShelfTransformAction: Hashable, Sendable {
 
     func isApplicable(to selection: ShelfTransformSelection) -> Bool {
         switch self {
-        case .convert, .resize, .stripMetadata:
+        case .convert, .stripMetadata:
             return selection.containsOnlyImages
         case .optimize:
             return selection.containsOnlyOptimizableImages
@@ -158,8 +147,6 @@ enum ShelfTransformAction: Hashable, Sendable {
         switch self {
         case let .convert(format):
             return "Converting \(filename) to \(format.displayName)…"
-        case let .resize(preset):
-            return "Resizing \(filename) to \(preset.displayName)…"
         case let .optimize(preset):
             return "Optimizing \(filename) (\(preset.displayName))…"
         case .stripMetadata:
@@ -270,22 +257,6 @@ enum ShelfTransformAction: Hashable, Sendable {
                 to: destination,
                 contentType: format.contentType.identifier,
                 options: options
-            )
-
-        case let .resize(preset):
-            let dimensions = try sourceDimensions(source, filename: input.filename)
-            let targetLongestEdge = max(1, Int((Double(max(dimensions.width, dimensions.height)) * preset.scale).rounded()))
-            let image = try orientedThumbnail(
-                source,
-                maxPixelSize: targetLongestEdge,
-                filename: input.filename
-            )
-            let contentType = try writableSourceType(source, filename: input.filename)
-            let desired = outputDirectory.appendingPathComponent(input.filename, isDirectory: false)
-            return try writeImage(
-                image,
-                to: ItemStore.nonClobberingURL(for: desired),
-                contentType: contentType
             )
 
         case let .optimize(preset):
