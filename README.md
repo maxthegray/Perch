@@ -10,7 +10,7 @@
 
 Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
-It also understands file promises from apps like Photos, Mail, and Messages, so it works with the things that don't become ordinary files until you actually drop them somewhere.
+It also understands file promises from apps like Photos, Mail, and Messages, so it works with the things that don't become ordinary files until you actually drop them somewhere. And while something is sitting there, you can convert it, shrink it, merge it, or zip it without opening anything else.
 
 <p align="center">
   <img src="assets/demo.gif" width="800" alt="Dragging a file into Perch and back out again">
@@ -31,21 +31,24 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 
 - **Put something aside.** Start dragging and Perch can open automatically at the nearest enabled edge. Drop onto the shelf to keep the item there.
 - **Pick it up later.** Hover the edge to bring Perch back, then drag the item into Finder or another app. Dragging out can move the item off the shelf or leave a copy behind.
-- **Bring the shelf to you.** Shake the pointer to summon Perch near the cursor. If you'd rather keep it somewhere specific, enable dragging, pull it away from the edge, and optionally lock it in place.
-- **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Downloads that finish together collapse into a session you can expand, inspect, or add all at once.
+- **Bring the shelf to you.** Turn on Shake to summon and a shake of the pointer brings Perch to the cursor. If you'd rather keep it somewhere specific, enable dragging, pull it away from the edge, and optionally lock it in place. The other edges offer themselves while you drag, so you can change your mind on the way.
+- **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Downloads that finish together collapse into a session you can expand, inspect, or add all at once. Perch offers the five most recent.
+- **Change something on the way through.** The shelf's Transform menu converts images between JPEG, PNG, HEIC, and TIFF, resizes them, or strips their metadata. Several PDFs and images can be merged into one document — you arrange the pages first — and anything at all can be compressed into a ZIP.
 - **Right-click for the useful stuff.** Quick Look, Delete, Return, History, Settings, and update checks are all close at hand.
 
 ## Make it yours
 
-**General** keeps the few choices that change what happens to your files: launch at login, and whether dragging an item out moves it or leaves a copy.
+**General** is the short list: launch at login, the version, a button to check for updates, and which Settings you'd rather have. *Beautiful* is the default; *Ugly* puts the same preferences back into plain forms, if that's how you prefer to read them.
 
-**Advanced** splits three ways. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, and recent-download suggestions. *Docking* chooses which edges it can use; snapping to an enabled edge is automatic, and at least one edge always stays enabled.
+**File Flow** follows a file from one end to the other and puts each choice where it happens. On the way in: whether a dropped file moves into Perch's storage or stays where it already lives, whether the shelf shows itself the moment a drag begins, and whether recent downloads are offered. In the middle: whether a transform keeps the original alongside its result or replaces it. On the way out: whether dragging an item out moves it or leaves a copy. (Choose Ugly and these same switches go back to living in General and Advanced.)
 
-Perch remembers these choices between launches and can check for updates through Sparkle.
+**Advanced** splits three ways. *Look* has the Glass or Minimal style, whether items sit in a list or stack like a deck, the shelf's size, and the small stuff — names, shadow, edge tab. *Behavior* covers when the shelf shows up, how you move a floating one, and whether it stays out once it's empty. *Docking* chooses which edges it can use and whether it snaps in beside the Dock; snapping to an enabled edge is automatic, and at least one edge always stays enabled.
+
+Perch remembers these choices between launches. Updates come through Sparkle, and since there's no Dock icon to notice a new version behind, a release worth mentioning says what changed once, on the launch after it installs, and then leaves you alone.
 
 ## Your files stay yours
 
-Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/`. There are no accounts or remote analytics. Perch only uses the network for automatic or manual update checks.
+Items on the shelf are stored as ordinary files under `~/Library/Application Support/Perch/` — or left exactly where you found them, if you told Perch to keep dropped files in place. There are no accounts or remote analytics. Perch only uses the network for automatic or manual update checks.
 
 ## Smart Perch
 
