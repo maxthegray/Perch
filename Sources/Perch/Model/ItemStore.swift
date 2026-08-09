@@ -129,11 +129,17 @@ final class ItemStore: ObservableObject {
     }
 
     /// Insert an item at `index` (nil = front) and update `index.json`.
-    func insert(_ item: StoredItem, at index: Int?) {
+    func insert(
+        _ item: StoredItem,
+        at index: Int?,
+        animatesLanding: Bool = true
+    ) {
         let insertionIndex = min(max(index ?? 0, 0), items.count)
         items.insert(item, at: insertionIndex)
         persistIndexOrLogFailure()
-        flashJustAdded(item.id)
+        if animatesLanding {
+            flashJustAdded(item.id)
+        }
     }
 
     /// Mark `id` as freshly stashed so its row pulses an accent ring, then clear it after
@@ -184,6 +190,45 @@ final class ItemStore: ObservableObject {
         } catch CocoaError.fileNoSuchFile {
         } catch {
             NSLog("Perch failed to remove transformed source directory \(source.directoryURL.path): \(error)")
+        }
+        persistIndexOrLogFailure()
+        return true
+    }
+
+    /// Collapse several source rows into one transformed result in a single published
+    /// update. The result lands where an insert-after-anchor followed by source removal
+    /// would have left it, without exposing that intermediate layout to the shelf.
+    @discardableResult
+    func replace(
+        _ sources: [StoredItem],
+        with replacement: StoredItem,
+        after anchorItemID: UUID
+    ) -> Bool {
+        let requestedIDs = Set(sources.map(\.id))
+        let removedItems = items.filter { requestedIDs.contains($0.id) }
+        guard !removedItems.isEmpty else { return false }
+        let removedIDs = Set(removedItems.map(\.id))
+        let originalItems = items
+        let anchorIndex = originalItems.firstIndex { $0.id == anchorItemID }
+            ?? originalItems.lastIndex { removedIDs.contains($0.id) }
+            ?? 0
+        let insertionIndex = originalItems[...anchorIndex].reduce(into: 0) { count, item in
+            if !removedIDs.contains(item.id) { count += 1 }
+        }
+        var updatedItems = originalItems.filter { !removedIDs.contains($0.id) }
+        updatedItems.insert(replacement, at: min(insertionIndex, updatedItems.count))
+        items = updatedItems
+
+        for item in removedItems {
+            do {
+                try FileManager.default.removeItem(at: item.directoryURL)
+            } catch CocoaError.fileNoSuchFile {
+            } catch {
+                NSLog(
+                    "Perch failed to remove transformed source directory "
+                        + "\(item.directoryURL.path): \(error)"
+                )
+            }
         }
         persistIndexOrLogFailure()
         return true

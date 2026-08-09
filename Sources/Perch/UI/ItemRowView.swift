@@ -1,6 +1,59 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum FileTypeBadgePresentation {
+    static func label(
+        backingFileNames: [String],
+        primaryFileType: String?
+    ) -> String? {
+        let contentType = primaryFileType.flatMap(UTType.init)
+        if contentType?.conforms(to: .directory) == true
+            || contentType?.conforms(to: .applicationBundle) == true {
+            return nil
+        }
+
+        let extensions = Set(backingFileNames.compactMap { name -> String? in
+            let pathExtension = URL(fileURLWithPath: name).pathExtension
+            return pathExtension.isEmpty ? nil : pathExtension.lowercased()
+        })
+        if extensions.count == 1, let pathExtension = extensions.first {
+            return compact(pathExtension)
+        }
+        guard backingFileNames.isEmpty,
+              let pathExtension = contentType?.preferredFilenameExtension else {
+            return nil
+        }
+        return compact(pathExtension)
+    }
+
+    private static func compact(_ pathExtension: String) -> String {
+        let uppercased = pathExtension.uppercased()
+        return uppercased.count <= 5 ? uppercased : String(uppercased.prefix(3))
+    }
+}
+
+struct FileTypeBadgeView: View {
+    let label: String
+    var compact = false
+
+    var body: some View {
+        Text(label)
+            .font(.system(size: compact ? 5.5 : 7, weight: .bold, design: .rounded))
+            .tracking(0.15)
+            .lineLimit(1)
+            .foregroundStyle(.primary.opacity(0.82))
+            .padding(.horizontal, compact ? 2 : 3)
+            .padding(.vertical, compact ? 0.75 : 1.5)
+            .background(.regularMaterial, in: Capsule(style: .continuous))
+            .overlay(
+                Capsule(style: .continuous)
+                    .stroke(.white.opacity(0.16), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.16), radius: 1.5, y: 0.5)
+            .allowsHitTesting(false)
+    }
+}
+
 /// SwiftUI view for a single stored item. Its anatomy (icon size, title, subtitle,
 /// separators, height) is driven by the active `ShelfTheme`, so Glass and Minimal read
 /// as genuinely different looks. Pinned to exactly `theme.rowHeight` so the window can
@@ -108,27 +161,36 @@ struct ItemRowView: View {
     /// shown at its natural shape. Size/flatness follow the theme.
     @ViewBuilder
     private var icon: some View {
-        if let thumbnail {
-            Image(nsImage: thumbnail)
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fill)
-                .frame(width: theme.iconSize, height: theme.iconSize)
-                .clipShape(RoundedRectangle(cornerRadius: theme.iconCornerRadius, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: theme.iconCornerRadius, style: .continuous)
-                        .stroke(.white.opacity(0.14), lineWidth: 0.5)
-                )
-                .shadow(color: .black.opacity(theme.iconShadow ? 0.2 : 0), radius: 1.5, y: 0.5)
-                .transition(.opacity)
-        } else {
-            Image(nsImage: item.iconImage())
-                .resizable()
-                .interpolation(.high)
-                .aspectRatio(contentMode: .fit)
-                .frame(width: theme.iconSize, height: theme.iconSize)
-                .shadow(color: .black.opacity(theme.iconShadow ? 0.14 : 0), radius: 1.5, y: 0.5)
+        ZStack(alignment: .bottomTrailing) {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: theme.iconSize, height: theme.iconSize)
+                    .clipShape(RoundedRectangle(cornerRadius: theme.iconCornerRadius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: theme.iconCornerRadius, style: .continuous)
+                            .stroke(.white.opacity(0.14), lineWidth: 0.5)
+                    )
+                    .shadow(color: .black.opacity(theme.iconShadow ? 0.2 : 0), radius: 1.5, y: 0.5)
+                    .transition(.opacity)
+            } else {
+                Image(nsImage: item.iconImage())
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: theme.iconSize, height: theme.iconSize)
+                    .shadow(color: .black.opacity(theme.iconShadow ? 0.14 : 0), radius: 1.5, y: 0.5)
+            }
+
+            if !showsLabels, let fileTypeBadge {
+                FileTypeBadgeView(label: fileTypeBadge, compact: theme.iconSize < 28)
+                    .offset(x: 2, y: 2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
         }
+        .frame(width: theme.iconSize, height: theme.iconSize)
     }
 
     @ViewBuilder
@@ -205,5 +267,12 @@ struct ItemRowView: View {
             return "→ \(learnedDestinationName)"
         }
         return subtitle
+    }
+
+    private var fileTypeBadge: String? {
+        FileTypeBadgePresentation.label(
+            backingFileNames: item.metadata.backingFileNames,
+            primaryFileType: item.metadata.primaryFileType
+        )
     }
 }

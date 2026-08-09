@@ -24,9 +24,18 @@ final class ShelfTransformTests: XCTestCase {
         let mixed = ShelfTransformSelection(operandTypes: [[.png], [.pdf]])
         let single = ShelfTransformSelection(operandTypes: [[.tiff]])
         let invalidMerge = ShelfTransformSelection(operandTypes: [[.png], [.plainText]])
+        let singlePDF = ShelfTransformSelection(operandTypes: [[.pdf]])
+        let onePagePDF = ShelfTransformSelection(
+            operandTypes: [[.pdf]],
+            canSplitSinglePDF: false
+        )
+        let multiFilePDFItem = ShelfTransformSelection(operandTypes: [[.pdf, .pdf]])
         let optimizableImages = ShelfTransformSelection(operandTypes: [[.jpeg], [.heic]])
         let videos = ShelfTransformSelection(operandTypes: [[.mpeg4Movie], [.quickTimeMovie]])
         let audio = ShelfTransformSelection(operandTypes: [[.mpeg4Audio]])
+        let singleZIP = ShelfTransformSelection(operandTypes: [[.zip]])
+        let multipleZIPs = ShelfTransformSelection(operandTypes: [[.zip], [.zip]])
+        let mixedWithZIP = ShelfTransformSelection(operandTypes: [[.zip], [.plainText]])
 
         XCTAssertEqual(
             Set(ShelfTransformAction.availableActions(for: images)),
@@ -37,6 +46,12 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: single)), expectedImageActions)
         XCTAssertEqual(ShelfTransformAction.availableActions(for: invalidMerge), [.zip])
         XCTAssertEqual(
+            ShelfTransformAction.availableActions(for: singlePDF),
+            [.splitPDF(PDFSplitPlan(breaksAfterPages: [])), .zip]
+        )
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: onePagePDF), [.zip])
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: multiFilePDFItem), [.zip])
+        XCTAssertEqual(
             Set(ShelfTransformAction.availableActions(for: optimizableImages)),
             expectedImageActions
                 .union(ImageOptimizationPreset.allCases.map(ShelfTransformAction.optimize))
@@ -44,6 +59,9 @@ final class ShelfTransformTests: XCTestCase {
         )
         XCTAssertEqual(Set(ShelfTransformAction.availableActions(for: videos)), [.extractAudio, .zip])
         XCTAssertEqual(ShelfTransformAction.availableActions(for: audio), [.zip])
+        XCTAssertTrue(ShelfTransformAction.availableActions(for: singleZIP).isEmpty)
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: multipleZIPs), [.zip])
+        XCTAssertEqual(ShelfTransformAction.availableActions(for: mixedWithZIP), [.zip])
     }
 
     func testConversionWritesEveryRequestedTypeWithoutChangingSource() async throws {
@@ -250,6 +268,44 @@ final class ShelfTransformTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: pdf), originals[1])
     }
 
+    func testSplitPlanProducesOrderedPageRanges() {
+        let plan = PDFSplitPlan(breaksAfterPages: [3, 1, 3, 0, 20])
+
+        XCTAssertEqual(plan.breaksAfterPages, [1, 3, 20])
+        XCTAssertEqual(plan.pageRanges(pageCount: 5), [0..<1, 1..<3, 3..<5])
+    }
+
+    func testSplitPDFWritesEachPartInOrderAndPreservesSource() async throws {
+        let fixture = try TransformFixture()
+        defer { fixture.remove() }
+        let source = try fixture.makePDF(
+            named: "Document.pdf",
+            pageWidths: [101, 102, 103, 104, 105]
+        )
+        let original = try Data(contentsOf: source)
+
+        let events = await collect(
+            .splitPDF(PDFSplitPlan(breaksAfterPages: [1, 3])),
+            input: fixture.input(for: source),
+            outputDirectory: fixture.outputDirectory
+        )
+
+        XCTAssertNil(events.aggregateFailure)
+        XCTAssertEqual(events.outputURLs.map(\.lastPathComponent), [
+            "Document 1.pdf",
+            "Document 2.pdf",
+            "Document 3.pdf"
+        ])
+        let widths = try events.outputURLs.map { output in
+            let document = try XCTUnwrap(PDFDocument(url: output))
+            return (0..<document.pageCount).compactMap {
+                document.page(at: $0)?.bounds(for: .mediaBox).width
+            }
+        }
+        XCTAssertEqual(widths, [[101], [102, 103], [104, 105]])
+        XCTAssertEqual(try Data(contentsOf: source), original)
+    }
+
     func testMultiPagePDFPreviewReportsItsDocumentPageCount() throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
@@ -293,7 +349,7 @@ final class ShelfTransformTests: XCTestCase {
         for await event in action.run(inputs: inputs, outputDirectory: outputDirectory) {
             switch event {
             case let .output(_, fileURL):
-                collected.outputURL = fileURL
+                collected.outputURLs.append(fileURL)
             case let .failure(inputID, _, _, _):
                 collected.failureInputIDs.append(inputID)
             case let .aggregateFailure(message):
@@ -459,6 +515,10 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         let first = try fixture.addOwnedPDF(named: "first.pdf", pageWidths: [101, 102])
         let second = try fixture.addOwnedPDF(named: "second.pdf", pageWidths: [201])
         let sourceDirectories = [first.directoryURL, second.directoryURL]
+        var publishedItemIDs: [[UUID]] = []
+        let cancellable = fixture.store.$items.dropFirst().sink { items in
+            publishedItemIDs.append(items.map(\.id))
+        }
 
         fixture.coordinator.perform(
             .mergePDF,
@@ -478,9 +538,61 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
             document.page(at: $0)?.bounds(for: .mediaBox).width
         }
         XCTAssertEqual(widths, [201, 101, 102])
+        XCTAssertEqual(publishedItemIDs.count, 1)
+        XCTAssertEqual(publishedItemIDs.first, fixture.store.items.map(\.id))
         XCTAssertTrue(sourceDirectories.allSatisfy {
             !FileManager.default.fileExists(atPath: $0.path)
         })
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testMergeOutputDoesNotTriggerTheDropLandingAnimation() async throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let first = try fixture.addOwnedPDF(named: "first.pdf", pageWidths: [101])
+        let second = try fixture.addOwnedPDF(named: "second.pdf", pageWidths: [201])
+        try? await Task.sleep(for: .milliseconds(100))
+        var landingItemIDs: [UUID] = []
+        let cancellable = fixture.store.$justAddedItemID.dropFirst().sink { itemID in
+            if let itemID { landingItemIDs.append(itemID) }
+        }
+
+        fixture.coordinator.perform(.mergePDF, on: [first, second])
+
+        let completed = await eventually {
+            fixture.store.items.count == 3
+                && fixture.interaction.transformPlaceholders.isEmpty
+        }
+        XCTAssertTrue(completed)
+        XCTAssertTrue(landingItemIDs.isEmpty)
+        withExtendedLifetime(cancellable) {}
+    }
+
+    func testSplitPDFPreservesSourceEvenWhenReplaceIsPreferred() async throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let source = try fixture.addOwnedPDF(
+            named: "document.pdf",
+            pageWidths: [101, 102, 103]
+        )
+
+        fixture.coordinator.perform(
+            .splitPDF(PDFSplitPlan(breaksAfterPages: [1])),
+            on: [source],
+            outputMode: .replace
+        )
+
+        let completed = await eventually {
+            fixture.store.items.count == 3
+                && fixture.interaction.transformPlaceholders.isEmpty
+        }
+        XCTAssertTrue(completed)
+        XCTAssertEqual(fixture.store.items.first?.id, source.id)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.directoryURL.path))
+        XCTAssertEqual(
+            fixture.store.items.dropFirst().flatMap(\.metadata.backingFileNames),
+            ["document 1.pdf", "document 2.pdf"]
+        )
     }
 
     func testCancellingMergeWindowCreatesNoOutputOrWorkingFiles() throws {
@@ -608,7 +720,8 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
 }
 
 private struct CollectedTransformEvents {
-    var outputURL: URL?
+    var outputURLs: [URL] = []
+    var outputURL: URL? { outputURLs.last }
     var failureInputIDs: [UUID] = []
     var aggregateFailure: String?
 }

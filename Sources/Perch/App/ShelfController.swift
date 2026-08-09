@@ -17,6 +17,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let historyWindow: HistoryWindowController
     private let settingsWindow: SettingsWindowController
     private let mergePDFWindow: MergePDFWindowController
+    private let splitPDFWindow: SplitPDFWindowController
     private let snapshotter: PasteboardSnapshotter
     private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
@@ -146,6 +147,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var arrivalsCancellable: AnyCancellable?
     private var arrivalNamesCancellable: AnyCancellable?
     private var transformPlaceholdersCancellable: AnyCancellable?
+    private var transformPlaceholderResizeTask: Task<Void, Never>?
     private var transformResultDetailsCancellable: AnyCancellable?
     /// Coalesces asynchronous OCR/arrival label changes so the text can settle before
     /// the outer panel smoothly adopts its new content-hugging width.
@@ -228,6 +230,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             smartPerch: smartPerch
         )
         mergePDFWindow = MergePDFWindowController()
+        splitPDFWindow = SplitPDFWindowController()
         snapshotter = PasteboardSnapshotter(holding: holding)
         promiseMaterializer = FilePromiseMaterializer()
         panel = ShelfPanel(contentRect: Self.initialPanelFrame())
@@ -358,7 +361,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onPerformTransform = { [weak self] action, items, outputMode in
             guard let self else { return }
-            if action == .mergePDF {
+            if case .splitPDF = action, let item = items.first {
+                self.splitPDFWindow.show(item: item) { [weak self] item, plan in
+                    self?.transformCoordinator.perform(
+                        .splitPDF(plan),
+                        on: [item],
+                        outputMode: .duplicate
+                    )
+                }
+            } else if action == .mergePDF {
                 self.mergePDFWindow.show(items: items) { [weak self] orderedItems in
                     self?.transformCoordinator.perform(
                         .mergePDF,
@@ -666,15 +677,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     func shutDown() {
+        transformPlaceholderResizeTask?.cancel()
         transformCoordinator.shutDown()
     }
 
     private func transformPlaceholdersDidChange() {
-        resizeToFitVisible(animated: false)
         let isEmpty = store.items.isEmpty && hostView.transformPlaceholderCount == 0
-        guard isEmpty != wasEmpty else { return }
-        wasEmpty = isEmpty
-        shelfContentDidChange(isEmpty: isEmpty)
+        if isEmpty != wasEmpty {
+            wasEmpty = isEmpty
+            shelfContentDidChange(isEmpty: isEmpty)
+        }
+        transformPlaceholderResizeTask?.cancel()
+        transformPlaceholderResizeTask = Task { @MainActor [weak self] in
+            await Task.yield()
+            guard let self, !Task.isCancelled else { return }
+            self.transformPlaceholderResizeTask = nil
+            guard !self.removalResizeInFlight else { return }
+            self.resizeToFitVisible(animated: true)
+        }
     }
 
     // MARK: Recent arrivals (ghost rows)

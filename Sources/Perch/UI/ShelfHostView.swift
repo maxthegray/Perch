@@ -1598,6 +1598,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 action: .extractAudio
             ))
         }
+        let splitPDFAction = ShelfTransformAction.splitPDF(
+            PDFSplitPlan(breaksAfterPages: [])
+        )
+        if actions.contains(splitPDFAction) {
+            transformMenu.addItem(transformMenuItem(
+                title: "Split PDF…",
+                action: splitPDFAction
+            ))
+        }
         if actions.contains(.mergePDF) {
             transformMenu.addItem(transformMenuItem(
                 title: "Merge to PDF…",

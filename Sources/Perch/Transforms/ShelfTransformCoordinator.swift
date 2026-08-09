@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import PDFKit
 import UniformTypeIdentifiers
 
 @MainActor
@@ -49,6 +50,9 @@ final class ShelfTransformCoordinator {
         guard !isShuttingDown, !items.isEmpty else { return }
         let selection = Self.selection(for: items)
         guard action.isApplicable(to: selection) else { return }
+        let effectiveOutputMode: ShelfTransformOutputMode = action.preservesSources
+            ? .duplicate
+            : outputMode
 
         let inputs = Self.inputs(for: items)
         let expectedInputCountsBySource = Dictionary(
@@ -87,7 +91,7 @@ final class ShelfTransformCoordinator {
                     id: input.id,
                     sourceItemID: input.sourceItemID,
                     title: action.pendingTitle(for: input.filename),
-                    replacesSource: outputMode == .replace
+                    replacesSource: effectiveOutputMode == .replace
                         && expectedInputCountsBySource[input.sourceItemID] == 1,
                     state: .pending
                 ))
@@ -96,7 +100,7 @@ final class ShelfTransformCoordinator {
 
         operations[operationID] = Operation(
             action: action,
-            outputMode: outputMode,
+            outputMode: effectiveOutputMode,
             aggregatePlaceholderID: aggregatePlaceholderID,
             insertionAnchorItemID: insertionAnchorItemID,
             fallbackInsertionIndex: fallbackInsertionIndex,
@@ -136,7 +140,7 @@ final class ShelfTransformCoordinator {
     }
 
     static func selection(for items: [StoredItem]) -> ShelfTransformSelection {
-        ShelfTransformSelection(operandTypes: items.map { item in
+        let operandTypes = items.map { item in
             let urls = item.backingFileURLs()
             let resolvedTypes = urls.compactMap(contentType)
             if !resolvedTypes.isEmpty {
@@ -147,7 +151,21 @@ final class ShelfTransformCoordinator {
                 return [type]
             }
             return []
-        })
+        }
+        let canSplitSinglePDF: Bool?
+        if items.count == 1,
+           let types = operandTypes.first,
+           types.count == 1,
+           types[0].conforms(to: .pdf),
+           let url = items[0].backingFileURLs().first {
+            canSplitSinglePDF = (PDFDocument(url: url)?.pageCount ?? 0) > 1
+        } else {
+            canSplitSinglePDF = nil
+        }
+        return ShelfTransformSelection(
+            operandTypes: operandTypes,
+            canSplitSinglePDF: canSplitSinglePDF
+        )
     }
 
     private static func inputs(for items: [StoredItem]) -> [ShelfTransformInput] {
@@ -213,19 +231,39 @@ final class ShelfTransformCoordinator {
                 let replacesSingleInputSource = operation.outputMode == .replace
                     && !operation.action.producesAggregateOutput
                     && operation.expectedInputCountsBySource[sourceItemID] == 1
+                let replacesAggregateSources = operation.outputMode == .replace
+                    && operation.action.producesAggregateOutput
                 let output = try snapshotter.snapshotOwnedFile(
                     fileURL,
                     into: store,
                     at: insertionIndex,
-                    insertsIntoStore: !replacesSingleInputSource
+                    insertsIntoStore: false
                 )
+                if let placeholderID {
+                    interaction.removeTransformPlaceholder(placeholderID)
+                }
                 if replacesSingleInputSource,
                    let source = operation.sourceItemsByID[sourceItemID] {
                     if store.replace(source, with: output) {
                         interaction.removeFromSelection([sourceItemID])
                     } else {
-                        store.insert(output, at: insertionIndex)
+                        store.insert(output, at: insertionIndex, animatesLanding: false)
                     }
+                } else if replacesAggregateSources {
+                    let replaceableSources = operation.sourceItemsByID.values.filter {
+                        !operation.failedSourceIDs.contains($0.id)
+                    }
+                    if store.replace(
+                        replaceableSources,
+                        with: output,
+                        after: operation.insertionAnchorItemID
+                    ) {
+                        interaction.removeFromSelection(Set(replaceableSources.map(\.id)))
+                    } else {
+                        store.insert(output, at: insertionIndex, animatesLanding: false)
+                    }
+                } else {
+                    store.insert(output, at: insertionIndex, animatesLanding: false)
                 }
                 if let resultDetail {
                     interaction.showTransformResultDetail(resultDetail, for: output.id)
@@ -237,9 +275,6 @@ final class ShelfTransformCoordinator {
                     operation.aggregateOutputInserted = true
                 }
                 operations[operationID] = operation
-                if let placeholderID {
-                    interaction.removeTransformPlaceholder(placeholderID)
-                }
             } catch {
                 operation.failedSourceIDs.insert(sourceItemID)
                 operations[operationID] = operation

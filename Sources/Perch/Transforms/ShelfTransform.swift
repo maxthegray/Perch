@@ -7,6 +7,12 @@ import UniformTypeIdentifiers
 
 struct ShelfTransformSelection {
     let operandTypes: [[UTType]]
+    let canSplitSinglePDF: Bool?
+
+    init(operandTypes: [[UTType]], canSplitSinglePDF: Bool? = nil) {
+        self.operandTypes = operandTypes
+        self.canSplitSinglePDF = canSplitSinglePDF
+    }
 
     var count: Int { operandTypes.count }
 
@@ -24,6 +30,18 @@ struct ShelfTransformSelection {
         }
     }
 
+    var isSinglePDFFile: Bool {
+        guard operandTypes.count == 1, operandTypes[0].count == 1 else { return false }
+        guard operandTypes[0][0].conforms(to: .pdf) else { return false }
+        return canSplitSinglePDF ?? true
+    }
+
+    var isSingleZIPFile: Bool {
+        operandTypes.count == 1
+            && operandTypes[0].count == 1
+            && operandTypes[0][0].conforms(to: .zip)
+    }
+
     var containsOnlyOptimizableImages: Bool {
         !operandTypes.isEmpty && operandTypes.allSatisfy { types in
             !types.isEmpty && types.allSatisfy {
@@ -36,6 +54,21 @@ struct ShelfTransformSelection {
         !operandTypes.isEmpty && operandTypes.allSatisfy { types in
             !types.isEmpty && types.allSatisfy { $0.conforms(to: .movie) }
         }
+    }
+}
+
+struct PDFSplitPlan: Hashable, Sendable {
+    let breaksAfterPages: [Int]
+
+    init(breaksAfterPages: [Int]) {
+        self.breaksAfterPages = Array(Set(breaksAfterPages.filter { $0 > 0 })).sorted()
+    }
+
+    func pageRanges(pageCount: Int) -> [Range<Int>] {
+        guard pageCount > 0 else { return [] }
+        let breaks = breaksAfterPages.filter { $0 < pageCount }
+        let boundaries = [0] + breaks + [pageCount]
+        return zip(boundaries, boundaries.dropFirst()).map { $0..<$1 }
     }
 }
 
@@ -111,13 +144,20 @@ enum ShelfTransformAction: Hashable, Sendable {
     case optimize(ImageOptimizationPreset)
     case stripMetadata
     case extractAudio
+    case splitPDF(PDFSplitPlan)
     case mergePDF
     case zip
 
     static var menuActions: [ShelfTransformAction] {
         ImageTransformFormat.allCases.map(Self.convert)
             + ImageOptimizationPreset.allCases.map(Self.optimize)
-            + [.stripMetadata, .extractAudio, .mergePDF, .zip]
+            + [
+                .stripMetadata,
+                .extractAudio,
+                .splitPDF(PDFSplitPlan(breaksAfterPages: [])),
+                .mergePDF,
+                .zip
+            ]
     }
 
     static func availableActions(for selection: ShelfTransformSelection) -> [ShelfTransformAction] {
@@ -132,15 +172,27 @@ enum ShelfTransformAction: Hashable, Sendable {
             return selection.containsOnlyOptimizableImages
         case .extractAudio:
             return selection.containsOnlyVideos
+        case .splitPDF:
+            return selection.isSinglePDFFile
         case .mergePDF:
             return selection.count >= 2 && selection.containsOnlyPDFsAndImages
         case .zip:
-            return selection.count >= 1
+            return selection.count >= 1 && !selection.isSingleZIPFile
         }
     }
 
     var producesAggregateOutput: Bool {
-        self == .mergePDF || self == .zip
+        switch self {
+        case .splitPDF, .mergePDF, .zip:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var preservesSources: Bool {
+        if case .splitPDF = self { return true }
+        return false
     }
 
     func pendingTitle(for filename: String) -> String {
@@ -153,6 +205,8 @@ enum ShelfTransformAction: Hashable, Sendable {
             return "Removing metadata from \(filename)…"
         case .extractAudio:
             return "Extracting audio from \(filename)…"
+        case .splitPDF:
+            return "Splitting \(filename)…"
         case .mergePDF:
             return "Creating Merged.pdf…"
         case .zip:
@@ -182,6 +236,13 @@ enum ShelfTransformAction: Hashable, Sendable {
                 switch self {
                 case .zip:
                     Self.runZip(inputs, outputDirectory: outputDirectory, continuation: continuation)
+                case let .splitPDF(plan):
+                    Self.runSplitPDF(
+                        inputs,
+                        plan: plan,
+                        outputDirectory: outputDirectory,
+                        continuation: continuation
+                    )
                 case .mergePDF:
                     Self.runMergePDF(
                         inputs,
@@ -288,7 +349,7 @@ enum ShelfTransformAction: Hashable, Sendable {
                 contentType: contentType
             )
 
-        case .extractAudio, .mergePDF, .zip:
+        case .extractAudio, .splitPDF, .mergePDF, .zip:
             throw ShelfTransformError.unsupportedOperation
         }
     }
@@ -417,6 +478,66 @@ enum ShelfTransformAction: Hashable, Sendable {
         do {
             try fileManager.moveItem(at: partialURL, to: finalURL)
             continuation.yield(.output(inputID: nil, fileURL: finalURL))
+        } catch {
+            continuation.yield(.aggregateFailure(error.localizedDescription))
+        }
+    }
+
+    private static func runSplitPDF(
+        _ inputs: [ShelfTransformInput],
+        plan: PDFSplitPlan,
+        outputDirectory: URL,
+        continuation: AsyncStream<ShelfTransformEvent>.Continuation
+    ) {
+        guard let input = inputs.first, inputs.count == 1 else {
+            continuation.yield(.aggregateFailure(
+                ShelfTransformError.invalidPDFSplit.localizedDescription
+            ))
+            return
+        }
+        let fileManager = FileManager.default
+        do {
+            guard fileManager.fileExists(atPath: input.sourceURL.path) else {
+                throw ShelfTransformError.sourceMissing(input.filename)
+            }
+            guard let source = PDFDocument(url: input.sourceURL), source.pageCount > 1 else {
+                throw ShelfTransformError.unreadablePDF(input.filename)
+            }
+            let ranges = plan.pageRanges(pageCount: source.pageCount)
+            guard ranges.count > 1 else {
+                throw ShelfTransformError.invalidPDFSplit
+            }
+
+            let base = input.sourceURL.deletingPathExtension().lastPathComponent
+            var outputs: [URL] = []
+            for (index, range) in ranges.enumerated() {
+                guard !Task.isCancelled else { return }
+                let part = PDFDocument()
+                for pageIndex in range {
+                    guard let page = source.page(at: pageIndex) else {
+                        throw ShelfTransformError.unreadablePDF(input.filename)
+                    }
+                    part.insert(page, at: part.pageCount)
+                }
+
+                let filename = "\(base) \(index + 1).pdf"
+                let finalURL = ItemStore.nonClobberingURL(
+                    for: outputDirectory.appendingPathComponent(filename, isDirectory: false)
+                )
+                let partialURL = outputDirectory.appendingPathComponent(
+                    ".\(base)-\(index + 1)-\(UUID().uuidString).partial.pdf",
+                    isDirectory: false
+                )
+                guard part.write(to: partialURL) else {
+                    throw ShelfTransformError.writeFailed(filename)
+                }
+                try fileManager.moveItem(at: partialURL, to: finalURL)
+                outputs.append(finalURL)
+            }
+
+            for output in outputs {
+                continuation.yield(.output(inputID: nil, fileURL: output))
+            }
         } catch {
             continuation.yield(.aggregateFailure(error.localizedDescription))
         }
@@ -628,6 +749,7 @@ private enum ShelfTransformError: LocalizedError {
     case noAudioTrack(String)
     case audioExportUnavailable(String)
     case audioExportFailed(String)
+    case invalidPDFSplit
     case unwritableFormat(String)
     case writeFailed(String)
     case unsupportedOperation
@@ -650,6 +772,8 @@ private enum ShelfTransformError: LocalizedError {
             return "Audio cannot be extracted from \(filename) as M4A."
         case let .audioExportFailed(filename):
             return "The audio in \(filename) could not be extracted."
+        case .invalidPDFSplit:
+            return "Choose at least one place to split the PDF."
         case let .unwritableFormat(type):
             return "ImageIO cannot write the source format \(type)."
         case let .writeFailed(filename):

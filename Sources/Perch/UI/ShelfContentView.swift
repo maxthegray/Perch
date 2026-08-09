@@ -439,6 +439,17 @@ struct ShelfContentView: View {
             }
         }
         .frame(width: side, height: side)
+        .overlay(alignment: .bottomTrailing) {
+            if !themeStore.showsLabels,
+               let label = FileTypeBadgePresentation.label(
+                   backingFileNames: item.metadata.backingFileNames,
+                   primaryFileType: item.metadata.primaryFileType
+               ) {
+                FileTypeBadgeView(label: label)
+                    .padding(max(2, side * 0.08))
+                    .transition(.opacity.combined(with: .scale(scale: 0.8)))
+            }
+        }
         .contentShape(Rectangle())
         .scaleEffect(
             interaction.deletingItemIDs.contains(item.id) ? 1.06
