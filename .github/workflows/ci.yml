@@ -31,9 +31,9 @@ jobs:
           echo "===== bundle: $BIN ====="
           ls -la "$BIN" | head -20
           lldb --batch \
+            -k "thread backtrace all" \
+            -k "quit" \
             -o "run" \
-            -o "thread backtrace all" \
-            -o "quit" \
             -- "$(xcrun -f xctest)" \
                -XCTest PerchTests.ShelfTransformTests/testExtractAudioWritesM4AWithoutChangingSource \
                "$BIN/PerchPackageTests.xctest"
