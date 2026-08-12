@@ -147,19 +147,26 @@ final class ShelfTransformTests: XCTestCase {
     func testExtractAudioWritesM4AWithoutChangingSource() async throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
+        perchMark("T1 before fixture copy")
         let source = try fixture.copyBundledMovie(named: "clip.mov")
         let original = try Data(contentsOf: source)
+        perchMark("T2 before collect")
 
         let events = await collect(
             .extractAudio,
             input: fixture.input(for: source),
             outputDirectory: fixture.outputDirectory
         )
+        perchMark("T3 after collect")
         let output = try XCTUnwrap(events.outputURL)
         let extracted = AVURLAsset(url: output)
+        perchMark("T4 before extracted.loadTracks")
         let audioTracks = try await extracted.loadTracks(withMediaType: .audio)
+        perchMark("T5 before source.load(.duration)")
         let sourceDuration = try await AVURLAsset(url: source).load(.duration)
+        perchMark("T6 before extracted.load(.duration)")
         let extractedDuration = try await extracted.load(.duration)
+        perchMark("T7 all loads done")
 
         XCTAssertEqual(output.lastPathComponent, "clip.m4a")
         XCTAssertEqual(output.pathExtension, "m4a")

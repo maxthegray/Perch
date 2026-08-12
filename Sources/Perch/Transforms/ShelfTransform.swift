@@ -361,11 +361,15 @@ enum ShelfTransformAction: Hashable, Sendable {
         guard FileManager.default.fileExists(atPath: input.sourceURL.path) else {
             throw ShelfTransformError.sourceMissing(input.filename)
         }
+        perchMark("P1 asset init")
         let asset = AVURLAsset(url: input.sourceURL)
+        perchMark("P2 before loadTracks")
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ShelfTransformError.noAudioTrack(input.filename)
         }
+        perchMark("P3 after loadTracks")
         let sourceFormat = try await track.load(.formatDescriptions).first
+        perchMark("P4 after load(.formatDescriptions)")
 
         let base = input.sourceURL.deletingPathExtension().lastPathComponent
         let finalURL = ItemStore.nonClobberingURL(
@@ -384,7 +388,9 @@ enum ShelfTransformAction: Hashable, Sendable {
             to: partialURL,
             filename: input.filename
         )
+        perchMark("P5 before copy")
         try await copier.copy()
+        perchMark("P6 after copy")
         try FileManager.default.moveItem(at: partialURL, to: finalURL)
         return finalURL
     }
@@ -910,4 +916,9 @@ private enum ShelfTransformError: LocalizedError {
             return "This transform is not supported."
         }
     }
+}
+
+// TEMPORARY: CI crash instrumentation.
+func perchMark(_ message: String) {
+    FileHandle.standardError.write(Data("[MARK] \(message)\n".utf8))
 }
