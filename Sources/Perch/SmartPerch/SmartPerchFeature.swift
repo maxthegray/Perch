@@ -18,6 +18,7 @@ import UniformTypeIdentifiers
 final class SmartPerchFeature {
     private let recorder: SmartPerchDropRecorder
     private let screenshotOCRWorker = ScreenshotOCRWorker()
+    private let pdfSmartNameAnalyzer = PDFSmartNameAnalyzer()
     private let smartNames: SmartNameStore
     private let routeSuggestions: RouteSuggestionStore
     private let arrivals: RecentArrivals
@@ -104,9 +105,12 @@ final class SmartPerchFeature {
         guard !isShuttingDown else { return }
         let shelfItemID = item.id
         let fileURLs = item.backingFileURLs()
-        let expectsSmartName = registerScreenshotPresentationIfNeeded(for: item)
-        if expectsSmartName {
+        let expectsScreenshotName = registerScreenshotPresentationIfNeeded(for: item)
+        let expectsPDFName = fileURLs.count == 1 && Self.isPDF(fileURLs[0])
+        if expectsScreenshotName {
             smartNames.beginAnalyzingScreenshot(shelfItemID)
+        } else if expectsPDFName {
+            smartNames.beginAnalyzing(shelfItemID)
         }
         let capturedContexts = screenshotCaptureContexts ?? fileURLs.map {
             ScreenshotWindowContextCapture.captureFreshContext(for: $0)
@@ -115,8 +119,10 @@ final class SmartPerchFeature {
         launchTask { [weak self] in
             guard let self else { return }
             defer {
-                if expectsSmartName {
+                if expectsScreenshotName {
                     smartNames.finishAnalyzingScreenshot(shelfItemID)
+                } else if expectsPDFName {
+                    smartNames.finishAnalyzing(shelfItemID)
                 }
             }
             do {
@@ -139,6 +145,144 @@ final class SmartPerchFeature {
                 NSLog("Perch could not record Smart Perch drop \(context.eventID): \(error)")
             }
         }
+    }
+
+    // MARK: - Transform outputs
+
+    func handleDerivedOutput(
+        action: ShelfTransformAction,
+        sources: [StoredItem],
+        output: StoredItem
+    ) {
+        guard !isShuttingDown,
+              output.backingFileURLs().count == 1,
+              let outputURL = output.backingFileURLs().first else {
+            return
+        }
+
+        switch action {
+        case .convert, .optimize, .stripMetadata:
+            guard let source = sources.first else { return }
+            if let suggestion = smartNames.suggestion(for: source.id) {
+                inheritSmartName(
+                    suggestion,
+                    from: source,
+                    output: output,
+                    outputURL: outputURL
+                )
+            } else if smartNames.isRegisteredScreenshot(source.id) {
+                analyzeDerivedOutput(
+                    output,
+                    at: outputURL,
+                    usesScreenshotPresentation: true,
+                    forceAnalysis: true
+                )
+            }
+
+        case .mergePDF, .splitPDF:
+            analyzeDerivedOutput(
+                output,
+                at: outputURL,
+                usesScreenshotPresentation: false,
+                forceAnalysis: false
+            )
+
+        case .extractAudio, .zip:
+            break
+        }
+    }
+
+    private func inheritSmartName(
+        _ sourceSuggestion: AvailableFilenameSuggestion,
+        from source: StoredItem,
+        output: StoredItem,
+        outputURL: URL
+    ) {
+        let suggestedStem = URL(fileURLWithPath: sourceSuggestion.suggestedFilename)
+            .deletingPathExtension()
+            .lastPathComponent
+        let outputExtension = outputURL.pathExtension
+        let suggestedFilename = outputExtension.isEmpty
+            ? suggestedStem
+            : "\(suggestedStem).\(outputExtension)"
+        let fileID = UUID()
+        let inherited = AvailableFilenameSuggestion(
+            fileID: fileID,
+            shelfItemID: output.id,
+            originalFilename: outputURL.lastPathComponent,
+            displayName: sourceSuggestion.displayName,
+            suggestedFilename: suggestedFilename
+        )
+        if smartNames.isRegisteredScreenshot(source.id) {
+            smartNames.registerScreenshot(output.id)
+        }
+        smartNames.set(inherited)
+
+        launchTask { [weak self, recorder] in
+            do {
+                _ = try await recorder.recordDerivedFilenameSuggestion(
+                    context: Self.transformRecordingContext(),
+                    shelfItemID: output.id,
+                    fileURL: outputURL,
+                    fileID: fileID,
+                    displayName: inherited.displayName,
+                    suggestedFilename: inherited.suggestedFilename
+                )
+            } catch {
+                self?.smartNames.remove(
+                    for: output.id,
+                    ifFileIDMatches: fileID
+                )
+                NSLog("Perch could not preserve the Smart Name for \(outputURL.lastPathComponent): \(error)")
+            }
+        }
+    }
+
+    private func analyzeDerivedOutput(
+        _ output: StoredItem,
+        at outputURL: URL,
+        usesScreenshotPresentation: Bool,
+        forceAnalysis: Bool
+    ) {
+        if usesScreenshotPresentation {
+            smartNames.beginAnalyzingScreenshot(output.id)
+        } else {
+            smartNames.beginAnalyzing(output.id)
+        }
+
+        launchTask { [weak self] in
+            guard let self else { return }
+            defer {
+                if usesScreenshotPresentation {
+                    smartNames.finishAnalyzingScreenshot(output.id)
+                } else {
+                    smartNames.finishAnalyzing(output.id)
+                }
+            }
+            do {
+                let drop = try await recorder.recordFinalizedDrop(
+                    context: Self.transformRecordingContext(),
+                    shelfItemID: output.id,
+                    payloadKind: .transform,
+                    fileURLs: [outputURL]
+                )
+                await runPendingOCR(
+                    in: drop,
+                    fileURLs: [outputURL],
+                    forceAnalysis: forceAnalysis
+                )
+            } catch {
+                NSLog("Perch could not analyze transformed output \(outputURL.lastPathComponent): \(error)")
+            }
+        }
+    }
+
+    private static func transformRecordingContext() -> DropRecordingContext {
+        DropRecordingContext(
+            batchID: UUID(),
+            occurredAt: Date(),
+            sourceApplication: nil
+        )
     }
 
     func recordArrivalSessionInteraction(
@@ -229,9 +373,111 @@ final class SmartPerchFeature {
                     availableSuggestions.append(suggestion)
                 }
                 smartNames.replace(with: availableSuggestions)
+                reanalyzeStoredPDFsIfNeeded()
             } catch {
                 NSLog("Perch could not load Smart Perch filename suggestions: \(error)")
             }
+        }
+    }
+
+    private func reanalyzeStoredPDFsIfNeeded() {
+        let candidates = currentItems().compactMap { item -> (StoredItem, URL)? in
+            let urls = item.backingFileURLs()
+            guard urls.count == 1, Self.isPDF(urls[0]) else { return nil }
+            return (item, urls[0])
+        }
+        guard !candidates.isEmpty else { return }
+
+        launchTask { [weak self, recorder] in
+            guard let self else { return }
+            do {
+                let drops = try await recorder.fetchAllDrops()
+                for (item, url) in candidates {
+                    guard currentItems().contains(where: { $0.id == item.id }) else {
+                        continue
+                    }
+                    let recordedFile = drops
+                        .filter { $0.event.shelfItemID == item.id }
+                        .sorted {
+                            $0.event.occurredAtMilliseconds
+                                > $1.event.occurredAtMilliseconds
+                        }
+                        .lazy
+                        .compactMap { drop in
+                            drop.files.first { $0.displayName == url.lastPathComponent }
+                        }
+                        .first
+                    if let recordedFile,
+                       recordedFile.filenameSuggesterIdentifier
+                           == PDFSmartNameAnalyzer.identifier,
+                       recordedFile.filenameSuggesterVersion
+                           == PDFSmartNameAnalyzer.version,
+                       (recordedFile.ocrState == .completed
+                            || recordedFile.ocrState == .noText) {
+                        continue
+                    }
+                    await reanalyzeStoredPDF(
+                        item,
+                        at: url,
+                        recordedFile: recordedFile
+                    )
+                }
+            } catch {
+                NSLog("Perch could not prepare stored PDFs for Smart Name analysis: \(error)")
+            }
+        }
+    }
+
+    private func reanalyzeStoredPDF(
+        _ item: StoredItem,
+        at url: URL,
+        recordedFile: DroppedFileEvent?
+    ) async {
+        smartNames.beginAnalyzing(item.id)
+        defer { smartNames.finishAnalyzing(item.id) }
+
+        do {
+            let file: DroppedFileEvent
+            if let recordedFile {
+                file = recordedFile
+            } else {
+                let drop = try await recorder.recordFinalizedDrop(
+                    context: Self.transformRecordingContext(),
+                    shelfItemID: item.id,
+                    payloadKind: .file,
+                    fileURLs: [url]
+                )
+                guard let createdFile = drop.files.first else { return }
+                file = createdFile
+            }
+            let result = await pdfSmartNameAnalyzer.recognizeText(at: url)
+            let suggestion = try await recorder.completeOCR(
+                fileID: file.fileID,
+                text: result.text,
+                recognizedLines: result.lines,
+                originalFilename: file.displayName,
+                durationMilliseconds: result.durationMilliseconds,
+                filenameSuggesterIdentifier: PDFSmartNameAnalyzer.identifier,
+                filenameSuggesterVersion: PDFSmartNameAnalyzer.version
+            )
+            guard currentItems().contains(where: { $0.id == item.id }) else {
+                return
+            }
+            if let suggestion {
+                smartNames.set(
+                    AvailableFilenameSuggestion(
+                        fileID: file.fileID,
+                        shelfItemID: item.id,
+                        originalFilename: file.displayName,
+                        displayName: suggestion.displayName,
+                        suggestedFilename: suggestion.suggestedFilename
+                    )
+                )
+            } else {
+                smartNames.clearSuggestion(for: item.id)
+            }
+        } catch {
+            NSLog("Perch could not reanalyze stored PDF \(url.lastPathComponent): \(error)")
         }
     }
 
@@ -516,9 +762,10 @@ final class SmartPerchFeature {
     private func runPendingOCR(
         in drop: RecordedDrop,
         fileURLs: [URL],
-        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil
+        prefetchedOCRResults: [ScreenshotOCRResult?]? = nil,
+        forceAnalysis: Bool = false
     ) async {
-        for file in drop.files where file.ocrState == .pending {
+        for file in drop.files where file.ocrState == .pending || forceAnalysis {
             guard fileURLs.indices.contains(file.ordinal) else {
                 try? await recorder.failOCR(fileID: file.fileID)
                 continue
@@ -530,6 +777,10 @@ final class SmartPerchFeature {
                    prefetchedOCRResults.indices.contains(file.ordinal),
                    let prefetched = prefetchedOCRResults[file.ordinal] {
                     result = prefetched
+                } else if Self.isPDF(fileURLs[file.ordinal]) {
+                    result = await pdfSmartNameAnalyzer.recognizeText(
+                        at: fileURLs[file.ordinal]
+                    )
                 } else {
                     result = try await screenshotOCRWorker.recognizeText(
                         at: fileURLs[file.ordinal]
@@ -541,9 +792,16 @@ final class SmartPerchFeature {
                     recognizedLines: result.lines,
                     originalFilename: file.displayName,
                     durationMilliseconds: result.durationMilliseconds,
-                    screenshotCaptureContext: file.screenshotCaptureContext
+                    screenshotCaptureContext: file.screenshotCaptureContext,
+                    filenameSuggesterIdentifier: Self.isPDF(fileURLs[file.ordinal])
+                        ? PDFSmartNameAnalyzer.identifier
+                        : ScreenshotFilenameSuggester.identifier,
+                    filenameSuggesterVersion: Self.isPDF(fileURLs[file.ordinal])
+                        ? PDFSmartNameAnalyzer.version
+                        : ScreenshotFilenameSuggester.version
                 )
-                if let nameSuggestion {
+                if let nameSuggestion,
+                   currentItems().contains(where: { $0.id == drop.event.shelfItemID }) {
                     smartNames.set(
                         AvailableFilenameSuggestion(
                             fileID: file.fileID,
@@ -556,7 +814,7 @@ final class SmartPerchFeature {
                 }
                 if result.durationMilliseconds > 2_000 {
                     NSLog(
-                        "Perch screenshot OCR took \(result.durationMilliseconds) ms for \(file.displayName)"
+                        "Perch Smart Name analysis took \(result.durationMilliseconds) ms for \(file.displayName)"
                     )
                 }
             } catch {
@@ -567,5 +825,9 @@ final class SmartPerchFeature {
                 }
             }
         }
+    }
+
+    private static func isPDF(_ url: URL) -> Bool {
+        url.pathExtension.caseInsensitiveCompare("pdf") == .orderedSame
     }
 }

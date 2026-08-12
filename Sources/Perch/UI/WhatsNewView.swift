@@ -86,7 +86,7 @@ struct WhatsNewView: View {
                         // Only worth labelling when the user is reading more than one
                         // release at a time; otherwise the title above already said it.
                         if notes.count > 1 {
-                            Text("\(PerchProductIdentity.displayName) \(note.version)")
+                            Text(verbatim: "\(PerchProductIdentity.displayName) \(note.version)")
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(.secondary)
                                 .textCase(.uppercase)
@@ -145,10 +145,12 @@ private struct CompactHighlight: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                Text(detail)
-                    .font(.system(size: 11.5))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+                if !detail.isEmpty {
+                    Text(detail)
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
         }
     }

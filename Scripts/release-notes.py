@@ -47,7 +47,10 @@ def as_html(entry):
         # apostrophes only makes the published feed harder to read.
         title = html.escape(highlight["title"], quote=False)
         detail = html.escape(highlight["detail"], quote=False)
-        lines.append(f"  <li><b>{title}</b><br>{detail}</li>")
+        if detail:
+            lines.append(f"  <li><b>{title}</b><br>{detail}</li>")
+        else:
+            lines.append(f"  <li>{title}</li>")
     lines.append("</ul>")
     return "\n".join(lines)
 
@@ -59,7 +62,8 @@ def as_markdown(entry):
         lines.append("")
     for highlight in entry.get("highlights", []):
         lines.append(f"{highlight['title']}.")
-        lines.append(highlight["detail"])
+        if highlight["detail"]:
+            lines.append(highlight["detail"])
         lines.append("")
     lines.append("Download Perch.zip, unzip it, and move Perch into the Applications folder.")
     lines.append("")

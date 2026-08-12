@@ -11,6 +11,7 @@ final class ShelfTransformCoordinator {
         let aggregatePlaceholderID: UUID?
         let insertionAnchorItemID: UUID
         let fallbackInsertionIndex: Int
+        let orderedSourceItems: [StoredItem]
         let sourceItemsByID: [UUID: StoredItem]
         let inputsByID: [UUID: ShelfTransformInput]
         let sourceIDByInputID: [UUID: UUID]
@@ -28,6 +29,8 @@ final class ShelfTransformCoordinator {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var operations: [UUID: Operation] = [:]
     private var isShuttingDown = false
+
+    var onProduceOutput: ((ShelfTransformAction, [StoredItem], StoredItem) -> Void)?
 
     init(
         holding: HoldingDirectory,
@@ -104,6 +107,7 @@ final class ShelfTransformCoordinator {
             aggregatePlaceholderID: aggregatePlaceholderID,
             insertionAnchorItemID: insertionAnchorItemID,
             fallbackInsertionIndex: fallbackInsertionIndex,
+            orderedSourceItems: items,
             sourceItemsByID: Dictionary(uniqueKeysWithValues: items.map { ($0.id, $0) }),
             inputsByID: Dictionary(uniqueKeysWithValues: inputs.map { ($0.id, $0) }),
             sourceIDByInputID: Dictionary(uniqueKeysWithValues: inputs.map {
@@ -239,6 +243,13 @@ final class ShelfTransformCoordinator {
                     at: insertionIndex,
                     insertsIntoStore: false
                 )
+                let outputSources: [StoredItem]
+                if let source = operation.sourceItemsByID[sourceItemID], inputID != nil {
+                    outputSources = [source]
+                } else {
+                    outputSources = operation.orderedSourceItems
+                }
+                onProduceOutput?(operation.action, outputSources, output)
                 if let placeholderID {
                     interaction.removeTransformPlaceholder(placeholderID)
                 }

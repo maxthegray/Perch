@@ -58,6 +58,21 @@ final class SmartNamePresentationTests: XCTestCase {
         )
     }
 
+    func testPDFKeepsItsFilenameWhileShowingAnalysis() {
+        let store = SmartNameStore()
+        let itemID = UUID()
+        store.beginAnalyzing(itemID)
+
+        XCTAssertEqual(
+            store.presentation(for: itemID, originalTitle: "Scanned document.pdf"),
+            SmartNameStore.NamePresentation(
+                title: "Scanned document.pdf",
+                isAnalyzing: true,
+                usesStableWidth: false
+            )
+        )
+    }
+
     func testDismissRestoresOriginalFilenamePresentation() {
         let store = SmartNameStore()
         let itemID = UUID()

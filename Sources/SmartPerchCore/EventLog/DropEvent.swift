@@ -41,6 +41,7 @@ public enum DropPayloadKind: String, Codable, CaseIterable, DatabaseValueConvert
     case clipping
     case mixed
     case recentArrival
+    case transform
 }
 
 /// OCR progresses asynchronously after the drop is safely stored. Keeping an explicit

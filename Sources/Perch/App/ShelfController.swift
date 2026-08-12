@@ -267,6 +267,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         ])
         panel.contentView = dropView
 
+        transformCoordinator.onProduceOutput = { [weak self] action, sources, output in
+            self?.smartPerch.handleDerivedOutput(
+                action: action,
+                sources: sources,
+                output: output
+            )
+        }
+
         hostView.onRecordSuccessfulRoutes = { [weak self] routes in
             self?.smartPerch.recordSuccessfulRoutes(routes)
         }

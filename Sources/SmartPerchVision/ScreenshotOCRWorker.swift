@@ -50,10 +50,23 @@ public final class ScreenshotOCRWorker: @unchecked Sendable {
         }
     }
 
-    private static func performRecognition(at url: URL) throws -> ScreenshotOCRResult {
-        let startedAt = DispatchTime.now().uptimeNanoseconds
+    public func recognizeText(in image: CGImage) async throws -> ScreenshotOCRResult {
+        let boxedImage = SendableImage(image)
+        return try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                do {
+                    continuation.resume(
+                        returning: try Self.performRecognition(in: boxedImage.image)
+                    )
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
 
-        let recognition: (text: String?, lines: [RecognizedTextLine]) = try autoreleasepool {
+    private static func performRecognition(at url: URL) throws -> ScreenshotOCRResult {
+        let image: CGImage = try autoreleasepool {
             let sourceOptions = [
                 kCGImageSourceShouldCache: false
             ] as CFDictionary
@@ -74,7 +87,15 @@ public final class ScreenshotOCRWorker: @unchecked Sendable {
             ) else {
                 throw ScreenshotOCRError.thumbnailCreationFailed
             }
+            return image
+        }
+        return try performRecognition(in: image)
+    }
 
+    private static func performRecognition(in image: CGImage) throws -> ScreenshotOCRResult {
+        let startedAt = DispatchTime.now().uptimeNanoseconds
+
+        let recognition: (text: String?, lines: [RecognizedTextLine]) = try autoreleasepool {
             let request = VNRecognizeTextRequest()
             request.recognitionLevel = .accurate
             request.usesLanguageCorrection = true
@@ -132,5 +153,13 @@ public final class ScreenshotOCRWorker: @unchecked Sendable {
             lines: recognition.lines,
             durationMilliseconds: Int64(elapsedNanoseconds / 1_000_000)
         )
+    }
+}
+
+private final class SendableImage: @unchecked Sendable {
+    let image: CGImage
+
+    init(_ image: CGImage) {
+        self.image = image
     }
 }

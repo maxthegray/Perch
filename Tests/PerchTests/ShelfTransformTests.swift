@@ -453,6 +453,36 @@ final class ShelfTransformCoordinatorTests: XCTestCase {
         withExtendedLifetime(cancellable) {}
     }
 
+    func testOutputCallbackRunsBeforeReplaceRemovesItsSource() async throws {
+        let fixture = try CoordinatorFixture()
+        defer { fixture.remove() }
+        let source = try fixture.addOwnedImage(named: "source.png")
+        var callbackAction: ShelfTransformAction?
+        var callbackSourceIDs: [UUID] = []
+        var sourceWasStillPresent = false
+
+        fixture.coordinator.onProduceOutput = { action, sources, _ in
+            callbackAction = action
+            callbackSourceIDs = sources.map(\.id)
+            sourceWasStillPresent = fixture.store.items.contains { $0.id == source.id }
+        }
+        fixture.coordinator.perform(
+            .convert(.jpeg),
+            on: [source],
+            outputMode: .replace
+        )
+
+        let completed = await eventually {
+            fixture.store.items.count == 1
+                && fixture.store.items[0].id != source.id
+                && callbackAction != nil
+        }
+        XCTAssertTrue(completed)
+        XCTAssertEqual(callbackAction, .convert(.jpeg))
+        XCTAssertEqual(callbackSourceIDs, [source.id])
+        XCTAssertTrue(sourceWasStillPresent)
+    }
+
     func testReplaceRemovesSuccessfulSourceAndKeepsFailedSource() async throws {
         let fixture = try CoordinatorFixture()
         defer { fixture.remove() }

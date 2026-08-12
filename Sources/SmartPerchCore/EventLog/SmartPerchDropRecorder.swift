@@ -27,6 +27,64 @@ public actor SmartPerchDropRecorder {
         fileURLs: [URL],
         screenshotCaptureContexts: [ScreenshotCaptureContext?] = []
     ) throws -> RecordedDrop {
+        try recordFinalizedDrop(
+            context: context,
+            shelfItemID: shelfItemID,
+            payloadKind: payloadKind,
+            fileURLs: fileURLs,
+            screenshotCaptureContexts: screenshotCaptureContexts,
+            fileIDs: nil
+        )
+    }
+
+    @discardableResult
+    public func recordDerivedFilenameSuggestion(
+        context: DropRecordingContext,
+        shelfItemID: UUID,
+        fileURL: URL,
+        fileID: UUID,
+        displayName: String,
+        suggestedFilename: String
+    ) throws -> AvailableFilenameSuggestion {
+        let drop = try recordFinalizedDrop(
+            context: context,
+            shelfItemID: shelfItemID,
+            payloadKind: .transform,
+            fileURLs: [fileURL],
+            screenshotCaptureContexts: [],
+            fileIDs: [fileID]
+        )
+        guard let file = drop.files.first else {
+            preconditionFailure("A derived file record must contain its output")
+        }
+        try eventStore.finishOCR(
+            fileID: file.fileID,
+            state: .noText,
+            text: nil,
+            completedAtMilliseconds: Self.currentMilliseconds(),
+            durationMilliseconds: nil,
+            smartLabel: displayName,
+            filenameSuggestion: suggestedFilename,
+            filenameSuggesterIdentifier: "derived-smart-name",
+            filenameSuggesterVersion: 1
+        )
+        return AvailableFilenameSuggestion(
+            fileID: file.fileID,
+            shelfItemID: shelfItemID,
+            originalFilename: file.displayName,
+            displayName: displayName,
+            suggestedFilename: suggestedFilename
+        )
+    }
+
+    private func recordFinalizedDrop(
+        context: DropRecordingContext,
+        shelfItemID: UUID,
+        payloadKind: DropPayloadKind,
+        fileURLs: [URL],
+        screenshotCaptureContexts: [ScreenshotCaptureContext?],
+        fileIDs: [UUID]?
+    ) throws -> RecordedDrop {
         let event = DropEvent(
             id: context.eventID,
             batchID: context.batchID,
@@ -43,10 +101,12 @@ public actor SmartPerchDropRecorder {
             let metadata = (try? DroppedFileMetadata.capture(from: url))
                 ?? DroppedFileMetadata(url: url)
             let category = classifier.classify(metadata)
+            let shouldAnalyzePDF = fileURLs.count == 1
+                && url.pathExtension.caseInsensitiveCompare("pdf") == .orderedSame
             let ocrState: OCRProcessingState = screenshotOCRGate.isEligible(
                 metadata,
                 category: category
-            ) ? .pending : .notEligible
+            ) || shouldAnalyzePDF ? .pending : .notEligible
             let screenshotContext = screenshotCaptureContexts.indices.contains(ordinal)
                 ? screenshotCaptureContexts[ordinal]
                 : nil
@@ -54,8 +114,11 @@ public actor SmartPerchDropRecorder {
                 .flatMap { try? JSONEncoder().encode($0) }
                 .flatMap { String(data: $0, encoding: .utf8) }
 
+            let fileID = fileIDs.flatMap { ids in
+                ids.indices.contains(ordinal) ? ids[ordinal] : nil
+            } ?? UUID()
             return DroppedFileEvent(
-                fileID: UUID(),
+                fileID: fileID,
                 dropEventID: event.id,
                 ordinal: ordinal,
                 displayName: url.lastPathComponent,
@@ -86,7 +149,9 @@ public actor SmartPerchDropRecorder {
         recognizedLines: [RecognizedTextLine] = [],
         originalFilename: String,
         durationMilliseconds: Int64,
-        screenshotCaptureContext: ScreenshotCaptureContext? = nil
+        screenshotCaptureContext: ScreenshotCaptureContext? = nil,
+        filenameSuggesterIdentifier: String = ScreenshotFilenameSuggester.identifier,
+        filenameSuggesterVersion: Int = ScreenshotFilenameSuggester.version
     ) throws -> ScreenshotNameSuggestion? {
         let normalizedText = text?
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -115,8 +180,8 @@ public actor SmartPerchDropRecorder {
             ocrLayoutJSON: ocrLayoutJSON,
             smartLabel: nameSuggestion?.displayName,
             filenameSuggestion: nameSuggestion?.suggestedFilename,
-            filenameSuggesterIdentifier: ScreenshotFilenameSuggester.identifier,
-            filenameSuggesterVersion: ScreenshotFilenameSuggester.version
+            filenameSuggesterIdentifier: filenameSuggesterIdentifier,
+            filenameSuggesterVersion: filenameSuggesterVersion
         )
         return nameSuggestion
     }

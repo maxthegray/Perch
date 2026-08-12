@@ -215,6 +215,18 @@ final class SmartPerchCoordinator: ObservableObject {
         feature?.dismissFilenameSuggestion(for: item)
     }
 
+    func handleDerivedOutput(
+        action: ShelfTransformAction,
+        sources: [StoredItem],
+        output: StoredItem
+    ) {
+        feature?.handleDerivedOutput(
+            action: action,
+            sources: sources,
+            output: output
+        )
+    }
+
     func beginFilingAtSuggestedRoute(
         _ item: StoredItem
     ) -> SmartPerchFeature.RouteFiling? {

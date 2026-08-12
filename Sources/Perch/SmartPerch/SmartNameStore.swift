@@ -56,7 +56,7 @@ final class SmartNameStore: ObservableObject {
         }
         return NamePresentation(
             title: originalTitle,
-            isAnalyzing: false,
+            isAnalyzing: analyzingItemIDs.contains(itemID),
             usesStableWidth: false
         )
     }
@@ -70,8 +70,20 @@ final class SmartNameStore: ObservableObject {
         analyzingItemIDs.insert(itemID)
     }
 
+    func beginAnalyzing(_ itemID: UUID) {
+        analyzingItemIDs.insert(itemID)
+    }
+
     func finishAnalyzingScreenshot(_ itemID: UUID) {
         analyzingItemIDs.remove(itemID)
+    }
+
+    func finishAnalyzing(_ itemID: UUID) {
+        analyzingItemIDs.remove(itemID)
+    }
+
+    func isRegisteredScreenshot(_ itemID: UUID) -> Bool {
+        screenshotItemIDs.contains(itemID)
     }
 
     func retainPresentations(for itemIDs: Set<UUID>) {
@@ -105,6 +117,15 @@ final class SmartNameStore: ObservableObject {
         analyzingItemIDs.remove(itemID)
         screenshotItemIDs.remove(itemID)
         return suggestionsByItemID.removeValue(forKey: itemID)
+    }
+
+    func remove(for itemID: UUID, ifFileIDMatches fileID: UUID) {
+        guard suggestionsByItemID[itemID]?.fileID == fileID else { return }
+        suggestionsByItemID.removeValue(forKey: itemID)
+    }
+
+    func clearSuggestion(for itemID: UUID) {
+        suggestionsByItemID.removeValue(forKey: itemID)
     }
 
     /// Forget everything when Smart Perch is switched off. The generated names are not

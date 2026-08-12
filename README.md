@@ -10,7 +10,7 @@
 
 Perch gives you a small place to set things down while you work. Start dragging a file, image, link, or bit of text and the shelf appears at the edge of your screen. Drop it there, switch to another app, and drag it back out when you're ready.
 
-It also understands file promises from apps like Photos, Mail, and Messages, so it works with the things that don't become ordinary files until you actually drop them somewhere. And while something is sitting there, you can convert it, shrink it, merge it, or zip it without opening anything else.
+It also understands file promises from apps like Photos, Mail, and Messages, so it works with the things that don't become ordinary files until you actually drop them somewhere. And while something is sitting there, you can convert or optimize an image, extract audio, work with PDFs, or zip it without opening anything else.
 
 <p align="center">
   <img src="assets/demo.gif" width="800" alt="Dragging a file into Perch and back out again">
@@ -33,7 +33,7 @@ Perch requires macOS 14 or newer. It has no Dock or menu-bar icon; once launched
 - **Pick it up later.** Hover the edge to bring Perch back, then drag the item into Finder or another app. Dragging out can move the item off the shelf or leave a copy behind.
 - **Bring the shelf to you.** Turn on Shake to summon and a shake of the pointer brings Perch to the cursor. If you'd rather keep it somewhere specific, enable dragging, pull it away from the edge, and optionally lock it in place. The other edges offer themselves while you drag, so you can change your mind on the way.
 - **Catch recent files.** New files in Downloads or on the Desktop can appear as dimmed suggestions. Downloads that finish together collapse into a session you can expand, inspect, or add all at once. Perch offers the five most recent.
-- **Change something on the way through.** The shelf's Transform menu converts images between JPEG, PNG, HEIC, and TIFF, resizes them, or strips their metadata. Several PDFs and images can be merged into one document — you arrange the pages first — and anything at all can be compressed into a ZIP.
+- **Change something on the way through.** The shelf's Transform menu converts or optimizes images, strips metadata, and extracts audio from video. You can arrange and merge PDFs and images, split a PDF into separate documents, or compress a selection into a ZIP.
 - **Right-click for the useful stuff.** Quick Look, Delete, Return, History, Settings, and update checks are all close at hand.
 
 ## Make it yours
@@ -52,7 +52,7 @@ Items on the shelf are stored as ordinary files under `~/Library/Application Sup
 
 ## Smart Perch
 
-Smart Perch reads screenshots you drop so it can give them useful names. It also remembers where you tend to put things and can offer that folder next time.
+Smart Perch reads screenshots and PDFs you drop so it can give them useful names. It also remembers where you tend to put things and can offer that folder next time.
 
 It is built into Perch but remains hidden and completely off until you deliberately enable it—no Smart database, text recognition, or learning runs in the background. Everything it learns stays in a file on your Mac and never leaves it. Removing Smart Perch deletes that learned data without affecting shelf items.
 

@@ -110,7 +110,7 @@ final class SmartPerchEventStoreTests: XCTestCase {
         XCTAssertEqual(file.category, .document)
         XCTAssertEqual(file.classifierIdentifier, ExtensionHeuristicsClassifier.identifier)
         XCTAssertEqual(file.classifierVersion, ExtensionHeuristicsClassifier.version)
-        XCTAssertEqual(file.ocrState, .notEligible)
+        XCTAssertEqual(file.ocrState, .pending)
         XCTAssertNil(file.ocrText)
         XCTAssertNil(file.ocrCompletedAtMilliseconds)
         XCTAssertNil(file.ocrDurationMilliseconds)
@@ -177,6 +177,51 @@ final class SmartPerchEventStoreTests: XCTestCase {
         )
     }
 
+    func testDerivedSmartNameIsPersistedForTheNewShelfItem() async throws {
+        let fixture = try TemporaryDatabaseFixture()
+        defer { fixture.remove() }
+
+        let fileURL = fixture.directoryURL.appendingPathComponent("converted.heic")
+        try Data([0x00, 0x01, 0x02]).write(to: fileURL)
+        let recorder = SmartPerchDropRecorder(
+            eventStore: try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+        )
+        let itemID = UUID()
+        let fileID = UUID()
+
+        let suggestion = try await recorder.recordDerivedFilenameSuggestion(
+            context: DropRecordingContext(
+                batchID: UUID(),
+                occurredAt: Date(),
+                sourceApplication: nil
+            ),
+            shelfItemID: itemID,
+            fileURL: fileURL,
+            fileID: fileID,
+            displayName: "Quarterly Forecast",
+            suggestedFilename: "quarterly-forecast.heic"
+        )
+
+        XCTAssertEqual(
+            suggestion,
+            AvailableFilenameSuggestion(
+                fileID: fileID,
+                shelfItemID: itemID,
+                originalFilename: "converted.heic",
+                displayName: "Quarterly Forecast",
+                suggestedFilename: "quarterly-forecast.heic"
+            )
+        )
+        let drops = try await recorder.fetchAllDrops()
+        let drop = try XCTUnwrap(drops.first)
+        XCTAssertEqual(drop.event.payloadKind, .transform)
+        XCTAssertEqual(drop.files.first?.fileID, fileID)
+        XCTAssertEqual(drop.files.first?.ocrState, .noText)
+        XCTAssertEqual(drop.files.first?.filenameSuggestionState, .available)
+        let preparedSuggestions = try await recorder.prepareFilenameSuggestions()
+        XCTAssertEqual(preparedSuggestions, [suggestion])
+    }
+
     func testOCRCompletionIsPersisted() throws {
         let fixture = try TemporaryDatabaseFixture()
         defer { fixture.remove() }
@@ -200,6 +245,30 @@ final class SmartPerchEventStoreTests: XCTestCase {
         XCTAssertEqual(updatedFile.ocrCompletedAtMilliseconds, 1_700_000_001_000)
         XCTAssertEqual(updatedFile.ocrDurationMilliseconds, 321)
         XCTAssertEqual(updatedFile.filenameSuggestionState, .unavailable)
+    }
+
+    func testOCRCompletionPersistsACallerSpecificAnalyzerVersion() async throws {
+        let fixture = try TemporaryDatabaseFixture()
+        defer { fixture.remove() }
+
+        let store = try SmartPerchEventStore(databaseURL: fixture.databaseURL)
+        let event = makeEvent()
+        let file = makeFile(dropEventID: event.id, ocrState: .pending)
+        try store.record(event, files: [file])
+        let recorder = SmartPerchDropRecorder(eventStore: store)
+
+        _ = try await recorder.completeOCR(
+            fileID: file.fileID,
+            text: "Quarterly Revenue Forecast",
+            originalFilename: file.displayName,
+            durationMilliseconds: 10,
+            filenameSuggesterIdentifier: "pdf-visual-title",
+            filenameSuggesterVersion: 3
+        )
+
+        let updatedFile = try XCTUnwrap(store.fetchAllDrops().first?.files.first)
+        XCTAssertEqual(updatedFile.filenameSuggesterIdentifier, "pdf-visual-title")
+        XCTAssertEqual(updatedFile.filenameSuggesterVersion, 3)
     }
 
     func testWindowContextNamesScreenshotWhenOCRFindsNoText() async throws {
