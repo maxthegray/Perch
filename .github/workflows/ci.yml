@@ -22,13 +22,20 @@ jobs:
       - run: bash -n Scripts/build-app.sh Scripts/release.sh Scripts/install.sh Scripts/publish-smart-perch-bridge.sh
       - run: swift test
       # TEMPORARY: capture the faulting stack for the CI-only audio crash.
-      - name: Crash reports
+      - name: Backtrace the crash
         if: failure()
         run: |
-          ls -la ~/Library/Logs/DiagnosticReports/ 2>/dev/null || echo "no DiagnosticReports dir"
-          for f in ~/Library/Logs/DiagnosticReports/*; do
-            [ -e "$f" ] || continue
-            echo "===== $f ====="
-            cat "$f"
-          done
+          set +e
+          swift build --build-tests
+          BIN=$(swift build --show-bin-path)
+          echo "===== bundle: $BIN ====="
+          ls -la "$BIN" | head -20
+          lldb --batch \
+            -o "run" \
+            -o "thread backtrace all" \
+            -o "quit" \
+            -- "$(xcrun -f xctest)" \
+               -XCTest PerchTests.ShelfTransformTests/testExtractAudioWritesM4AWithoutChangingSource \
+               "$BIN/PerchPackageTests.xctest"
+          echo "===== lldb exit: $? ====="
       - run: swift build -c release
