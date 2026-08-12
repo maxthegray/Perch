@@ -55,7 +55,10 @@ let package = Package(
         .testTarget(
             name: "PerchTests",
             dependencies: ["Perch"],
-            path: "Tests/PerchTests"
+            path: "Tests/PerchTests",
+            resources: [
+                .copy("Fixtures")
+            ]
         )
     ]
 )

@@ -147,7 +147,7 @@ final class ShelfTransformTests: XCTestCase {
     func testExtractAudioWritesM4AWithoutChangingSource() async throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
-        let source = try fixture.makeAudio(named: "clip.wav")
+        let source = try fixture.copyBundledMovie(named: "clip.mov")
         let original = try Data(contentsOf: source)
 
         let events = await collect(
@@ -156,11 +156,20 @@ final class ShelfTransformTests: XCTestCase {
             outputDirectory: fixture.outputDirectory
         )
         let output = try XCTUnwrap(events.outputURL)
-        let audioTracks = try await AVURLAsset(url: output).loadTracks(withMediaType: .audio)
+        let extracted = AVURLAsset(url: output)
+        let audioTracks = try await extracted.loadTracks(withMediaType: .audio)
+        let sourceDuration = try await AVURLAsset(url: source).load(.duration)
+        let extractedDuration = try await extracted.load(.duration)
 
         XCTAssertEqual(output.lastPathComponent, "clip.m4a")
         XCTAssertEqual(output.pathExtension, "m4a")
         XCTAssertFalse(audioTracks.isEmpty)
+        XCTAssertEqual(
+            extractedDuration.seconds,
+            sourceDuration.seconds,
+            accuracy: 0.05,
+            "the whole track should be carried over, not just its first samples"
+        )
         XCTAssertEqual(try Data(contentsOf: source), original)
     }
 
@@ -856,25 +865,17 @@ private final class TransformFixture {
         return url
     }
 
-    func makeAudio(named name: String) throws -> URL {
+    /// Copies in the checked-in 1-second AAC movie built by
+    /// Scripts/make-audio-fixture.swift. Committing it keeps the test off the
+    /// host's audio encoder, which is not dependable on headless CI machines.
+    func copyBundledMovie(named name: String) throws -> URL {
+        let bundled = try XCTUnwrap(Bundle.module.url(
+            forResource: "clip",
+            withExtension: "mov",
+            subdirectory: "Fixtures"
+        ))
         let url = root.appendingPathComponent(name, isDirectory: false)
-        let sampleRate = 44_100.0
-        let frameCount = AVAudioFrameCount(sampleRate)
-        let format = try XCTUnwrap(AVAudioFormat(
-            standardFormatWithSampleRate: sampleRate,
-            channels: 1
-        ))
-        let buffer = try XCTUnwrap(AVAudioPCMBuffer(
-            pcmFormat: format,
-            frameCapacity: frameCount
-        ))
-        buffer.frameLength = frameCount
-        let samples = try XCTUnwrap(buffer.floatChannelData?[0])
-        for frame in 0..<Int(frameCount) {
-            samples[frame] = sin(2 * .pi * 440 * Float(frame) / Float(sampleRate)) * 0.25
-        }
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
+        try FileManager.default.copyItem(at: bundled, to: url)
         return url
     }
 
