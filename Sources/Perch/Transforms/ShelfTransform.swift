@@ -362,16 +362,10 @@ enum ShelfTransformAction: Hashable, Sendable {
             throw ShelfTransformError.sourceMissing(input.filename)
         }
         let asset = AVURLAsset(url: input.sourceURL)
-        let audioTracks = try await asset.loadTracks(withMediaType: .audio)
-        guard !audioTracks.isEmpty else {
+        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
             throw ShelfTransformError.noAudioTrack(input.filename)
         }
-        guard let exporter = AVAssetExportSession(
-            asset: asset,
-            presetName: AVAssetExportPresetAppleM4A
-        ), exporter.supportedFileTypes.contains(.m4a) else {
-            throw ShelfTransformError.audioExportUnavailable(input.filename)
-        }
+        let sourceFormat = try await track.load(.formatDescriptions).first
 
         let base = input.sourceURL.deletingPathExtension().lastPathComponent
         let finalURL = ItemStore.nonClobberingURL(
@@ -383,32 +377,14 @@ enum ShelfTransformAction: Hashable, Sendable {
         )
         defer { try? FileManager.default.removeItem(at: partialURL) }
 
-        if #available(macOS 15.0, *) {
-            try await exporter.export(to: partialURL, as: .m4a)
-        } else {
-            exporter.outputURL = partialURL
-            exporter.outputFileType = .m4a
-            let exporterBox = SendableAudioExporter(exporter)
-            try await withTaskCancellationHandler {
-                try await withCheckedThrowingContinuation { continuation in
-                    exporterBox.session.exportAsynchronously {
-                        switch exporterBox.session.status {
-                        case .completed:
-                            continuation.resume()
-                        case .cancelled:
-                            continuation.resume(throwing: CancellationError())
-                        default:
-                            continuation.resume(throwing:
-                                exporterBox.session.error
-                                    ?? ShelfTransformError.audioExportFailed(input.filename)
-                            )
-                        }
-                    }
-                }
-            } onCancel: {
-                exporterBox.session.cancelExport()
-            }
-        }
+        let copier = try AudioTrackCopier(
+            track: track,
+            of: asset,
+            sourceFormat: sourceFormat,
+            to: partialURL,
+            filename: input.filename
+        )
+        try await copier.copy()
         try FileManager.default.moveItem(at: partialURL, to: finalURL)
         return finalURL
     }
@@ -722,11 +698,159 @@ enum ShelfTransformAction: Hashable, Sendable {
     }
 }
 
-private final class SendableAudioExporter: @unchecked Sendable {
-    let session: AVAssetExportSession
+/// Writes one audio track into a standalone .m4a.
+///
+/// Audio that is already AAC is copied through untouched, so extraction is
+/// lossless and never instantiates a codec; anything else is decoded to PCM and
+/// re-encoded. This deliberately avoids AVAssetExportSession, whose M4A preset
+/// always re-encodes and faults instead of erroring on hosts that cannot supply
+/// its media services.
+private final class AudioTrackCopier: @unchecked Sendable {
+    private let reader: AVAssetReader
+    private let output: AVAssetReaderTrackOutput
+    private let writer: AVAssetWriter
+    private let input: AVAssetWriterInput
+    private let filename: String
+    private let queue = DispatchQueue(label: "dev.perch.audio-extraction")
 
-    init(_ session: AVAssetExportSession) {
-        self.session = session
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, any Error>?
+    private var outcome: Result<Void, any Error>?
+    private var isCancelled = false
+    private var isFinishing = false
+
+    init(
+        track: AVAssetTrack,
+        of asset: AVAsset,
+        sourceFormat: CMFormatDescription?,
+        to outputURL: URL,
+        filename: String
+    ) throws {
+        self.filename = filename
+        reader = try AVAssetReader(asset: asset)
+        writer = try AVAssetWriter(outputURL: outputURL, fileType: .m4a)
+
+        let streamDescription = sourceFormat
+            .flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee }
+        let isAAC = streamDescription?.mFormatID == kAudioFormatMPEG4AAC
+
+        output = AVAssetReaderTrackOutput(
+            track: track,
+            outputSettings: isAAC ? nil : [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVLinearPCMBitDepthKey: 16,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false
+            ]
+        )
+        if isAAC {
+            input = AVAssetWriterInput(
+                mediaType: .audio,
+                outputSettings: nil,
+                sourceFormatHint: sourceFormat
+            )
+        } else {
+            let channels = Int(streamDescription?.mChannelsPerFrame ?? 2)
+            let sampleRate = streamDescription?.mSampleRate ?? 44_100
+            input = AVAssetWriterInput(mediaType: .audio, outputSettings: [
+                AVFormatIDKey: kAudioFormatMPEG4AAC,
+                AVSampleRateKey: sampleRate,
+                AVNumberOfChannelsKey: channels,
+                AVEncoderBitRateKey: 64_000 * max(channels, 1)
+            ])
+        }
+        input.expectsMediaDataInRealTime = false
+
+        guard reader.canAdd(output), writer.canAdd(input) else {
+            throw ShelfTransformError.audioExportUnavailable(filename)
+        }
+        reader.add(output)
+        writer.add(input)
+    }
+
+    func copy() async throws {
+        guard writer.startWriting() else {
+            throw writer.error ?? ShelfTransformError.audioExportFailed(filename)
+        }
+        writer.startSession(atSourceTime: .zero)
+        guard reader.startReading() else {
+            throw reader.error ?? ShelfTransformError.audioExportFailed(filename)
+        }
+
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                lock.lock()
+                if let outcome {
+                    lock.unlock()
+                    continuation.resume(with: outcome)
+                    return
+                }
+                self.continuation = continuation
+                lock.unlock()
+                input.requestMediaDataWhenReady(on: queue) { [self] in pump() }
+            }
+        } onCancel: {
+            cancel()
+        }
+    }
+
+    private func pump() {
+        while input.isReadyForMoreMediaData {
+            lock.lock()
+            let stopped = isCancelled
+            lock.unlock()
+            guard !stopped else { return }
+
+            guard let sample = output.copyNextSampleBuffer() else {
+                if reader.status == .failed {
+                    settle(.failure(
+                        reader.error ?? ShelfTransformError.audioExportFailed(filename)
+                    ))
+                } else {
+                    lock.lock()
+                    isFinishing = true
+                    lock.unlock()
+                    input.markAsFinished()
+                    writer.finishWriting { [self] in
+                        guard writer.status == .completed else {
+                            settle(.failure(
+                                writer.error ?? ShelfTransformError.audioExportFailed(filename)
+                            ))
+                            return
+                        }
+                        settle(.success(()))
+                    }
+                }
+                return
+            }
+            guard input.append(sample) else {
+                settle(.failure(writer.error ?? ShelfTransformError.audioExportFailed(filename)))
+                return
+            }
+        }
+    }
+
+    /// Once finishWriting is under way the copy is effectively done, and
+    /// cancelWriting on top of it is undefined; let it land instead.
+    private func cancel() {
+        lock.lock()
+        guard outcome == nil, !isFinishing else { return lock.unlock() }
+        isCancelled = true
+        lock.unlock()
+        reader.cancelReading()
+        writer.cancelWriting()
+        settle(.failure(CancellationError()))
+    }
+
+    private func settle(_ result: Result<Void, any Error>) {
+        lock.lock()
+        guard outcome == nil else { return lock.unlock() }
+        outcome = result
+        let pending = continuation
+        continuation = nil
+        lock.unlock()
+        pending?.resume(with: result)
     }
 }
 
