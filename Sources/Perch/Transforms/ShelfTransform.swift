@@ -383,27 +383,31 @@ enum ShelfTransformAction: Hashable, Sendable {
         )
         defer { try? FileManager.default.removeItem(at: partialURL) }
 
-        exporter.outputURL = partialURL
-        exporter.outputFileType = .m4a
-        let exporterBox = SendableAudioExporter(exporter)
-        try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                exporterBox.session.exportAsynchronously {
-                    switch exporterBox.session.status {
-                    case .completed:
-                        continuation.resume()
-                    case .cancelled:
-                        continuation.resume(throwing: CancellationError())
-                    default:
-                        continuation.resume(throwing:
-                            exporterBox.session.error
-                                ?? ShelfTransformError.audioExportFailed(input.filename)
-                        )
+        if #available(macOS 15.0, *) {
+            try await exporter.export(to: partialURL, as: .m4a)
+        } else {
+            exporter.outputURL = partialURL
+            exporter.outputFileType = .m4a
+            let exporterBox = SendableAudioExporter(exporter)
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    exporterBox.session.exportAsynchronously {
+                        switch exporterBox.session.status {
+                        case .completed:
+                            continuation.resume()
+                        case .cancelled:
+                            continuation.resume(throwing: CancellationError())
+                        default:
+                            continuation.resume(throwing:
+                                exporterBox.session.error
+                                    ?? ShelfTransformError.audioExportFailed(input.filename)
+                            )
+                        }
                     }
                 }
+            } onCancel: {
+                exporterBox.session.cancelExport()
             }
-        } onCancel: {
-            exporterBox.session.cancelExport()
         }
         try FileManager.default.moveItem(at: partialURL, to: finalURL)
         return finalURL
