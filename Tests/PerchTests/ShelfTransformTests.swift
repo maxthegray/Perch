@@ -147,39 +147,22 @@ final class ShelfTransformTests: XCTestCase {
     func testExtractAudioWritesM4AWithoutChangingSource() async throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
-        perchMark("T1 before fixture copy")
         let source = try fixture.copyBundledMovie(named: "clip.mov")
         let original = try Data(contentsOf: source)
-        perchMark("T2 before collect")
 
         let events = await collect(
             .extractAudio,
             input: fixture.input(for: source),
             outputDirectory: fixture.outputDirectory
         )
-        perchMark("T3 after collect")
         let output = try XCTUnwrap(events.outputURL)
         let extracted = AVURLAsset(url: output)
-        perchMark("T4a AVAudioFile(forReading:)")
-        let probeFile = try AVAudioFile(forReading: output)
-        perchMark("T4b AVAudioFile ok length=\(probeFile.length)")
-
-        perchMark("T4c guarded completion-handler loadTracks")
-        let guarded = try await guardedLoadTracks(extracted, mediaType: .audio)
-        perchMark("T4d guarded ok count=\(guarded.count)")
-
-        perchMark("T4e load(.tracks)")
-        let allTracks = try await extracted.load(.tracks)
-        perchMark("T4f load(.tracks) ok count=\(allTracks.count)")
-
-        perchMark("T4g loadTracks(withMediaType:)")
-        let audioTracks = try await extracted.loadTracks(withMediaType: .audio)
-        perchMark("T4h loadTracks ok")
-        perchMark("T5 before source.load(.duration)")
+        // Not loadTracks(withMediaType:) — its async overlay double-resumes and
+        // faults on macOS 15. See loadAudioTracks in ShelfTransform.swift.
+        let audioTracks = try await extracted.load(.tracks)
+            .filter { $0.mediaType == .audio }
         let sourceDuration = try await AVURLAsset(url: source).load(.duration)
-        perchMark("T6 before extracted.load(.duration)")
         let extractedDuration = try await extracted.load(.duration)
-        perchMark("T7 all loads done")
 
         XCTAssertEqual(output.lastPathComponent, "clip.m4a")
         XCTAssertEqual(output.pathExtension, "m4a")
@@ -1114,38 +1097,4 @@ private func writeTestPDF(to url: URL, pageWidths: [CGFloat]) throws {
     guard document.write(to: url) else {
         throw TransformFixtureError.pdfWriteFailed
     }
-}
-
-// TEMPORARY: detects whether AVFoundation invokes the completion more than once.
-private final class OnceFlag: @unchecked Sendable {
-    private let lock = NSLock()
-    private var claimed = false
-    func claim() -> Bool {
-        lock.lock(); defer { lock.unlock() }
-        if claimed { return false }
-        claimed = true
-        return true
-    }
-}
-
-private struct TrackBox: @unchecked Sendable { let tracks: [AVAssetTrack] }
-
-func guardedLoadTracks(
-    _ asset: AVAsset,
-    mediaType: AVMediaType
-) async throws -> [AVAssetTrack] {
-    let once = OnceFlag()
-    let box: TrackBox = try await withCheckedThrowingContinuation { continuation in
-        asset.loadTracks(withMediaType: mediaType) { tracks, error in
-            let isFirst = once.claim()
-            perchMark("  callback fired first=\(isFirst) tracks=\(tracks?.count ?? -1) error=\(error != nil)")
-            guard isFirst else { return }
-            if let error {
-                continuation.resume(throwing: error)
-            } else {
-                continuation.resume(returning: TrackBox(tracks: tracks ?? []))
-            }
-        }
-    }
-    return box.tracks
 }

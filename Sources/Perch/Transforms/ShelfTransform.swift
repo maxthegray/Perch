@@ -361,15 +361,11 @@ enum ShelfTransformAction: Hashable, Sendable {
         guard FileManager.default.fileExists(atPath: input.sourceURL.path) else {
             throw ShelfTransformError.sourceMissing(input.filename)
         }
-        perchMark("P1 asset init")
         let asset = AVURLAsset(url: input.sourceURL)
-        perchMark("P2 before loadTracks")
-        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+        guard let track = try await loadAudioTracks(of: asset).first else {
             throw ShelfTransformError.noAudioTrack(input.filename)
         }
-        perchMark("P3 after loadTracks")
         let sourceFormat = try await track.load(.formatDescriptions).first
-        perchMark("P4 after load(.formatDescriptions)")
 
         let base = input.sourceURL.deletingPathExtension().lastPathComponent
         let finalURL = ItemStore.nonClobberingURL(
@@ -388,9 +384,7 @@ enum ShelfTransformAction: Hashable, Sendable {
             to: partialURL,
             filename: input.filename
         )
-        perchMark("P5 before copy")
         try await copier.copy()
-        perchMark("P6 after copy")
         try FileManager.default.moveItem(at: partialURL, to: finalURL)
         return finalURL
     }
@@ -704,6 +698,46 @@ enum ShelfTransformAction: Hashable, Sendable {
     }
 }
 
+/// Loads a media type's tracks without going through
+/// `AVAsset.loadTracks(withMediaType:)`.
+///
+/// That overlay resumes its continuation more than once — the second call in a
+/// process faults inside `UnsafeContinuation.resume` on AVFoundation's
+/// completions queue, which is what killed the test bundle on macOS 15. The
+/// underlying completion-handler API fires exactly once, so drive it directly
+/// and own the continuation.
+private func loadAudioTracks(of asset: AVAsset) async throws -> [AVAssetTrack] {
+    let hasResumed = ResumeOnce()
+    let loaded: SendableTracks = try await withCheckedThrowingContinuation { continuation in
+        asset.loadTracks(withMediaType: .audio) { tracks, error in
+            guard hasResumed.claim() else { return }
+            if let error {
+                continuation.resume(throwing: error)
+            } else {
+                continuation.resume(returning: SendableTracks(tracks: tracks ?? []))
+            }
+        }
+    }
+    return loaded.tracks
+}
+
+private struct SendableTracks: @unchecked Sendable {
+    let tracks: [AVAssetTrack]
+}
+
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
+}
+
 /// Writes one audio track into a standalone .m4a.
 ///
 /// Audio that is already AAC is copied through untouched, so extraction is
@@ -916,9 +950,4 @@ private enum ShelfTransformError: LocalizedError {
             return "This transform is not supported."
         }
     }
-}
-
-// TEMPORARY: CI crash instrumentation.
-func perchMark(_ message: String) {
-    FileHandle.standardError.write(Data("[MARK] \(message)\n".utf8))
 }
