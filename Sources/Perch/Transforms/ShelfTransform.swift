@@ -362,7 +362,7 @@ enum ShelfTransformAction: Hashable, Sendable {
             throw ShelfTransformError.sourceMissing(input.filename)
         }
         let asset = AVURLAsset(url: input.sourceURL)
-        guard let track = try await asset.loadTracks(withMediaType: .audio).first else {
+        guard let track = try await loadAudioTracks(of: asset).first else {
             throw ShelfTransformError.noAudioTrack(input.filename)
         }
         let sourceFormat = try await track.load(.formatDescriptions).first
@@ -695,6 +695,46 @@ enum ShelfTransformAction: Hashable, Sendable {
             throw ShelfTransformError.unreadableImage(filename)
         }
         return type
+    }
+}
+
+/// Loads a media type's tracks without going through
+/// `AVAsset.loadTracks(withMediaType:)`.
+///
+/// That overlay resumes its continuation more than once — the second call in a
+/// process faults inside `UnsafeContinuation.resume` on AVFoundation's
+/// completions queue, which is what killed the test bundle on macOS 15. The
+/// underlying completion-handler API fires exactly once, so drive it directly
+/// and own the continuation.
+private func loadAudioTracks(of asset: AVAsset) async throws -> [AVAssetTrack] {
+    let hasResumed = ResumeOnce()
+    let loaded: SendableTracks = try await withCheckedThrowingContinuation { continuation in
+        asset.loadTracks(withMediaType: .audio) { tracks, error in
+            guard hasResumed.claim() else { return }
+            if let error {
+                continuation.resume(throwing: error)
+            } else {
+                continuation.resume(returning: SendableTracks(tracks: tracks ?? []))
+            }
+        }
+    }
+    return loaded.tracks
+}
+
+private struct SendableTracks: @unchecked Sendable {
+    let tracks: [AVAssetTrack]
+}
+
+private final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !claimed else { return false }
+        claimed = true
+        return true
     }
 }
 

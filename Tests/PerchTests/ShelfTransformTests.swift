@@ -157,7 +157,10 @@ final class ShelfTransformTests: XCTestCase {
         )
         let output = try XCTUnwrap(events.outputURL)
         let extracted = AVURLAsset(url: output)
-        let audioTracks = try await extracted.loadTracks(withMediaType: .audio)
+        // Not loadTracks(withMediaType:) — its async overlay double-resumes and
+        // faults on macOS 15. See loadAudioTracks in ShelfTransform.swift.
+        let audioTracks = try await extracted.load(.tracks)
+            .filter { $0.mediaType == .audio }
         let sourceDuration = try await AVURLAsset(url: source).load(.duration)
         let extractedDuration = try await extracted.load(.duration)
 
