@@ -147,7 +147,7 @@ final class ShelfTransformTests: XCTestCase {
     func testExtractAudioWritesM4AWithoutChangingSource() async throws {
         let fixture = try TransformFixture()
         defer { fixture.remove() }
-        let source = try fixture.makeAudio(named: "clip.wav")
+        let source = try await fixture.makeMovieWithAudio(named: "clip.mov")
         let original = try Data(contentsOf: source)
 
         let events = await collect(
@@ -856,8 +856,12 @@ private final class TransformFixture {
         return url
     }
 
-    func makeAudio(named name: String) throws -> URL {
-        let url = root.appendingPathComponent(name, isDirectory: false)
+    func makeMovieWithAudio(named name: String) async throws -> URL {
+        let audioURL = root.appendingPathComponent(
+            "\(UUID().uuidString).m4a",
+            isDirectory: false
+        )
+        defer { try? FileManager.default.removeItem(at: audioURL) }
         let sampleRate = 44_100.0
         let frameCount = AVAudioFrameCount(sampleRate)
         let format = try XCTUnwrap(AVAudioFormat(
@@ -873,8 +877,67 @@ private final class TransformFixture {
         for frame in 0..<Int(frameCount) {
             samples[frame] = sin(2 * .pi * 440 * Float(frame) / Float(sampleRate)) * 0.25
         }
-        let file = try AVAudioFile(forWriting: url, settings: format.settings)
-        try file.write(from: buffer)
+        let settings: [String: Any] = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: sampleRate,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000
+        ]
+        do {
+            let file = try AVAudioFile(forWriting: audioURL, settings: settings)
+            try file.write(from: buffer)
+        }
+
+        let asset = AVURLAsset(url: audioURL)
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        let track = try XCTUnwrap(tracks.first)
+        let reader = try AVAssetReader(asset: asset)
+        let readerOutput = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        guard reader.canAdd(readerOutput) else {
+            throw TransformFixtureError.movieWriteFailed
+        }
+        reader.add(readerOutput)
+
+        let url = root.appendingPathComponent(name, isDirectory: false)
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let formatDescription = try await track.load(.formatDescriptions).first
+        let writerInput = AVAssetWriterInput(
+            mediaType: .audio,
+            outputSettings: nil,
+            sourceFormatHint: formatDescription
+        )
+        guard writer.canAdd(writerInput) else {
+            throw TransformFixtureError.movieWriteFailed
+        }
+        writer.add(writerInput)
+        guard writer.startWriting(), reader.startReading() else {
+            throw writer.error ?? reader.error ?? TransformFixtureError.movieWriteFailed
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        while reader.status == .reading {
+            guard writerInput.isReadyForMoreMediaData else {
+                try await Task.sleep(for: .milliseconds(1))
+                continue
+            }
+            guard let sample = readerOutput.copyNextSampleBuffer() else { break }
+            guard writerInput.append(sample) else {
+                throw writer.error ?? TransformFixtureError.movieWriteFailed
+            }
+        }
+        guard reader.status == .completed else {
+            throw reader.error ?? TransformFixtureError.movieWriteFailed
+        }
+        writerInput.markAsFinished()
+        let writerBox = SendableTestAssetWriter(writer)
+        await withCheckedContinuation { continuation in
+            writerBox.writer.finishWriting {
+                continuation.resume()
+            }
+        }
+        guard writer.status == .completed else {
+            throw writer.error ?? TransformFixtureError.movieWriteFailed
+        }
         return url
     }
 
@@ -892,6 +955,15 @@ private final class TransformFixture {
 
 private enum TransformFixtureError: Error {
     case pdfWriteFailed
+    case movieWriteFailed
+}
+
+private final class SendableTestAssetWriter: @unchecked Sendable {
+    let writer: AVAssetWriter
+
+    init(_ writer: AVAssetWriter) {
+        self.writer = writer
+    }
 }
 
 @MainActor
