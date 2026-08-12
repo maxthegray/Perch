@@ -160,8 +160,21 @@ final class ShelfTransformTests: XCTestCase {
         perchMark("T3 after collect")
         let output = try XCTUnwrap(events.outputURL)
         let extracted = AVURLAsset(url: output)
-        perchMark("T4 before extracted.loadTracks")
+        perchMark("T4a AVAudioFile(forReading:)")
+        let probeFile = try AVAudioFile(forReading: output)
+        perchMark("T4b AVAudioFile ok length=\(probeFile.length)")
+
+        perchMark("T4c guarded completion-handler loadTracks")
+        let guarded = try await guardedLoadTracks(extracted, mediaType: .audio)
+        perchMark("T4d guarded ok count=\(guarded.count)")
+
+        perchMark("T4e load(.tracks)")
+        let allTracks = try await extracted.load(.tracks)
+        perchMark("T4f load(.tracks) ok count=\(allTracks.count)")
+
+        perchMark("T4g loadTracks(withMediaType:)")
         let audioTracks = try await extracted.loadTracks(withMediaType: .audio)
+        perchMark("T4h loadTracks ok")
         perchMark("T5 before source.load(.duration)")
         let sourceDuration = try await AVURLAsset(url: source).load(.duration)
         perchMark("T6 before extracted.load(.duration)")
@@ -1101,4 +1114,38 @@ private func writeTestPDF(to url: URL, pageWidths: [CGFloat]) throws {
     guard document.write(to: url) else {
         throw TransformFixtureError.pdfWriteFailed
     }
+}
+
+// TEMPORARY: detects whether AVFoundation invokes the completion more than once.
+private final class OnceFlag: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    func claim() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}
+
+private struct TrackBox: @unchecked Sendable { let tracks: [AVAssetTrack] }
+
+func guardedLoadTracks(
+    _ asset: AVAsset,
+    mediaType: AVMediaType
+) async throws -> [AVAssetTrack] {
+    let once = OnceFlag()
+    let box: TrackBox = try await withCheckedThrowingContinuation { continuation in
+        asset.loadTracks(withMediaType: mediaType) { tracks, error in
+            let isFirst = once.claim()
+            perchMark("  callback fired first=\(isFirst) tracks=\(tracks?.count ?? -1) error=\(error != nil)")
+            guard isFirst else { return }
+            if let error {
+                continuation.resume(throwing: error)
+            } else {
+                continuation.resume(returning: TrackBox(tracks: tracks ?? []))
+            }
+        }
+    }
+    return box.tracks
 }
