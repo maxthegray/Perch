@@ -10,9 +10,9 @@ import SmartPerchCore
 final class SmartNameStore: ObservableObject {
     @Published var isEnabled = true
     @Published private(set) var suggestionsByItemID: [UUID: AvailableFilenameSuggestion] = [:]
-    /// Screenshot rows use one stable presentation from their first frame onward. This
-    /// set survives completion without a suggestion so a low-information capture keeps
-    /// the useful generic "Screenshot" label instead of jumping back to a timestamp.
+    /// Screenshot rows use a stable placeholder while their name is unresolved. This set
+    /// survives completion without a suggestion so a low-information capture keeps the
+    /// useful generic "Screenshot" label instead of jumping back to a timestamp.
     @Published private(set) var screenshotItemIDs: Set<UUID> = []
     @Published private(set) var analyzingItemIDs: Set<UUID> = []
 
@@ -44,7 +44,7 @@ final class SmartNameStore: ObservableObject {
             return NamePresentation(
                 title: suggestion.displayName,
                 isAnalyzing: analyzingItemIDs.contains(itemID),
-                usesStableWidth: screenshotItemIDs.contains(itemID)
+                usesStableWidth: false
             )
         }
         if screenshotItemIDs.contains(itemID) {

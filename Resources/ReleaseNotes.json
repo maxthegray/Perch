@@ -2,6 +2,33 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch — a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself, or \"showsWelcome\": true to show updating users the welcome window itself instead of these notes, for a release that changes how Perch introduces itself. Their existing settings are pre-filled, so the window changes nothing they do not change.",
   "versions": [
     {
+      "version": "1.5.0",
+      "headline": "Simplified.",
+      "showsWhatsNew": true,
+      "highlights": [
+        {
+          "symbol": "contextualmenu.and.cursorarrow",
+          "title": "A cleaner right-click menu",
+          "detail": ""
+        },
+        {
+          "symbol": "option",
+          "title": "Option-drag to copy",
+          "detail": ""
+        },
+        {
+          "symbol": "textformat",
+          "title": "Shorter Smart Name cards",
+          "detail": ""
+        },
+        {
+          "symbol": "bird",
+          "title": "A new empty-shelf mark",
+          "detail": ""
+        }
+      ]
+    },
+    {
       "version": "1.4.0",
       "headline": "A few useful additions.",
       "highlights": [

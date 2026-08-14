@@ -16,12 +16,14 @@ final class StoredItemDragWriter: NSFilePromiseProvider {
 
     convenience init(
         item: StoredItem,
+        wasCopy: Bool,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
         onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
         onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
         let delegate = StoredItemDragWriterDelegate(
             item: item,
+            wasCopy: wasCopy,
             recordVend: recordVend,
             onRouteWriteSucceeded: onRouteWriteSucceeded,
             onRouteWriteFailed: onRouteWriteFailed
@@ -117,12 +119,13 @@ final class StoredItemDragWriterDelegate: NSObject, NSFilePromiseProviderDelegat
 
     init(
         item: StoredItem,
+        wasCopy: Bool,
         recordVend: (@Sendable (ProvenanceEntry) -> Void)? = nil,
         onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)? = nil,
         onRouteWriteFailed: (@Sendable (UUID) -> Void)? = nil
     ) {
         snapshot = MainActor.assumeIsolated {
-            StoredItemDragSnapshot(item: item)
+            StoredItemDragSnapshot(item: item, wasCopy: wasCopy)
         }
         self.recordVend = recordVend
         self.onRouteWriteSucceeded = onRouteWriteSucceeded
@@ -270,7 +273,7 @@ private struct StoredItemDragSnapshot {
     private let representationFileURLsByType: [String: URL]
 
     @MainActor
-    init(item: StoredItem) {
+    init(item: StoredItem, wasCopy: Bool) {
         title = item.metadata.title
         representations = item.metadata.representations
         let resolvedBackingFileURLs = item.backingFileURLs()
@@ -283,7 +286,7 @@ private struct StoredItemDragSnapshot {
             item.metadata.originPaths?[fileName]
                 ?? item.metadata.referencedFiles?[fileName]?.originalPath
         }
-        wasCopy = UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
+        self.wasCopy = wasCopy
 
         let repsDir = item.directoryURL.appendingPathComponent("reps", isDirectory: true)
         var fileURLsByType: [String: URL] = [:]

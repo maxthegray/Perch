@@ -9,9 +9,9 @@ import SwiftUI
 /// It is a picture, not a shelf: click-through, empty, holding no items, and destroyed
 /// when the demonstration ends. There is exactly one real shelf and it can only be at
 /// one edge at a time — copying `ShelfHostView` to make a second live card would mean a
-/// second set of drop targets and Quick Look state for the sake of two seconds of
+/// second set of drop targets and interaction state for the sake of two seconds of
 /// scene-setting. Everything the eye checks — corner radius, material, stroke, the empty
-/// tray symbol, the resting frame — comes from the same theme the real card uses, so the
+/// perch mark, the resting frame — comes from the same theme the real card uses, so the
 /// copies match it even after the user changes styles.
 @MainActor
 final class ShelfGhostCardWindow {
@@ -68,7 +68,7 @@ final class ShelfGhostCardWindow {
     }
 }
 
-/// The card with nothing on it: the same background, corner, stroke, and empty-tray
+/// The card with nothing on it: the same background, corner, stroke, and empty-perch
 /// symbol `ShelfContentView` draws when the shelf is holding nothing.
 private struct ShelfGhostCardView: View {
     let theme: ShelfTheme
@@ -78,9 +78,8 @@ private struct ShelfGhostCardView: View {
     }
 
     var body: some View {
-        Image(systemName: "tray.and.arrow.down")
-            .font(.system(size: 22, weight: .light))
-            .foregroundStyle(.secondary)
+        EmptyPerchMark()
+            .frame(width: 52, height: 52)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.cardBackground)
             .clipShape(cardShape)

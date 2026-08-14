@@ -14,7 +14,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let holding: HoldingDirectory
     private let store: ItemStore
     private let ledger: ProvenanceLedger
-    private let historyWindow: HistoryWindowController
     private let settingsWindow: SettingsWindowController
     private let mergePDFWindow: MergePDFWindowController
     private let splitPDFWindow: SplitPDFWindowController
@@ -217,7 +216,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         holding = try HoldingDirectory.standard()
         store = ItemStore(holding: holding)
         ledger = ProvenanceLedger(holding: holding)
-        historyWindow = HistoryWindowController(ledger: ledger)
         smartPerch = SmartPerchCoordinator(
             databaseURL: holding.smartEventLogFile,
             arrivals: arrivals,
@@ -358,12 +356,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.contextMenuDidClose()
         }
 
-        hostView.onAcceptFilenameSuggestion = { [weak self] item, suggestion in
-            self?.acceptFilenameSuggestion(suggestion, for: item)
-        }
-        hostView.onDismissFilenameSuggestion = { [weak self] item in
-            self?.dismissFilenameSuggestion(for: item)
-        }
         hostView.onFileItemAtSuggestedRoute = { [weak self] item in
             self?.fileItemAtSuggestedRoute(item)
         }
@@ -393,10 +385,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // Grow/shrink the window to the SwiftUI content's actual measured height.
         hostView.onContentHeight = { [weak self] height in
             self?.contentHeightDidChange(height)
-        }
-
-        hostView.onShowHistory = { [weak self] in
-            self?.historyWindow.show()
         }
 
         hostView.onShowSettings = { [weak self] in
@@ -925,36 +913,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             action: action,
             affectedFileCount: affectedFileCount
         )
-    }
-
-    /// Take a generated name the user accepted. Smart Perch decides whether the rename is
-    /// still valid and records the outcome; the rename itself is the store's job, so the
-    /// two halves meet here rather than giving the feature a handle on the shelf.
-    private func acceptFilenameSuggestion(
-        _ proposedFilename: String,
-        for item: StoredItem
-    ) {
-        guard let rename = smartPerch.plannedRename(of: item, to: proposedFilename)
-        else {
-            return
-        }
-
-        do {
-            let renamedItem = try store.renameSingleBackingFile(
-                of: item,
-                to: proposedFilename
-            )
-            guard let acceptedFilename = renamedItem.metadata.backingFileNames.first else {
-                return
-            }
-            smartPerch.didAcceptRename(rename, acceptedFilename: acceptedFilename)
-        } catch {
-            NSLog("Perch could not rename \(item.metadata.title) to \(proposedFilename): \(error)")
-        }
-    }
-
-    private func dismissFilenameSuggestion(for item: StoredItem) {
-        smartPerch.dismissFilenameSuggestion(for: item)
     }
 
     /// Carry out a learned route: move the item's files into the folder it has always

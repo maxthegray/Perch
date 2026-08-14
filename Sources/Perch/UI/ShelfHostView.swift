@@ -1,5 +1,4 @@
 import AppKit
-import Quartz
 import SmartPerchCore
 import SwiftUI
 
@@ -14,10 +13,10 @@ private final class ShelfTransformActionBox: NSObject {
 /// AppKit host (`NSView`) for the SwiftUI shelf content, hosting `ShelfContentView`
 /// via `NSHostingView`. This is the **primary** path (Decision M) for both:
 ///  - row drag-initiation (`mouseDragged(_:)` → owns/retains an `ItemDragSource`), and
-///  - interactive controls (delete / clear-all / Quick Look — T12),
+///  - interactive controls (delete / clear-all — T12),
 /// because a `.nonactivatingPanel` that never becomes key does not reliably deliver
 /// SwiftUI gestures/controls. SwiftUI gestures are off the critical path.
-final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDelegate, NSMenuDelegate {
+final class ShelfHostView: NSView, NSMenuDelegate {
     private let store: ItemStore
     private let themeStore: ThemeStore
     private let ledger: ProvenanceLedger
@@ -40,8 +39,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     var routeLearningActive = false
     /// The row a context-menu action applies to (the row under the right-click).
     private var menuTargetItem: StoredItem?
-    /// Snapshot of the suggestion displayed by the current menu.
-    private var menuTargetFilenameSuggestion: String?
     /// The temporary arrival row under the right-click, acted on without touching
     /// unrelated files in the watched folder.
     private var menuTargetArrival: ArrivalGhost?
@@ -97,8 +94,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// start, so the card follows the cursor 1:1 in screen space.
     private var shelfDragScreenStart: NSPoint = .zero
     private var shelfDragWindowOrigin: NSPoint = .zero
-    /// URLs currently fed to `QLPreviewPanel`.
-    private var quickLookURLs: [URL] = []
     /// True while the shelf is free-floating (cursor-summoned or dragged off its edge).
     private var isFreeMode = false
     /// The SwiftUI content's last measured natural height, mirrored here to derive the
@@ -111,11 +106,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
 
     private var vendCopies: Bool {
         UserDefaults.standard.bool(forKey: PerchSettings.vendCopies)
-    }
-
-    /// Whether the ⌘-drag footnote has done its job and should stay gone.
-    private var moveHintRetired: Bool {
-        UserDefaults.standard.bool(forKey: PerchSettings.moveHintRetired)
     }
 
     /// Called with the SwiftUI content's measured natural height so the controller can
@@ -132,11 +122,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// Canonical successful routes are handed to the controller, which owns the
     /// existing recorder actor and its off-main SQLite queue.
     var onRecordSuccessfulRoutes: (([ItemRouteEvent]) -> Void)?
-
-    /// Smart Name decisions are forwarded to the controller so filesystem and event
-    /// log updates stay coordinated.
-    var onAcceptFilenameSuggestion: ((StoredItem, String) -> Void)?
-    var onDismissFilenameSuggestion: ((StoredItem) -> Void)?
 
     /// Accepting a learned route moves files and appends to the event log, so the
     /// controller performs it for the same reason.
@@ -156,9 +141,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
     /// is, and the controller needs to know: while a session is live the edge docks have
     /// to take real events so the item can be carried back to one.
     var onVendSessionChange: ((Bool) -> Void)?
-
-    /// Called when the user picks "Show History…"; the controller opens the window.
-    var onShowHistory: (() -> Void)?
 
     /// Called when the user picks "Settings"; the controller opens the window.
     var onShowSettings: (() -> Void)?
@@ -758,11 +740,15 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         // Move semantics: the row leaves the shelf with the drag — the item is "in the
         // cursor's hand", not cloned. If the drag ends nowhere valid, the system ghost
         // slides back and the row reappears. Copy mode keeps the original visible.
-        let isMove = !vendCopies
+        let copiesItems = VendModePolicy.copiesItems(
+            copiesByDefault: vendCopies,
+            optionKeyDown: event.modifierFlags.contains(.option)
+        )
+        let isMove = !copiesItems
         if isMove {
             interaction.vendingItemIDs = itemIDs
         }
-        let dragSource = ItemDragSource(items: items)
+        let dragSource = ItemDragSource(items: items, copiesItems: copiesItems)
         let routeCoordinator: RouteDragSessionCoordinator? = routeLearningActive
             ? RouteDragSessionCoordinator(
                 items: items.map {
@@ -861,13 +847,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             let moved = hypot(location.x - shelfDragScreenStart.x, location.y - shelfDragScreenStart.y)
             guard moved >= 4, canBeginShelfDrag?() == true else { return }
             shelfDragActive = true
-            // The card is now genuinely following the cursor, so if this was the ⌘ path
-            // the gesture has been learned and its footnote can retire for good. Here
-            // rather than at mouse-down: holding Command over the card and thinking
-            // better of it is not the same as having moved the shelf.
-            if !themeStore.showsGrabHandle {
-                UserDefaults.standard.set(true, forKey: PerchSettings.moveHintRetired)
-            }
             shelfDragWindowOrigin = window?.frame.origin ?? .zero
             interaction.isGrabberHovered = hasGrabber
             NSCursor.closedHand.set()
@@ -1299,9 +1278,8 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         onCardInteraction?()
         let menu = NSMenu()
         menu.delegate = self
-        // Automatic enabling ignores the `isEnabled` values set below (every item has a
-        // target that responds), which left "Return All" clickable on an empty shelf
-        // and "Quick Look" clickable for items with nothing to preview.
+        // Automatic enabling ignores any explicit `isEnabled` values set below when an
+        // item has a target that responds.
         menu.autoenablesItems = false
 
         if let ghostIndex = arrivalIndex(at: point) {
@@ -1314,7 +1292,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
 
             menuTargetItem = nil
-            menuTargetFilenameSuggestion = nil
             menuTargetArrival = ghost
             menuTransformItems = []
             interaction.clearSelection()
@@ -1342,42 +1319,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             let targets = actionItems(for: item)
             menuTransformItems = targets
 
-            if targets.count == 1,
-               item.metadata.backingFileNames.count == 1,
-               let suggestion = smartNames.suggestion(for: item.id) {
-                menuTargetFilenameSuggestion = suggestion.suggestedFilename
-
-                let smartName = NSMenuItem(
-                    title: "Smart Name",
-                    action: nil,
-                    keyEquivalent: ""
-                )
-                let smartNameMenu = NSMenu(title: "Smart Name")
-                smartNameMenu.autoenablesItems = false
-
-                let acceptSuggestion = NSMenuItem(
-                    title: "Use “\(suggestion.displayName)” as Filename",
-                    action: #selector(acceptFilenameSuggestionAction(_:)),
-                    keyEquivalent: ""
-                )
-                acceptSuggestion.target = self
-                smartNameMenu.addItem(acceptSuggestion)
-
-                let dismissSuggestion = NSMenuItem(
-                    title: "Keep Current Filename",
-                    action: #selector(dismissFilenameSuggestionAction(_:)),
-                    keyEquivalent: ""
-                )
-                dismissSuggestion.target = self
-                smartNameMenu.addItem(dismissSuggestion)
-
-                smartName.submenu = smartNameMenu
-                menu.addItem(smartName)
-                menu.addItem(.separator())
-            } else {
-                menuTargetFilenameSuggestion = nil
-            }
-
             // The deck layout draws no trailing buttons, so the menu is the only way to
             // accept a learned route there.
             if targets.count == 1,
@@ -1394,7 +1335,7 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
                 menu.addItem(fileItem)
 
                 let dismissRoute = NSMenuItem(
-                    title: "Don't Suggest This for This Item",
+                    title: "Dismiss Suggestion",
                     action: #selector(dismissRouteSuggestionAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1404,15 +1345,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             }
 
             addTransformMenu(to: menu, for: targets)
-
-            let quickLook = NSMenuItem(
-                title: targets.count > 1 ? "Quick Look \(targets.count) Items" : "Quick Look",
-                action: #selector(quickLookMenuAction(_:)),
-                keyEquivalent: ""
-            )
-            quickLook.target = self
-            quickLook.isEnabled = targets.contains { !previewableURLs(for: $0).isEmpty }
-            menu.addItem(quickLook)
 
             let delete = NSMenuItem(
                 title: targets.count > 1 ? "Delete \(targets.count) Items" : "Delete",
@@ -1433,35 +1365,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(.separator())
         } else {
             menuTargetItem = nil
-            menuTargetFilenameSuggestion = nil
             menuTargetArrival = nil
             menuTransformItems = []
             interaction.clearSelection()
         }
-
-        let shelfItem = NSMenuItem(title: "Shelf", action: nil, keyEquivalent: "")
-        let shelfMenu = NSMenu(title: "Shelf")
-        shelfMenu.autoenablesItems = false
-
-        let returnAll = NSMenuItem(
-            title: "Return All",
-            action: #selector(returnAllMenuAction(_:)),
-            keyEquivalent: ""
-        )
-        returnAll.target = self
-        returnAll.isEnabled = !store.items.isEmpty
-        shelfMenu.addItem(returnAll)
-
-        let history = NSMenuItem(
-            title: "History",
-            action: #selector(showHistoryAction(_:)),
-            keyEquivalent: ""
-        )
-        history.target = self
-        shelfMenu.addItem(history)
-
-        shelfItem.submenu = shelfMenu
-        menu.addItem(shelfItem)
 
         // A free-floating shelf has no ✕ — this is how it's dismissed (items stay stored).
         // "Lock Position" turns it into a fixture: the bar hides and card drags are
@@ -1485,8 +1392,10 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
             menu.addItem(closeShelf)
         }
 
-        // Everything configurable lives in the Settings window; the menu stays actions-only.
-        menu.addItem(.separator())
+        // Keep the full preference surface in Settings.
+        if isFreeMode {
+            menu.addItem(.separator())
+        }
         let settings = NSMenuItem(
             title: "Settings",
             action: #selector(showSettingsAction(_:)),
@@ -1496,48 +1405,13 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menu.addItem(settings)
 
         menu.addItem(.separator())
-        let productName = PerchProductIdentity.displayName
         let quit = NSMenuItem(
-            title: "Quit \(productName)",
+            title: "Quit",
             action: #selector(quitAction(_:)),
             keyEquivalent: ""
         )
         quit.target = self
         menu.addItem(quit)
-
-        menu.addItem(.separator())
-
-        // A footnote next to the version, not a row among the actions. With "Move shelf
-        // using" set to ⌘ + Click (the default) holding Command is the only way to lift
-        // the card off its edge, and nothing on screen suggests it — but at menu-item size
-        // and grouped with the actions it read as a broken command and widened the whole
-        // menu to fit. Small and secondary, in the footer, it reads as the aside it is.
-        //
-        // Dropped once it has nothing left to teach: after the first ⌘-drag that actually
-        // moved the card (for good — the gesture doesn't get forgotten), while the shelf
-        // is already floating, and when the handle is on and there is a visible
-        // affordance to find instead.
-        if !isFreeMode, !themeStore.showsGrabHandle, !moveHintRetired {
-            let moveHint = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-            moveHint.attributedTitle = NSAttributedString(
-                string: "⌘-drag to move the shelf",
-                attributes: [
-                    .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-                    .foregroundColor: NSColor.secondaryLabelColor
-                ]
-            )
-            moveHint.isEnabled = false
-            menu.addItem(moveHint)
-        }
-
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
-        let about = NSMenuItem(
-            title: "\(productName) \(version)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        about.isEnabled = false
-        menu.addItem(about)
 
         return menu
     }
@@ -1681,10 +1555,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         NSApp.terminate(nil)
     }
 
-    @objc private func showHistoryAction(_ sender: NSMenuItem) {
-        onShowHistory?()
-    }
-
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
         onShowSettings?()
     }
@@ -1709,17 +1579,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menuTargetItem = nil
     }
 
-    @objc private func acceptFilenameSuggestionAction(_ sender: NSMenuItem) {
-        guard let item = menuTargetItem,
-              let suggestion = menuTargetFilenameSuggestion
-        else {
-            return
-        }
-        onAcceptFilenameSuggestion?(item, suggestion)
-        menuTargetItem = nil
-        menuTargetFilenameSuggestion = nil
-    }
-
     @objc private func fileItemAtSuggestedRouteAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }
         onFileItemAtSuggestedRoute?(item)
@@ -1742,13 +1601,6 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menuTargetItem = nil
     }
 
-    @objc private func dismissFilenameSuggestionAction(_ sender: NSMenuItem) {
-        guard let item = menuTargetItem else { return }
-        onDismissFilenameSuggestion?(item)
-        menuTargetItem = nil
-        menuTargetFilenameSuggestion = nil
-    }
-
     @objc private func adoptArrivalMenuAction(_ sender: NSMenuItem) {
         guard let ghost = menuTargetArrival else { return }
         switch ghost {
@@ -1768,52 +1620,4 @@ final class ShelfHostView: NSView, QLPreviewPanelDataSource, QLPreviewPanelDeleg
         menuTargetArrival = nil
     }
 
-    @objc private func returnAllMenuAction(_ sender: NSMenuItem) {
-        store.returnToOrigin(store.items)
-        interaction.clearSelection()
-        menuTargetItem = nil
-    }
-
-    @objc private func quickLookMenuAction(_ sender: NSMenuItem) {
-        guard let item = menuTargetItem else { return }
-        presentQuickLook(for: actionItems(for: item))
-    }
-
-    // MARK: - Quick Look
-
-    private func previewableURLs(for item: StoredItem) -> [URL] {
-        item.backingFileURLs().filter { FileManager.default.fileExists(atPath: $0.path) }
-    }
-
-    private func presentQuickLook(for items: [StoredItem]) {
-        let urls = items.flatMap(previewableURLs)
-        guard !urls.isEmpty, let panel = QLPreviewPanel.shared() else { return }
-
-        quickLookURLs = urls
-        panel.dataSource = self
-        panel.delegate = self
-        panel.reloadData()
-        panel.makeKeyAndOrderFront(nil)
-    }
-
-    override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel) -> Bool {
-        true
-    }
-
-    override func beginPreviewPanelControl(_ panel: QLPreviewPanel) {
-        panel.dataSource = self
-        panel.delegate = self
-    }
-
-    override func endPreviewPanelControl(_ panel: QLPreviewPanel) {
-        quickLookURLs = []
-    }
-
-    func numberOfPreviewItems(in panel: QLPreviewPanel) -> Int {
-        quickLookURLs.count
-    }
-
-    func previewPanel(_ panel: QLPreviewPanel, previewItemAt index: Int) -> QLPreviewItem {
-        quickLookURLs[index] as NSURL
-    }
 }

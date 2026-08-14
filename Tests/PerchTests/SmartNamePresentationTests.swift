@@ -5,7 +5,7 @@ import XCTest
 
 @MainActor
 final class SmartNamePresentationTests: XCTestCase {
-    func testScreenshotUsesPlaceholderWhileAnalyzingThenCrossfadesInPlace() {
+    func testScreenshotUsesStablePlaceholderThenHugsGeneratedName() {
         let store = SmartNameStore()
         let itemID = UUID()
         store.beginAnalyzingScreenshot(itemID)
@@ -38,7 +38,7 @@ final class SmartNamePresentationTests: XCTestCase {
             SmartNameStore.NamePresentation(
                 title: "Terminal — Perch",
                 isAnalyzing: false,
-                usesStableWidth: true
+                usesStableWidth: false
             )
         )
     }
