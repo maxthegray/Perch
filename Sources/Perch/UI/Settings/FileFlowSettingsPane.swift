@@ -63,6 +63,12 @@ struct FileFlowSettingsPane: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .controlSize(.small)
+
+                    if !vendCopies {
+                        Text("Hold ⌥ to copy once")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 .padding(.top, 22)
             }

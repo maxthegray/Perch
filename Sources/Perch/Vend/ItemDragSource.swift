@@ -1,5 +1,11 @@
 import AppKit
 
+enum VendModePolicy {
+    static func copiesItems(copiesByDefault: Bool, optionKeyDown: Bool) -> Bool {
+        copiesByDefault || optionKeyDown
+    }
+}
+
 /// RE-VEND: the concrete `NSDraggingSource` for one or more stored items.
 /// Created and **retained by the host view** for the drag's duration. Pins the
 /// operation mask to `.copy` for file-backed items so the holding-dir master is
@@ -7,6 +13,7 @@ import AppKit
 @MainActor
 final class ItemDragSource: NSObject, NSDraggingSource {
     private let items: [StoredItem]
+    private let copiesItems: Bool
     private var activeWriters: [StoredItemDragWriter] = []
 
     /// Called when the drag session ends, with the operation the destination
@@ -30,9 +37,10 @@ final class ItemDragSource: NSObject, NSDraggingSource {
     var onRouteWriteSucceeded: (@Sendable (UUID, URL) -> Void)?
     var onRouteWriteFailed: (@Sendable (UUID) -> Void)?
 
-    init(items: [StoredItem]) {
+    init(items: [StoredItem], copiesItems: Bool) {
         precondition(!items.isEmpty)
         self.items = items
+        self.copiesItems = copiesItems
         super.init()
     }
 
@@ -57,6 +65,7 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         activeWriters = items.map {
             StoredItemDragWriter(
                 item: $0,
+                wasCopy: copiesItems,
                 recordVend: recordVend,
                 onRouteWriteSucceeded: onRouteWriteSucceeded,
                 onRouteWriteFailed: onRouteWriteFailed

@@ -246,9 +246,8 @@ enum RowMetrics {
     /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
     /// window-size estimate.
     static let emptyTileHeight: CGFloat = 64
-    /// Smart screenshot labels occupy a predictable compact card width. The placeholder
-    /// and generated name both live in this same lane, so OCR completion changes text
-    /// without moving the outer window.
+    /// Unresolved screenshot placeholders occupy a predictable compact card width so
+    /// analysis state changes do not move the outer window before a real name exists.
     static let stableSmartNameCardWidth: CGFloat = 240
 
     static func stabilizedSmartNameCardWidth(maximumWidth: CGFloat) -> CGFloat {

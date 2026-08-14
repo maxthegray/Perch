@@ -666,9 +666,8 @@ struct ShelfContentView: View {
     }
 
     private var emptyState: some View {
-        Image(systemName: "tray.and.arrow.down")
-            .font(.system(size: 22, weight: .light))
-            .foregroundStyle(.secondary)
+        EmptyPerchMark()
+            .frame(width: 52, height: 52)
             .frame(maxWidth: .infinity)
             .frame(height: RowMetrics.emptyTileHeight)
     }

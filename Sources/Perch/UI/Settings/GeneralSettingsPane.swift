@@ -41,7 +41,8 @@ struct GeneralSettingsPane: View {
                             Text("Drag out")
                             Text(vendCopies
                                 ? "Dragging an item out leaves it on the shelf."
-                                : "Dragging an item out removes it from the shelf.")
+                                : "Dragging an item out removes it from the shelf. "
+                                    + "Hold Option to copy once.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }

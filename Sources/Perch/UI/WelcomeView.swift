@@ -136,7 +136,7 @@ struct WelcomeView: View {
             Lesson(
                 symbol: "contextualmenu.and.cursorarrow",
                 title: "Right-click the shelf",
-                detail: "Settings, History, and Quick Look all live in its menu. "
+                detail: "Item actions and Settings live in its menu. "
                     + "That is the way back to every preference."
             )
         }
