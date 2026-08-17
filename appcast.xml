@@ -2,26 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.5.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.6.0/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.5.0</title>
+      <title>Version 1.6.0</title>
       <description><![CDATA[
-<p>Simplified.</p>
 <ul>
-  <li>A cleaner right-click menu</li>
-  <li>Option-drag to copy</li>
-  <li>Shorter Smart Name cards</li>
-  <li>A new empty-shelf mark</li>
+  <li>dragging feels nicer, and there’s a new option to move an open perch between edges</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Fri, 14 Aug 2026 20:06:47 +0000</pubDate>
-      <sparkle:version>1050000</sparkle:version>
-      <sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
+      <pubDate>Mon, 17 Aug 2026 04:12:14 +0000</pubDate>
+      <sparkle:version>1060000</sparkle:version>
+      <sparkle:shortVersionString>1.6.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.5.0/Perch.zip" sparkle:edSignature="bqDZ7pIUko4EyKRRr9K8ZNs4BnCaaMr5r9CSAP1QMtpbpj5mHohy4zSZONFKYPqHjAOie1uXkUyZx5HytCJZBA==" length="4276236" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.6.0/Perch.zip" sparkle:edSignature="cuVcgU/jOfi1l0BxwChxIoFFc+NTH8IbHNGH6sVrnzXmM+bboT+ewyWbohNuncEE5Cp+ECW9sexu/2sMZOATAg==" length="4294539" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
