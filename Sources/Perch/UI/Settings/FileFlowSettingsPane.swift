@@ -9,6 +9,8 @@ struct FileFlowSettingsPane: View {
     private var offerRecentArrivals = true
     @AppStorage(PerchSettings.transformOutputMode)
     private var transformOutputMode = ShelfTransformOutputMode.duplicate
+    @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)
+    private var moveOpenShelfBetweenEdges = false
     @AppStorage(PerchSettings.vendCopies)
     private var vendCopies = false
 
@@ -36,9 +38,10 @@ struct FileFlowSettingsPane: View {
                         .controlSize(.mini)
                         .padding(.top, 6)
 
-                    Toggle("Recent downloads", isOn: $offerRecentArrivals)
+                    Toggle("Recent arrivals", isOn: $offerRecentArrivals)
                         .toggleStyle(.switch)
                         .controlSize(.mini)
+                        .help("Offer files that just arrived in Downloads or on the Desktop.")
                 }
                 .padding(.top, 22)
 
@@ -52,6 +55,15 @@ struct FileFlowSettingsPane: View {
                     .pickerStyle(.segmented)
                     .labelsHidden()
                     .controlSize(.small)
+
+                    Toggle("Move Perch between edges", isOn: $moveOpenShelfBetweenEdges)
+                        .toggleStyle(.switch)
+                        .controlSize(.mini)
+                        .padding(.top, 6)
+                        .help(
+                            "Rest the pointer against another enabled edge to move "
+                                + "an open shelf there."
+                        )
                 }
 
                 stage(title: "Destination", symbol: "folder") {

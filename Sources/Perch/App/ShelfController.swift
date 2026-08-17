@@ -26,6 +26,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let dockSnapPreview = DockSnapPreviewWindow()
     private var previewedDockTarget: DockSnapTarget?
     private var dockSnapPreviewHideTask: Task<Void, Never>?
+    private let edgeTransferPreview = DockSnapPreviewWindow()
+    private weak var armedEdgeTransferStrip: EdgeStripWindow?
+    private var edgeTransferTask: Task<Void, Never>?
+    private var edgeTransferPreviewHideTask: Task<Void, Never>?
+    private var edgeTransferRequiresWallExit = false
     /// Still copies of the card at the chosen edges the real one isn't coming out of,
     /// for the length of the first-run demonstration only.
     private var firstRunEdgeGhosts: [ShelfGhostCardWindow] = []
@@ -67,6 +72,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Required distance advantage before a live pointer-following shelf changes docks.
     /// This keeps tiny cursor movements at an exact midpoint from bouncing it repeatedly.
     private static let edgeHandoffHysteresis: CGFloat = 48
+    private static let edgeTransferDwell = Duration.milliseconds(250)
 
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
@@ -87,6 +93,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
         PerchSettings.flag(PerchSettings.keepEmptyShelf, default: true)
+    }
+    /// Whether a populated docked shelf can be deliberately summoned to another enabled
+    /// wall. Opt-in so existing shelves remain completely stationary by default.
+    private var movesOpenShelfBetweenEdges: Bool {
+        PerchSettings.flag(PerchSettings.moveOpenShelfBetweenEdges, default: false)
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -342,6 +353,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onShelfDragBegan = { [weak self] in
             guard let self else { return }
+            self.cancelEdgeTransfer(resetWallExit: true)
             self.detachFromSystemDock(makeVisible: false)
             self.clearDockSnapPreview()
             if self.revealMode == .edge {
@@ -509,6 +521,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             if self.arrivalPreviewFollowsPointer {
                 self.followNearestEdge(to: point, rememberingAsPreferred: false)
             }
+            self.updateEdgeTransfer(to: point)
             self.pointerDidMove(to: point, duringDrag: false)
         }
         // Shake the cursor to summon the shelf right where the pointer is (when enabled).
@@ -1329,6 +1342,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func setDragActive(_ active: Bool) {
         dragActive = active
+        if active {
+            cancelEdgeTransfer(resetWallExit: true)
+        }
         applyDragMousePolicy()
         // A retract scheduled just before the drag pasteboard became active must not
         // win the next main-loop turn and hide the drop target mid-gesture.
@@ -1387,6 +1403,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     private func setVendSessionActive(_ active: Bool) {
         vendSessionActive = active
+        if active {
+            cancelEdgeTransfer(resetWallExit: true)
+        }
         applyDragMousePolicy()
     }
 
@@ -1410,6 +1429,112 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             frames: edgeStrips.map(\.frame)
         ) else { return nil }
         return edgeStrips[index]
+    }
+
+    // MARK: Move a populated shelf between edges
+
+    private var canArmEdgeTransfer: Bool {
+        EdgeTransferPolicy.canArm(
+            enabled: movesOpenShelfBetweenEdges,
+            panelVisible: panel.isVisible,
+            panelFullyRevealed: windowController.isFullyRevealed,
+            usesEdgeDock: usesEdgeDock,
+            hasStoredItems: !store.items.isEmpty,
+            dragInFlight: dragSessionLive,
+            shelfDragInFlight: dragOutDockedFrame != nil,
+            arrivalPreviewActive: arrivalPreviewFollowsPointer,
+            contextMenuOpen: hostView.isContextMenuOpen
+        )
+    }
+
+    private func touchedEdgeTransferStrip(at point: NSPoint) -> EdgeStripWindow? {
+        edgeStrips
+            .filter { $0.wallContactContains(point) }
+            .min {
+                Self.distance(from: point, to: $0.frame)
+                    < Self.distance(from: point, to: $1.frame)
+            }
+    }
+
+    /// Arm a move only while the pointer is pressed against another enabled wall. The
+    /// outline appears immediately; a short dwell separates intent from an incidental
+    /// edge touch. After a move, the wall must be left before another can arm.
+    private func updateEdgeTransfer(to point: NSPoint) {
+        guard canArmEdgeTransfer else {
+            cancelEdgeTransfer(resetWallExit: true)
+            return
+        }
+        guard let target = touchedEdgeTransferStrip(at: point) else {
+            edgeTransferRequiresWallExit = false
+            cancelEdgeTransfer()
+            return
+        }
+        guard !edgeTransferRequiresWallExit else { return }
+        guard target.edge != shownEdge || target.pinnedScreen != shownScreen else {
+            cancelEdgeTransfer()
+            return
+        }
+        guard armedEdgeTransferStrip !== target else { return }
+
+        cancelEdgeTransfer()
+        armedEdgeTransferStrip = target
+        let targetFrame = panelFrame(for: target.pinnedScreen, edge: target.edge)
+        edgeTransferPreview.show(
+            at: targetFrame,
+            cornerRadius: themeStore.theme.cardCornerRadius,
+            toward: NSPoint(x: panel.frame.midX, y: panel.frame.midY)
+        )
+        edgeTransferTask = Task { @MainActor [weak self, weak target] in
+            do {
+                try await Task.sleep(for: Self.edgeTransferDwell)
+            } catch {
+                return
+            }
+            guard let self, let target,
+                  self.armedEdgeTransferStrip === target,
+                  self.canArmEdgeTransfer,
+                  self.edgeStrips.contains(where: { $0 === target }),
+                  target.wallContactContains(NSEvent.mouseLocation),
+                  target.edge != self.shownEdge || target.pinnedScreen != self.shownScreen
+            else {
+                self?.cancelEdgeTransfer()
+                return
+            }
+            self.completeEdgeTransfer(to: target)
+        }
+    }
+
+    private func completeEdgeTransfer(to target: EdgeStripWindow) {
+        edgeTransferTask = nil
+        armedEdgeTransferStrip = nil
+        edgeTransferRequiresWallExit = true
+        revealProvenance = .used
+        NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
+        reveal(
+            at: target,
+            rememberingAsPreferred: true,
+            transitioningBetweenEdges: true
+        )
+
+        edgeTransferPreviewHideTask?.cancel()
+        edgeTransferPreviewHideTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard let self, !Task.isCancelled else { return }
+            self.edgeTransferPreview.hide()
+            self.edgeTransferPreviewHideTask = nil
+        }
+    }
+
+    private func cancelEdgeTransfer(resetWallExit: Bool = false) {
+        edgeTransferTask?.cancel()
+        edgeTransferTask = nil
+        edgeTransferPreviewHideTask?.cancel()
+        edgeTransferPreviewHideTask = nil
+        armedEdgeTransferStrip = nil
+        edgeTransferPreview.hide()
+        if resetWallExit {
+            edgeTransferRequiresWallExit = false
+        }
     }
 
     /// "Reveal while dragging": a hidden shelf uses the nearest enabled dock. Only
@@ -2059,6 +2184,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// the shared half of pinning and of snapping a torn-off card beside the Dock, which
     /// supplies its own destination frame.
     private func enterFreeMode() {
+        cancelEdgeTransfer(resetWallExit: true)
         clearSystemDockAttachment()
         summonScreen = NSScreen.screens.first(where: { $0.frame.intersects(panel.frame) })
             ?? NSScreen.main ?? NSScreen.screens.first
@@ -2223,6 +2349,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
         if viaDrag {
+            cancelEdgeTransfer(resetWallExit: true)
             if !panel.isVisible {
                 revealedForDrag = true
                 markRevealUsed()
@@ -2230,6 +2357,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             preferredScreen = strip.pinnedScreen
             preferredEdge = strip.edge
             enterRegion(immediate: true)
+            return
+        }
+
+        // With edge transfer enabled, an open populated shelf owns this hover. Merely
+        // approaching the wall must not re-home it before the destination outline's
+        // confirmation dwell completes.
+        if movesOpenShelfBetweenEdges,
+           panel.isVisible,
+           usesEdgeDock,
+           !store.items.isEmpty,
+           strip.edge != shownEdge || strip.pinnedScreen != shownScreen {
             return
         }
 
@@ -2499,6 +2637,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Tear down and recreate the edge tabs for the current screen layout. If the shelf
     /// is open on a display that's gone, retract it so it can't be stranded off-screen.
     private func rebuildEdgeStrips() {
+        cancelEdgeTransfer(resetWallExit: true)
         for strip in edgeStrips {
             strip.orderOut(nil)
         }
@@ -2766,6 +2905,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// and stays out until it empties (or is dismissed) as before.
     private func markRevealUsed() {
         revealProvenance = .used
+        cancelEdgeTransfer(resetWallExit: true)
         arrivalAutoHideTask?.cancel()
         arrivalAutoHideTask = nil
         arrivalPreviewFollowsPointer = false
@@ -2826,6 +2966,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                     continue
                 }
                 self.hostView.resetInteraction()
+                self.cancelEdgeTransfer(resetWallExit: true)
                 self.windowController.hide(animated: true)
                 return
             }
@@ -3024,6 +3165,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 return
             }
             self.hostView.resetInteraction()
+            self.cancelEdgeTransfer(resetWallExit: true)
             self.windowController.hide(animated: true)
             self.retractTask = nil
         }
@@ -3034,7 +3176,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     ) -> Bool {
         ShelfRetractionPolicy.shouldRetractShelf(
             reveal: revealProvenance,
-            dragActive: dragActive,
+            dragActive: dragActive || edgeTransferTask != nil,
             shelfDragActive: dragOutDockedFrame != nil,
             isFreeFloating: revealMode == .free,
             isEmpty: store.items.isEmpty,
@@ -3044,6 +3186,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func hideShelf(animated: Bool) {
+        cancelEdgeTransfer(resetWallExit: true)
         cancelRetract()
         stopRetractWatcher()
         hostView.resetInteraction()

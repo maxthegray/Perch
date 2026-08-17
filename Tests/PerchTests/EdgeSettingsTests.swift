@@ -139,4 +139,22 @@ final class EdgeSettingsTests: XCTestCase {
             0
         )
     }
+
+    @MainActor
+    func testEdgeTransferUsesTheWholePhysicalSideWall() {
+        let screen = NSRect(x: 0, y: 0, width: 1_000, height: 800)
+
+        XCTAssertTrue(EdgeStripWindow.sideWallContactContains(
+            NSPoint(x: 1, y: 40), screenFrame: screen, edge: .left
+        ))
+        XCTAssertTrue(EdgeStripWindow.sideWallContactContains(
+            NSPoint(x: 999, y: 760), screenFrame: screen, edge: .right
+        ))
+        XCTAssertFalse(EdgeStripWindow.sideWallContactContains(
+            NSPoint(x: 10, y: 400), screenFrame: screen, edge: .left
+        ))
+        XCTAssertFalse(EdgeStripWindow.sideWallContactContains(
+            NSPoint(x: 500, y: 800), screenFrame: screen, edge: .notch
+        ))
+    }
 }

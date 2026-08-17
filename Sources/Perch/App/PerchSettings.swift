@@ -50,12 +50,14 @@ enum PerchSettings {
     /// Reveal the shelf when the pointer rests at an enabled edge. Defaults on, matching
     /// the behavior that had no switch — off leaves the edges inert until a drag.
     static let revealOnHover = "Perch.RevealOnHover"
-    /// Shaking the cursor summons a free-floating shelf at the pointer. Defaults on,
-    /// matching the original always-on behavior.
+    /// Shaking the cursor summons a free-floating shelf at the pointer. Defaults off.
     static let shakeToSummon = "Perch.ShakeToSummon"
     /// A free-floating shelf stays put (as the empty drop tile) after its last item
     /// leaves, instead of dismissing itself. Defaults on.
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
+    /// Touching another enabled screen edge moves a populated docked shelf there after
+    /// a short confirmation dwell. Defaults off.
+    static let moveOpenShelfBetweenEdges = "Perch.MoveOpenShelfBetweenEdges"
     /// Offer recently downloaded files as ghost rows.
     static let offerRecentArrivals = "Perch.OfferRecentArrivals"
     /// Keep concrete files at their source and persist a bookmark to them instead of

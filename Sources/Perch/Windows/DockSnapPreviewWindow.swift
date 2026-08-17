@@ -1,8 +1,8 @@
 import AppKit
 import QuartzCore
 
-/// A click-through ghost of the shelf's resting dock frame. It appears only while a
-/// free shelf is close enough to re-dock, giving the release gesture a clear target.
+/// A click-through ghost of the shelf's resting dock frame. It previews re-docking a
+/// dragged shelf and the opt-in gesture that moves a populated shelf between edges.
 @MainActor
 final class DockSnapPreviewWindow: NSPanel {
     private static let echoReach: CGFloat = 24

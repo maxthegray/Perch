@@ -9,7 +9,8 @@ import SwiftUI
 /// demos (keep-open, move/copy) act out whichever variant is currently selected.
 struct BehaviorDemo: View {
     enum Kind {
-        case shakeToSummon, revealOnHover, revealOnDrag, keepEmpty, moveShelf, dragOut
+        case shakeToSummon, revealOnHover, revealOnDrag, keepEmpty, moveShelf
+        case moveBetweenEdges, dragOut
     }
 
     let kind: Kind
@@ -44,7 +45,7 @@ struct BehaviorDemo: View {
 
     private var duration: Double {
         switch kind {
-        case .shakeToSummon, .moveShelf, .revealOnHover: return 4.6
+        case .shakeToSummon, .moveShelf, .moveBetweenEdges, .revealOnHover: return 4.6
         case .revealOnDrag, .keepEmpty, .dragOut: return 5.2
         }
     }
@@ -57,6 +58,7 @@ struct BehaviorDemo: View {
         case .revealOnDrag: revealScene(t)
         case .keepEmpty: keepEmptyScene(t)
         case .moveShelf: moveShelfScene(t)
+        case .moveBetweenEdges: moveBetweenEdgesScene(t)
         case .dragOut: dragOutScene(t)
         }
     }
@@ -132,6 +134,23 @@ struct BehaviorDemo: View {
         }
     }
 
+    /// The pointer settles against the opposite wall, a destination outline confirms
+    /// the target, and the populated shelf cross-fades there instead of sliding across.
+    private func moveBetweenEdgesScene(_ t: Double) -> some View {
+        let approach = ramp(t, 0.35, 1.25)
+        let preview = ramp(t, 1.15, 1.3) - ramp(t, 1.7, 1.85)
+        let handoff = ramp(t, 1.65, 1.9)
+        return ZStack {
+            shelf(rows: [1, 1], x: Self.shelfShownX)
+                .opacity(1 - handoff)
+            shelfOutline(x: 20)
+                .opacity(preview)
+            shelf(rows: [1, 1], x: 20)
+                .opacity(handoff)
+            cursor(x: lerp(56, 5, approach), y: 34)
+        }
+    }
+
     /// An item is dragged off the shelf. Copy leaves the original row behind;
     /// Move takes it along.
     private func dragOutScene(_ t: Double) -> some View {
@@ -190,6 +209,13 @@ struct BehaviorDemo: View {
             .font(.system(size: 10, weight: .medium))
             .foregroundStyle(.primary)
             .position(x: x, y: y)
+    }
+
+    private func shelfOutline(x: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .stroke(Color.accentColor.opacity(0.55), lineWidth: 1)
+            .frame(width: 27, height: 42)
+            .position(x: x, y: 32)
     }
 
     private func file(x: CGFloat, y: CGFloat, opacity: Double) -> some View {

@@ -15,7 +15,7 @@ final class ShelfWindowController {
     // drift away from these.
     static let revealDuration: CFTimeInterval = 0.30
     static let hideDuration: CFTimeInterval = 0.18
-    /// A quick dip around a drag-time edge handoff. The panel moves only while fully
+    /// A quick dip around a live edge handoff. The panel moves only while fully
     /// transparent, so switching docks reads as a cross-fade rather than a teleport.
     private static let edgeHandoffFadeOutDuration: CFTimeInterval = 0.07
     private static let edgeHandoffFadeInDuration: CFTimeInterval = 0.11
@@ -54,6 +54,7 @@ final class ShelfWindowController {
     private var phase: ShelfMouseEventPolicy.PanelPhase = .hidden {
         didSet { applyMouseEventPolicy() }
     }
+    var isFullyRevealed: Bool { phase == .revealed }
 
     /// Whether a system drag is in flight, set by the controller from its global drag
     /// state. A drag has to be able to reach the card the moment it is ordered in, since
@@ -190,7 +191,7 @@ final class ShelfWindowController {
         }
     }
 
-    /// Cross-fade an already-visible drag target from one enabled dock to another.
+    /// Cross-fade an already-visible shelf from one enabled dock to another.
     /// Repeated midpoint crossings supersede older handoffs through `visibilityGeneration`.
     func retargetAcrossEdges(to targetFrame: NSRect, edge: ShelfEdge) {
         visibilityGeneration &+= 1

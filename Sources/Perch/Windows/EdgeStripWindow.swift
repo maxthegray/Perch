@@ -140,6 +140,30 @@ final class EdgeStripWindow: NSPanel {
         return zone.contains(point)
     }
 
+    /// Whether the pointer is pressed against this enabled, physically reachable wall.
+    /// Side transfers use the full display height rather than the centered hover tab;
+    /// the notch keeps its purpose-built reachable contour.
+    func wallContactContains(_ point: NSPoint) -> Bool {
+        guard edge != .notch else { return catchZoneContains(point) }
+        return Self.sideWallContactContains(
+            point,
+            screenFrame: pinnedScreen.frame,
+            edge: edge
+        )
+    }
+
+    static func sideWallContactContains(
+        _ point: NSPoint,
+        screenFrame: NSRect,
+        edge: ShelfEdge
+    ) -> Bool {
+        guard edge == .left || edge == .right else { return false }
+        guard point.y >= screenFrame.minY - 1,
+              point.y <= screenFrame.maxY + 1 else { return false }
+        let wallX = edge == .left ? screenFrame.minX : screenFrame.maxX
+        return abs(point.x - wallX) <= 3
+    }
+
     private func configureStrip() {
         // The notch tab must sit above the menu bar to draw on the real notch; the
         // side tabs stay at the normal floating level.

@@ -21,7 +21,7 @@ struct AdvancedSettingsPane: View {
         func preferredHeight(for layout: SettingsLayout) -> CGFloat {
             switch self {
             case .look: return 440
-            case .behavior: return layout == .beautiful ? 560 : 820
+            case .behavior: return layout == .beautiful ? 560 : 890
             case .docking: return layout == .beautiful ? 280 : 380
             }
         }
@@ -39,6 +39,8 @@ struct AdvancedSettingsPane: View {
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
     @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
+    @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)
+    private var moveOpenShelfBetweenEdges = false
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.offerRecentArrivals) private var offerRecentArrivals = true
     @AppStorage(PerchSettings.referenceDroppedFiles) private var referenceDroppedFiles = false
@@ -146,6 +148,15 @@ struct AdvancedSettingsPane: View {
             }
 
             if settingsLayout == .ugly {
+                SwiftUI.Section("Docked shelf") {
+                    behaviorRow(
+                        demo: .moveBetweenEdges,
+                        title: "Touch an edge to move Perch",
+                        caption: "Rest the pointer against another enabled edge to move an open shelf there.",
+                        isOn: $moveOpenShelfBetweenEdges
+                    )
+                }
+
                 SwiftUI.Section("Recent downloads") {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
