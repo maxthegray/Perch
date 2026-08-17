@@ -5,6 +5,37 @@ import XCTest
 
 @MainActor
 final class SmartNamePresentationTests: XCTestCase {
+    func testAdoptedGhostKeepsItsGeneratedNameUntilSuggestionIsPersisted() {
+        let store = SmartNameStore()
+        let itemID = UUID()
+
+        store.registerScreenshot(itemID)
+        store.setProvisionalName("Messages — Lachlan Wession", for: itemID)
+
+        XCTAssertEqual(
+            store.presentation(
+                for: itemID,
+                originalTitle: "Screenshot 2026-07-27 at 1.23.45 AM.png"
+            ),
+            SmartNameStore.NamePresentation(
+                title: "Messages — Lachlan Wession",
+                isAnalyzing: false
+            )
+        )
+
+        let suggestion = AvailableFilenameSuggestion(
+            fileID: UUID(),
+            shelfItemID: itemID,
+            originalFilename: "Screenshot 2026-07-27 at 1.23.45 AM.png",
+            displayName: "Messages — Lachlan Wession",
+            suggestedFilename: "Messages — Lachlan Wession.png"
+        )
+        store.set(suggestion)
+
+        XCTAssertEqual(store.suggestion(for: itemID), suggestion)
+        XCTAssertNil(store.provisionalNamesByItemID[itemID])
+    }
+
     func testScreenshotUsesStablePlaceholderThenHugsGeneratedName() {
         let store = SmartNameStore()
         let itemID = UUID()
@@ -17,8 +48,7 @@ final class SmartNamePresentationTests: XCTestCase {
             ),
             SmartNameStore.NamePresentation(
                 title: "Screenshot",
-                isAnalyzing: true,
-                usesStableWidth: true
+                isAnalyzing: true
             )
         )
 
@@ -37,8 +67,7 @@ final class SmartNamePresentationTests: XCTestCase {
             store.presentation(for: itemID, originalTitle: "Ignored.png"),
             SmartNameStore.NamePresentation(
                 title: "Terminal — Perch",
-                isAnalyzing: false,
-                usesStableWidth: false
+                isAnalyzing: false
             )
         )
     }
@@ -67,8 +96,7 @@ final class SmartNamePresentationTests: XCTestCase {
             store.presentation(for: itemID, originalTitle: "Scanned document.pdf"),
             SmartNameStore.NamePresentation(
                 title: "Scanned document.pdf",
-                isAnalyzing: true,
-                usesStableWidth: false
+                isAnalyzing: true
             )
         )
     }
@@ -96,8 +124,7 @@ final class SmartNamePresentationTests: XCTestCase {
             ),
             SmartNameStore.NamePresentation(
                 title: "Screenshot.png",
-                isAnalyzing: false,
-                usesStableWidth: false
+                isAnalyzing: false
             )
         )
     }

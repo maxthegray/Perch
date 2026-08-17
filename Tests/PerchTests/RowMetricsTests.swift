@@ -182,14 +182,20 @@ final class RowMetricsTests: XCTestCase {
         )
     }
 
-    func testSmartNameWidthIsStableAndRespectsNarrowMaximum() {
-        XCTAssertEqual(
-            RowMetrics.stabilizedSmartNameCardWidth(maximumWidth: 300),
-            240
+    func testPendingScreenshotUsesItsPlaceholderAsAConservativeWidthEstimate() {
+        let theme = ShelfTheme.resolve(.glass)
+        let maximumWidth: CGFloat = 300
+        let pendingWidth = RowMetrics.contentHuggingCardWidth(
+            rows: [(ScreenshotNamePresentation.placeholder, true, false)],
+            theme: theme,
+            maximumWidth: maximumWidth
         )
-        XCTAssertEqual(
-            RowMetrics.stabilizedSmartNameCardWidth(maximumWidth: 180),
-            180
+        let predictedWidth = RowMetrics.contentHuggingCardWidth(
+            rows: [("Messages — Lachlan Wession", true, false)],
+            theme: theme,
+            maximumWidth: maximumWidth
         )
+
+        XCTAssertLessThan(pendingWidth, predictedWidth)
     }
 }

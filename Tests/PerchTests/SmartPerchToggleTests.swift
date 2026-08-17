@@ -19,8 +19,7 @@ final class SmartPerchToggleTests: XCTestCase {
             ),
             SmartNameStore.NamePresentation(
                 title: "Screenshot 2026-07-27 at 1.23.45 AM.png",
-                isAnalyzing: false,
-                usesStableWidth: false
+                isAnalyzing: false
             )
         )
         XCTAssertNil(store.suggestion(for: itemID))

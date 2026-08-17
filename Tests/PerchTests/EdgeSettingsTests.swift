@@ -72,4 +72,71 @@ final class EdgeSettingsTests: XCTestCase {
         EdgeSettings().setEnabledEdges([.notch])
         XCTAssertEqual(EdgeSettings().enabledEdges, [.notch])
     }
+
+    @MainActor
+    func testDragRevealChoosesTheNearestEnabledDock() {
+        let left = NSRect(x: 0, y: 300, width: 22, height: 360)
+        let right = NSRect(x: 978, y: 300, width: 22, height: 360)
+        let frames = [left, right]
+
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 120, y: 480),
+                frames: frames
+            ),
+            0
+        )
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 880, y: 480),
+                frames: frames
+            ),
+            1
+        )
+    }
+
+    @MainActor
+    func testLiveEdgeHandoffHasACenterDeadZone() {
+        let frames = [
+            NSRect(x: 0, y: 300, width: 22, height: 360),
+            NSRect(x: 978, y: 300, width: 22, height: 360)
+        ]
+
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 510, y: 480),
+                frames: frames,
+                keepingCurrent: 0,
+                handoffMargin: 48
+            ),
+            0
+        )
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 540, y: 480),
+                frames: frames,
+                keepingCurrent: 0,
+                handoffMargin: 48
+            ),
+            1
+        )
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 490, y: 480),
+                frames: frames,
+                keepingCurrent: 1,
+                handoffMargin: 48
+            ),
+            1
+        )
+        XCTAssertEqual(
+            ShelfController.nearestDockIndex(
+                to: NSPoint(x: 460, y: 480),
+                frames: frames,
+                keepingCurrent: 1,
+                handoffMargin: 48
+            ),
+            0
+        )
+    }
 }

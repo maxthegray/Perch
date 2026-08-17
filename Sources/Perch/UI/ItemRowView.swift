@@ -65,7 +65,7 @@ struct ItemRowView: View {
     let theme: ShelfTheme
     let isHovered: Bool
     let isSelected: Bool
-    /// Whether this row is the one being dragged to reorder (lifted styling).
+    /// Whether this row is lifted for an in-shelf reorder or an external vend.
     let isDragging: Bool
     /// Whether this row is mid-delete: it pops up slightly (affirmative bounce) just
     /// before the removal transition shrinks it away.

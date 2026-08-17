@@ -685,13 +685,20 @@ final class SmartPerchFeature {
         }
     }
 
-    /// Hand over the cached OCR result for an offer being adopted, so the real drop
-    /// record does not re-run Vision over a file that was already read for its preview.
+    /// Hand over the cached OCR result and visible name for an offer being adopted, so
+    /// the real drop neither re-runs Vision nor flashes back to its generic placeholder.
     /// Any analysis still in flight for that path is cancelled: the row is about to
     /// become a real item, and the drop pipeline takes over from here.
-    func takeArrivalAnalysis(forPath path: String) -> ScreenshotOCRResult? {
+    func takeArrivalAnalysis(
+        forPath path: String,
+        adoptingAs itemID: UUID
+    ) -> ScreenshotOCRResult? {
         arrivalNameTasksByPath.removeValue(forKey: path)?.cancel()
-        return arrivalNameAnalysisByPath[path]?.ocrResult
+        guard let analysis = arrivalNameAnalysisByPath[path] else { return nil }
+        if let suggestion = analysis.suggestion {
+            smartNames.setProvisionalName(suggestion.displayName, for: itemID)
+        }
+        return analysis.ocrResult
     }
 
     private func startArrivalNameAnalysis(for offer: ArrivalOffer) {

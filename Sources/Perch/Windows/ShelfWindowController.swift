@@ -15,6 +15,10 @@ final class ShelfWindowController {
     // drift away from these.
     static let revealDuration: CFTimeInterval = 0.30
     static let hideDuration: CFTimeInterval = 0.18
+    /// A quick dip around a drag-time edge handoff. The panel moves only while fully
+    /// transparent, so switching docks reads as a cross-fade rather than a teleport.
+    private static let edgeHandoffFadeOutDuration: CFTimeInterval = 0.07
+    private static let edgeHandoffFadeInDuration: CFTimeInterval = 0.11
     /// Smooth quint-style decel for the entrance; a gentle ease-in for the exit.
     static let revealCurve = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
     static let hideCurve = CAMediaTimingFunction(controlPoints: 0.4, 0, 0.7, 0.2)
@@ -182,6 +186,46 @@ final class ShelfWindowController {
                 }
                 self.activeRevealGeneration = nil
                 self.phase = .revealed
+            }
+        }
+    }
+
+    /// Cross-fade an already-visible drag target from one enabled dock to another.
+    /// Repeated midpoint crossings supersede older handoffs through `visibilityGeneration`.
+    func retargetAcrossEdges(to targetFrame: NSRect, edge: ShelfEdge) {
+        visibilityGeneration &+= 1
+        let generation = visibilityGeneration
+        resizeGeneration &+= 1
+        usesFreeAnimation = false
+        self.edge = edge
+        revealedFrame = targetFrame
+        activeRevealGeneration = generation
+        panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
+        phase = .revealing
+        panel.orderFrontRegardless()
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.edgeHandoffFadeOutDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            panel.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self, self.visibilityGeneration == generation else { return }
+                self.panel.setFrame(targetFrame, display: false)
+                self.healContentViewShear()
+
+                NSAnimationContext.runAnimationGroup { context in
+                    context.duration = Self.edgeHandoffFadeInDuration
+                    context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                    self.panel.animator().alphaValue = 1
+                } completionHandler: { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self,
+                              self.visibilityGeneration == generation else { return }
+                        self.activeRevealGeneration = nil
+                        self.phase = .revealed
+                    }
+                }
             }
         }
     }

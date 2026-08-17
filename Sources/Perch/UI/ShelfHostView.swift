@@ -153,10 +153,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// dismisses it without removing any stored items.
     var onCloseFreeShelf: (() -> Void)?
 
-    /// Called just before a delete empties the shelf. The controller hides the card
-    /// first — the last row rides the fade-out — so the empty-state layout (and its
-    /// resize) never flashes on screen.
-    var onWillRemoveLastItem: (() -> Void)?
+    /// Called just before a delete or successful vend empties the shelf. Returns whether
+    /// the controller started hiding the card; when true, model removal waits until the
+    /// last row has ridden the fade-out so the empty tile never flashes on screen.
+    var onWillRemoveLastItem: (() -> Bool)?
+
+    /// A promised vend can fail after the shelf began hiding but before retirement.
+    /// Re-present any rows that consequently remain in the store.
+    var onVendPrehideNeedsRecovery: (() -> Void)?
 
     /// Gate + hooks for whole-card drags (the grab handle or Command-drag; from an
     /// edge they tear the docked card off). The controller answers whether a card drag
@@ -737,9 +741,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             ? store.items.filter { interaction.selectedItemIDs.contains($0.id) }
             : [item]
         let itemIDs = Set(items.map(\.id))
-        // Move semantics: the row leaves the shelf with the drag — the item is "in the
-        // cursor's hand", not cloned. If the drag ends nowhere valid, the system ghost
-        // slides back and the row reappears. Copy mode keeps the original visible.
+        // Keep the source row geometrically stable until AppKit resolves the drop. Move
+        // mode lifts it subtly, then removes it only after a successful external landing;
+        // cancellation simply settles it back in place.
         let copiesItems = VendModePolicy.copiesItems(
             copiesByDefault: vendCopies,
             optionKeyDown: event.modifierFlags.contains(.option)
@@ -828,10 +832,30 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 self.interaction.vendingItemIDs.removeAll()
                 return
             }
-            delivery.dragDidLand()
-            guard isMove else { return }
-            self.interaction.vendingItemIDs.removeAll()
-            self.interaction.removeFromSelection(itemIDs)
+            let finishesEveryItem = isMove
+                && !self.store.items.isEmpty
+                && self.store.items.allSatisfy { itemIDs.contains($0.id) }
+            let hidesBeforeRetirement = finishesEveryItem
+                && (self.onWillRemoveLastItem?() ?? false)
+
+            let finishVend = { [weak self] in
+                guard let self else { return }
+                delivery.dragDidLand()
+                guard isMove else { return }
+                self.interaction.vendingItemIDs.removeAll()
+                self.interaction.removeFromSelection(itemIDs)
+                if hidesBeforeRetirement, !self.store.items.isEmpty {
+                    self.onVendPrehideNeedsRecovery?()
+                }
+            }
+            guard hidesBeforeRetirement else {
+                finishVend()
+                return
+            }
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                finishVend()
+            }
         }
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
@@ -876,11 +900,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         interaction.previewOrder = nil
     }
 
-    /// The items as currently rendered: a row vended out in a move-mode drag is hidden
-    /// until the drag resolves, so hit-testing must skip it too.
+    /// The items currently rendered and hit-testable. A vended row remains in this list
+    /// until the system confirms a successful external landing.
     private var visibleItems: [StoredItem] {
-        (interaction.previewOrder ?? store.items)
-            .filter { !interaction.vendingItemIDs.contains($0.id) }
+        interaction.previewOrder ?? store.items
     }
 
     private var visibleRows: [ShelfDisplayEntry] {
@@ -1188,8 +1211,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             if emptiesShelf {
                 // Hide the card with the row still aboard, then swap to the empty state
                 // off-screen — no flash of the empty tray between bounce and dismissal.
-                self.onWillRemoveLastItem?()
-                try? await Task.sleep(for: .milliseconds(200))
+                if self.onWillRemoveLastItem?() == true {
+                    try? await Task.sleep(for: .milliseconds(200))
+                }
             }
             if returnToOrigin {
                 self.store.returnToOrigin(items)

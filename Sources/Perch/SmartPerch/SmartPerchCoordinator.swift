@@ -181,8 +181,11 @@ final class SmartPerchCoordinator: ObservableObject {
         feature?.prepareArrivalSmartNames()
     }
 
-    func takeArrivalAnalysis(forPath path: String) -> ScreenshotOCRResult? {
-        feature?.takeArrivalAnalysis(forPath: path)
+    func takeArrivalAnalysis(
+        forPath path: String,
+        adoptingAs itemID: UUID
+    ) -> ScreenshotOCRResult? {
+        feature?.takeArrivalAnalysis(forPath: path, adoptingAs: itemID)
     }
 
     func recordArrivalSessionInteraction(

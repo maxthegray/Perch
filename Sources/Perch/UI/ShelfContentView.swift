@@ -258,11 +258,10 @@ struct ShelfContentView: View {
     }
 
     /// Rows follow the live preview order while reordering, otherwise the store order.
-    /// An item vended out in a move-mode drag is hidden — it's "in the cursor's hand" —
-    /// and reappears here if the drag ends nowhere valid.
+    /// A vended row stays aboard until the system resolves the drop, then leaves through
+    /// the ordinary removal transition instead of exposing a blank shelf mid-drag.
     private var displayedItems: [StoredItem] {
-        (interaction.previewOrder ?? store.items)
-            .filter { !interaction.vendingItemIDs.contains($0.id) }
+        interaction.previewOrder ?? store.items
     }
 
     private var displayedEntries: [ShelfDisplayEntry] {
@@ -423,6 +422,8 @@ struct ShelfContentView: View {
     /// and keeps every preview aligned without adding visual chrome.
     private func stackedItemPreview(_ item: StoredItem, side: CGFloat) -> some View {
         let thumbnail = thumbnails.thumbnail(for: item, pointSize: side)
+        let isLifted = interaction.draggingItemIDs.contains(item.id)
+            || interaction.vendingItemIDs.contains(item.id)
         return ZStack {
             if let thumbnail {
                 Image(nsImage: thumbnail)
@@ -453,10 +454,10 @@ struct ShelfContentView: View {
         .contentShape(Rectangle())
         .scaleEffect(
             interaction.deletingItemIDs.contains(item.id) ? 1.06
-                : (interaction.draggingItemIDs.contains(item.id) ? 1.035
+                : (isLifted ? 1.035
                     : (interaction.hoveredItemID == item.id ? 1.02 : 1))
         )
-        .opacity(interaction.draggingItemIDs.contains(item.id) ? 0.94 : 1)
+        .opacity(isLifted ? 0.94 : 1)
         .frame(maxWidth: .infinity, alignment: .center)
         .animation(.easeOut(duration: 0.14), value: interaction.hoveredItemID == item.id)
         .animation(.easeOut(duration: 0.18), value: thumbnail != nil)
@@ -504,7 +505,8 @@ struct ShelfContentView: View {
             theme: theme,
             isHovered: interaction.hoveredItemID == item.id,
             isSelected: interaction.selectedItemIDs.contains(item.id),
-            isDragging: interaction.draggingItemIDs.contains(item.id),
+            isDragging: interaction.draggingItemIDs.contains(item.id)
+                || interaction.vendingItemIDs.contains(item.id),
             isDeleting: interaction.deletingItemIDs.contains(item.id),
             thumbnail: thumbnails.thumbnail(for: item),
             showsSeparator: showsSeparator,

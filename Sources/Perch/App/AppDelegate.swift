@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         SmartPerchDataRemoval.completeIfPending()
         LegacySmartPerchMigration.run()
+        EdgeTabPreferenceMigration.run()
         do {
             let controller = try ShelfController()
             self.controller = controller

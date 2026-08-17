@@ -76,9 +76,8 @@ final class RowInteractionState: ObservableObject {
     /// shrinking away. Set for ~110ms between the click and the actual removal.
     @Published var deletingItemIDs: Set<UUID> = []
 
-    /// The item currently vended out in a move-mode system drag. Its row is hidden while
-    /// the drag is in flight — the item travels with the cursor instead of appearing to
-    /// clone — and comes back if the drag ends nowhere valid.
+    /// Items participating in a move-mode system drag. Their source rows remain in place
+    /// with lifted styling until the drop resolves, avoiding an empty-card flash.
     @Published var vendingItemIDs: Set<UUID> = []
     /// Transform rows are presentation-only and never enter ItemStore or index.json.
     @Published private(set) var transformPlaceholders: [TransformPlaceholder] = []
@@ -246,14 +245,6 @@ enum RowMetrics {
     /// Height of the empty shelf's drop tile. Shared by SwiftUI layout and AppKit's
     /// window-size estimate.
     static let emptyTileHeight: CGFloat = 64
-    /// Unresolved screenshot placeholders occupy a predictable compact card width so
-    /// analysis state changes do not move the outer window before a real name exists.
-    static let stableSmartNameCardWidth: CGFloat = 240
-
-    static func stabilizedSmartNameCardWidth(maximumWidth: CGFloat) -> CGFloat {
-        min(max(0, maximumWidth), stableSmartNameCardWidth)
-    }
-
     /// A labeled item is a compact chip instead of a bar spanning the row lane. The
     /// width follows its visible title, remains capped by the available lane, and only
     /// grows enough to hold the trailing action while that action is visible.

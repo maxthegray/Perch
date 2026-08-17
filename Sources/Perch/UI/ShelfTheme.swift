@@ -277,7 +277,7 @@ final class ThemeStore: ObservableObject {
         }
         showsGrabHandle = UserDefaults.standard.object(forKey: Self.grabHandleKey) as? Bool ?? false
         showsShadow = UserDefaults.standard.object(forKey: Self.shadowKey) as? Bool ?? false
-        showsEdgeTab = UserDefaults.standard.object(forKey: Self.edgeTabKey) as? Bool ?? true
+        showsEdgeTab = UserDefaults.standard.object(forKey: Self.edgeTabKey) as? Bool ?? false
         stacksItems = UserDefaults.standard.bool(forKey: Self.stacksItemsKey)
 
         if let raw = UserDefaults.standard.string(forKey: Self.sizePresetKey),

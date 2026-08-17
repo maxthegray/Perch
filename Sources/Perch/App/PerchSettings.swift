@@ -89,6 +89,10 @@ enum PerchSettings {
     static let arrivalRevealCounts = "Perch.ArrivalRevealCounts"
     static let launchAtLoginDefaultApplied = "Perch.LaunchAtLoginDefaultApplied"
     static let launchAtLoginUserChoice = "Perch.LaunchAtLoginUserChoice"
+    /// One-time migration shipped when the drag-time edge tab changed from on to off.
+    /// Once written, later launches preserve whatever the user chooses in Settings.
+    static let edgeTabOffByDefaultMigrationCompleted =
+        "Perch.EdgeTabOffByDefaultMigrationCompleted"
 
     // MARK: - Reading
 

@@ -53,7 +53,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// True while an item dragged *off the card* is still in flight. See `dragSessionLive`.
     private var vendSessionActive = false
     /// Delays the visual edge tab so short, ordinary drags stay quiet. If a drag lasts
-    /// long enough, the home tab appears as a reminder that Perch is available.
+    /// long enough, the nearest tab appears as a reminder that Perch is available.
     private var edgeTabReminderTask: Task<Void, Never>?
     private var edgeTabReminderVisible = false
     /// Why the shelf is currently out. A hover reveal starts out `unusedHover` and is
@@ -62,9 +62,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// and stays out. Every other reveal path is deliberate, hence the default.
     private var revealProvenance: ShelfRetractionPolicy.Reveal = .used
     /// True when the current drag (in "reveal while dragging" mode) opened the shelf.
-    /// The chosen edge remains stable until the drag ends or the pointer explicitly
-    /// enters another edge tab.
+    /// While true, the shelf follows whichever enabled dock is nearest the pointer.
     private var revealedForDrag = false
+    /// Required distance advantage before a live pointer-following shelf changes docks.
+    /// This keeps tiny cursor movements at an exact midpoint from bouncing it repeatedly.
+    private static let edgeHandoffHysteresis: CGFloat = 48
 
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
@@ -156,6 +158,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// A shelf opened only to advertise a new arrival goes away again after a short
     /// glance; adopting, pinning, locking, or hovering it hands control to normal UI.
     private var arrivalAutoHideTask: Task<Void, Never>?
+    /// While that temporary arrival preview is active, keep its real shelf on the
+    /// enabled edge nearest the live pointer.
+    private var arrivalPreviewFollowsPointer = false
     /// Retracts the shelf again after the first-run demonstration — see
     /// `demonstrateShelfLocation`.
     private var firstRunDemoTask: Task<Void, Never>?
@@ -304,13 +309,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // (Unless a free shelf is set to stay when empty — then it remains on screen
         // and shrinks to the empty tile in place.)
         hostView.onWillRemoveLastItem = { [weak self] in
-            guard let self else { return }
+            guard let self else { return false }
             if self.revealMode == .free {
-                guard !self.keepsEmptyFreeShelf else { return }
+                guard !self.keepsEmptyFreeShelf else { return false }
                 self.dismissFreeShelf()
             } else {
                 self.hideShelf(animated: true)
             }
+            return true
+        }
+        hostView.onVendPrehideNeedsRecovery = { [weak self] in
+            self?.revealIfNeeded()
         }
 
         // Dragging the card with the configured gesture (handle or Command-drag) moves
@@ -468,16 +477,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             Task { @MainActor in self?.rebuildEdgeStrips() }
         }
 
-        // During a longer drag, advertise the established dock as a reminder. Choosing
-        // a target from the drag's starting point made screenshot drags (which begin in
-        // the lower-right corner) pull a left-docked shelf across the screen.
+        // A hidden shelf opens at the enabled dock nearest the drag, then follows the
+        // nearest dock as the pointer crosses between edges or screens.
         mouseMonitor.onDragSessionChange = { [weak self] active in
             guard let self else { return }
             self.setDragActive(active)
             if active {
                 self.beginEdgeTabReminder()
                 if self.usesEdgeDock, self.revealOnDragStart {
-                    self.revealForDrag()
+                    self.revealForDrag(at: NSEvent.mouseLocation)
                 }
             } else {
                 self.endEdgeTabReminder()
@@ -487,14 +495,21 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         mouseMonitor.onDragMoved = { [weak self] point in
             guard let self else { return }
             if self.usesEdgeDock, self.edgeTabReminderVisible {
-                self.showHomeTab()
+                self.showNearestTab(to: point)
             } else {
                 self.setTabsShown(false)
+            }
+            if self.revealedForDrag {
+                self.followNearestEdge(to: point)
             }
             self.pointerDidMove(to: point, duringDrag: true)
         }
         mouseMonitor.onMouseMoved = { [weak self] point in
-            self?.pointerDidMove(to: point, duringDrag: false)
+            guard let self else { return }
+            if self.arrivalPreviewFollowsPointer {
+                self.followNearestEdge(to: point, rememberingAsPreferred: false)
+            }
+            self.pointerDidMove(to: point, duringDrag: false)
         }
         // Shake the cursor to summon the shelf right where the pointer is (when enabled).
         mouseMonitor.onSummonAtCursor = { [weak self] point in
@@ -729,7 +744,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
             self.refreshArrivals(markRevealed: true)
             guard !self.arrivals.visibleGhosts.isEmpty else { return }
-            self.revealAtPreferredEdge()
+            self.arrivalPreviewFollowsPointer = true
+            self.revealAtNearestEdge(to: NSEvent.mouseLocation)
             self.scheduleArrivalAutoHide()
         }
     }
@@ -737,15 +753,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func scheduleArrivalAutoHide() {
         arrivalAutoHideTask?.cancel()
         arrivalAutoHideTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(8))
+            do {
+                try await Task.sleep(for: .seconds(5))
+            } catch {
+                return
+            }
             guard let self, !Task.isCancelled else { return }
+            self.arrivalPreviewFollowsPointer = false
+            self.arrivalAutoHideTask = nil
             guard self.panel.isVisible,
                   self.shouldAutomaticallyRetractShelf(
                     pointerInKeepAliveRegion: self.pointerInRegion
                   )
             else { return }
             self.hideShelf(animated: true)
-            self.arrivalAutoHideTask = nil
         }
     }
 
@@ -780,7 +801,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         recordsInteraction: Bool = true
     ) -> StoredItem? {
         let fileManager = FileManager.default
-        let prefetchedOCRResult = smartPerch.takeArrivalAnalysis(forPath: offer.id)
         guard fileManager.fileExists(atPath: offer.url.path) else {
             refreshArrivals()
             return nil
@@ -824,6 +844,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         let item = StoredItem(metadata: metadata, directoryURL: directory.url)
         registerScreenshotPresentationIfNeeded(for: item)
+        let prefetchedOCRResult = smartPerch.takeArrivalAnalysis(
+            forPath: offer.id,
+            adoptingAs: item.id
+        )
         store.insert(item, at: nil)
         recordSmartDrop(
             item,
@@ -1292,7 +1316,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             guard let self, self.dragActive, self.usesEdgeDock else { return }
             self.edgeTabReminderVisible = true
-            self.showHomeTab()
+            self.showNearestTab(to: NSEvent.mouseLocation)
         }
     }
 
@@ -1342,33 +1366,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         arrivals.suppressed = suppressed
     }
 
-    /// Show only the tab belonging to the shelf's established dock. The pointer may
-    /// begin a drag anywhere on the desktop; it does not get to relocate the shelf.
-    private func showHomeTab() {
+    /// Show only the enabled tab nearest the live drag.
+    private func showNearestTab(to point: NSPoint) {
         guard usesEdgeDock, themeStore.showsEdgeTab else {
             setTabsShown(false)
             return
         }
-        guard let home = homeStrip() else { return }
+        guard let nearest = nearestStrip(to: point) else { return }
         for strip in edgeStrips {
-            strip.showsTab = (strip === home)
+            strip.showsTab = (strip === nearest)
         }
-    }
-
-    private func homeStrip() -> EdgeStripWindow? {
-        let targetEdge = panel.isVisible ? shownEdge : preferredEdge
-        let targetScreen = panel.isVisible ? shownScreen : preferredScreen
-        let matchingEdge = edgeStrips.filter { $0.edge == targetEdge }
-        if let targetScreen,
-           let exact = matchingEdge.first(where: {
-               $0.pinnedScreen == targetScreen
-           }) {
-            return exact
-        }
-        return matchingEdge.min(by: {
-            Self.distance(from: panel.frame.origin, to: $0.frame)
-                < Self.distance(from: panel.frame.origin, to: $1.frame)
-        }) ?? resolvedPreferredStrip()
     }
 
     /// Whether *some* drag session is in flight. `dragActive` comes from the global event
@@ -1398,14 +1405,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// The enabled edge tab whose catch zone is nearest the cursor.
     private func nearestStrip(to point: NSPoint) -> EdgeStripWindow? {
-        edgeStrips.min(by: {
-            Self.distance(from: point, to: $0.frame) < Self.distance(from: point, to: $1.frame)
-        })
+        guard let index = Self.nearestDockIndex(
+            to: point,
+            frames: edgeStrips.map(\.frame)
+        ) else { return nil }
+        return edgeStrips[index]
     }
 
-    /// "Reveal while dragging": open at the shelf's existing/home dock. Only flagged as
-    /// drag-revealed if it wasn't already open, so a persistent full shelf is untouched.
-    private func revealForDrag() {
+    /// "Reveal while dragging": a hidden shelf uses the nearest enabled dock. Only
+    /// flagged and retargeted when it was hidden, so a persistent visible shelf is never
+    /// teleported across the desktop when another drag begins.
+    private func revealForDrag(at point: NSPoint) {
         guard usesEdgeDock else { return }
         if !panel.isVisible {
             revealedForDrag = true
@@ -1413,12 +1423,55 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // out keeps its provisional status: if the drag lands elsewhere, the pointer
             // leaving still takes the accidental reveal back.
             markRevealUsed()
-        }
-        if let shownScreen, edgeSettings.isEnabled(shownEdge) {
-            preferredScreen = shownScreen
-            preferredEdge = shownEdge
+            if let nearest = nearestStrip(to: point) {
+                preferredScreen = nearest.pinnedScreen
+                preferredEdge = nearest.edge
+            }
         }
         revealIfNeeded()
+    }
+
+    /// Move a mouse-directed shelf to the nearest enabled dock. Comparing against the
+    /// shown location makes the handoff happen exactly once at each nearest-edge boundary.
+    private func followNearestEdge(
+        to point: NSPoint,
+        rememberingAsPreferred: Bool = true
+    ) {
+        let currentIndex = edgeStrips.firstIndex {
+            $0.edge == shownEdge && $0.pinnedScreen == shownScreen
+        }
+        guard let nearestIndex = Self.nearestDockIndex(
+            to: point,
+            frames: edgeStrips.map(\.frame),
+            keepingCurrent: currentIndex,
+            handoffMargin: Self.edgeHandoffHysteresis
+        ) else { return }
+        let nearest = edgeStrips[nearestIndex]
+        guard nearest.edge != shownEdge || nearest.pinnedScreen != shownScreen
+        else { return }
+        reveal(
+            at: nearest,
+            rememberingAsPreferred: rememberingAsPreferred,
+            transitioningBetweenEdges: true
+        )
+    }
+
+    static func nearestDockIndex(
+        to point: NSPoint,
+        frames: [NSRect],
+        keepingCurrent currentIndex: Int? = nil,
+        handoffMargin: CGFloat = 0
+    ) -> Int? {
+        guard let nearest = frames.indices.min(by: {
+            Self.distance(from: point, to: frames[$0])
+                < Self.distance(from: point, to: frames[$1])
+        }) else { return nil }
+        guard let currentIndex,
+              frames.indices.contains(currentIndex),
+              currentIndex != nearest else { return nearest }
+        let currentDistance = Self.distance(from: point, to: frames[currentIndex])
+        let nearestDistance = Self.distance(from: point, to: frames[nearest])
+        return nearestDistance + handoffMargin < currentDistance ? nearest : currentIndex
     }
 
     /// End of a drag: release the global visibility hold, rebuild pointer ownership
@@ -2086,8 +2139,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     func handleDrop(_ pasteboard: NSPasteboard, fromPerch: Bool) -> Bool {
         // Dropping an in-flight Perch drag back onto Perch means "put these back."
-        // The originals are still in the store (only visually hidden), so accepting
-        // without snapshotting preserves every selected row and avoids round-tripping
+        // The originals are still in the store, so accepting without snapshotting
+        // preserves every selected row and avoids round-tripping
         // our own concrete URLs + file promises into one compound replacement item.
         if fromPerch {
             cancelOpen()
@@ -2170,10 +2223,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
         if viaDrag {
-            // Hidden edge windows still receive AppKit drag-entry events even when
-            // their tab is not drawn. Ignore every dock except the one we deliberately
-            // advertised, or crossing the desktop can teleport the live shelf.
-            guard homeStrip() === strip else { return }
+            if !panel.isVisible {
+                revealedForDrag = true
+                markRevealUsed()
+            }
+            preferredScreen = strip.pinnedScreen
+            preferredEdge = strip.edge
             enterRegion(immediate: true)
             return
         }
@@ -2316,7 +2371,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let maximumListWidth = (edge == .notch ? 360 : 300)
             * themeStore.widthScale
         let theme = themeStore.theme
-        var usesStabilizedNameWidth = false
         let itemRows = sizingItems.compactMap { item
             -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
             guard themeStore.showsLabels || resultDetails[item.id] != nil else {
@@ -2326,10 +2380,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 for: item.id,
                 originalTitle: item.metadata.title
             )
-            if name.usesStableWidth {
-                usesStabilizedNameWidth = true
-                return nil
-            }
             return (
                 title: name.title,
                 showsAction: theme.showsDeleteButton && themeStore.showsLabels,
@@ -2339,11 +2389,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         let ghostRows = showsGhosts && themeStore.showsLabels ? arrivals.visibleGhosts.compactMap {
             ghost -> (title: String, showsAction: Bool, showsRouteAction: Bool)? in
-            if smartPerch.smartNames.isEnabled,
-               ghost.offer?.usesStableScreenshotName == true {
-                usesStabilizedNameWidth = true
-                return nil
-            }
             return (
                 title: ghost.displayTitle(
                     smartName: smartPerch.smartNames.isEnabled
@@ -2365,17 +2410,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let resultRows = resultDetails.values.map {
             (title: $0, showsAction: false, showsRouteAction: false)
         }
-        let contentWidth = RowMetrics.contentHuggingCardWidth(
+        return RowMetrics.contentHuggingCardWidth(
             rows: itemRows + transformRows + resultRows + ghostRows,
             theme: theme,
             maximumWidth: maximumListWidth
-        )
-        guard usesStabilizedNameWidth else { return contentWidth }
-        return max(
-            contentWidth,
-            RowMetrics.stabilizedSmartNameCardWidth(
-                maximumWidth: maximumListWidth
-            )
         )
     }
 
@@ -2573,7 +2611,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         markRevealUsed()
         revealAtPreferredEdge()
         // Every tab, not just the shelf's home one: the point is to show the user each
-        // edge they picked. Normal behavior shows only the home tab, and only mid-drag.
+        // edge they picked. Normal behavior shows only the nearest tab, and only mid-drag.
         setTabsShown(true)
         showFirstRunEdgeGhosts()
 
@@ -2728,6 +2766,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// and stays out until it empties (or is dismissed) as before.
     private func markRevealUsed() {
         revealProvenance = .used
+        arrivalAutoHideTask?.cancel()
+        arrivalAutoHideTask = nil
+        arrivalPreviewFollowsPointer = false
     }
 
     /// The pointer left the region. A plain hover exit retracts immediately. Drag exits
@@ -2861,7 +2902,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     /// Reveal (or reposition) the panel at the current preferred screen + edge.
-    private func revealAtPreferredEdge() {
+    private func revealAtPreferredEdge(
+        transitioningBetweenEdges: Bool = false
+    ) {
         // `preferredEdge` can be stale (including its launch default of `.left`) after
         // settings change. Resolve it through the installed strips—the authoritative
         // set of enabled, physically available docks—before any reveal. This keeps
@@ -2870,9 +2913,33 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch reveal skipped: no enabled edge dock is available")
             return
         }
-        preferredScreen = strip.pinnedScreen
-        preferredEdge = strip.edge
-        persistPreferredEdge()
+        reveal(
+            at: strip,
+            rememberingAsPreferred: true,
+            transitioningBetweenEdges: transitioningBetweenEdges
+        )
+    }
+
+    /// A recent-arrival ghost is a temporary preview, so choose its edge from the live
+    /// pointer without changing the user's normal home edge.
+    private func revealAtNearestEdge(to point: NSPoint) {
+        guard let strip = nearestStrip(to: point) else {
+            NSLog("Perch arrival reveal skipped: no enabled edge dock is available")
+            return
+        }
+        reveal(at: strip, rememberingAsPreferred: false)
+    }
+
+    private func reveal(
+        at strip: EdgeStripWindow,
+        rememberingAsPreferred: Bool,
+        transitioningBetweenEdges: Bool = false
+    ) {
+        if rememberingAsPreferred {
+            preferredScreen = strip.pinnedScreen
+            preferredEdge = strip.edge
+            persistPreferredEdge()
+        }
         clearSystemDockAttachment()
 
         // Docking at an edge clears any leftover free-mode layout, including the lock.
@@ -2883,15 +2950,20 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         freeShelfLocked = false
         hostView.setLockedInPlace(false)
         hostView.setFreeMode(false)
-        let screen = Self.liveScreen(preferredScreen)
+        let screen = Self.liveScreen(strip.pinnedScreen)
+        let edge = strip.edge
         shownScreen = screen
-        shownEdge = preferredEdge
-        let frame = screen.map { panelFrame(for: $0, edge: preferredEdge) } ?? Self.initialPanelFrame()
-        windowController.reveal(
-            animated: true,
-            targetFrame: frame,
-            edge: preferredEdge
-        )
+        shownEdge = edge
+        let frame = screen.map { panelFrame(for: $0, edge: edge) } ?? Self.initialPanelFrame()
+        if transitioningBetweenEdges {
+            windowController.retargetAcrossEdges(to: frame, edge: edge)
+        } else {
+            windowController.reveal(
+                animated: true,
+                targetFrame: frame,
+                edge: edge
+            )
+        }
     }
 
     /// Preserve the current preference when it still names an installed dock. If its
