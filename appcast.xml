@@ -2,22 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.6.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.6.1/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.6.0</title>
+      <title>Version 1.6.1</title>
       <description><![CDATA[
 <ul>
-  <li>dragging feels nicer, and there’s a new option to move an open perch between edges</li>
+  <li><b>Tuck Perch away</b><br>Touch Perch’s edge to tuck it away; touch again to bring it back. A tiny mound marks its spot.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Mon, 17 Aug 2026 04:12:14 +0000</pubDate>
-      <sparkle:version>1060000</sparkle:version>
-      <sparkle:shortVersionString>1.6.0</sparkle:shortVersionString>
+      <pubDate>Sun, 20 Sep 2026 19:11:33 +0000</pubDate>
+      <sparkle:version>1060010</sparkle:version>
+      <sparkle:shortVersionString>1.6.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.6.0/Perch.zip" sparkle:edSignature="cuVcgU/jOfi1l0BxwChxIoFFc+NTH8IbHNGH6sVrnzXmM+bboT+ewyWbohNuncEE5Cp+ECW9sexu/2sMZOATAg==" length="4294539" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.6.1/Perch.zip" sparkle:edSignature="+uPRpp3nuKcZktVau2TF8+kPwF0PZnb+EHvkX8jWYdZ0KOmoWA1XeyieCX12rYpAJLlq5rpNdZYdcS9K/l6eAQ==" length="4218686" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
