@@ -6,10 +6,7 @@ import SwiftUI
 /// window also activates the app so it can come forward and accept focus.
 @MainActor
 final class SettingsWindowController {
-    /// The pane that carries the appearance controls, and therefore the one that summons
-    /// the live preview shelf.
-    private static let advancedPaneLabel = "Advanced"
-    private static let fileFlowPaneLabel = "File Flow"
+    private static let shelfPaneLabel = "Shelf"
     private static let smartPerchPaneLabel = "Smart Perch"
 
     private let themeStore: ThemeStore
@@ -17,28 +14,20 @@ final class SettingsWindowController {
     private let smartPerch: SmartPerchCoordinator
     private var window: NSWindow?
     private var smartPerchObserver: NSObjectProtocol?
-    /// Which tab is up, and which half of Advanced it is showing. The preview shelf is
-    /// only right for the Look half, and neither piece of state can be derived from the
-    /// other — the tab bar cannot see inside the pane, and the pane is rebuilt often
-    /// enough that it cannot be trusted to re-announce itself on every tab switch.
+    /// Which tab is up. Only Shelf summons the live appearance preview.
     private var selectedPaneLabel: String?
-    private var advancedSection: AdvancedSettingsPane.Section = .look
-    /// Held so the pane can be resized when its section changes; the three lists are
-    /// different lengths and one shared height suits none of them.
-    private weak var generalPane: NSViewController?
-    private weak var advancedPane: NSViewController?
 
-    /// Fires when the Appearance pane comes up, with the settings window's frame.
+    /// Fires when the Shelf pane comes up, with the settings window's frame.
     /// The shelf controller pops the real shelf out beside the window so the
     /// appearance options visibly tweak the actual card, not a mockup.
     var onAppearancePaneSelected: ((NSRect) -> Void)?
 
-    /// Fires when the user leaves the Appearance pane for another tab, so the
+    /// Fires when the user leaves the Shelf pane for another tab, so the
     /// preview shelf clears right away instead of waiting for the window to close.
     var onAppearancePaneDeselected: (() -> Void)?
 
     /// Fires when the settings window closes, so a shelf that exists only as the
-    /// Appearance preview can be cleared away with it.
+    /// Shelf preview can be cleared away with it.
     var onWindowClosed: (() -> Void)?
     private var closeObserver: NSObjectProtocol?
 
@@ -61,7 +50,6 @@ final class SettingsWindowController {
         }
 
         let tabs = SettingsTabViewController()
-        let settingsLayout = SettingsLayout.load()
         tabs.tabStyle = .toolbar
         tabs.onPaneSelected = { [weak self] label in
             guard let self else { return }
@@ -69,46 +57,32 @@ final class SettingsWindowController {
             self.reconcileAppearancePreview()
         }
 
-        let general = NSHostingController(
-            rootView: GeneralSettingsPane(smartPerch: smartPerch)
-        )
-        generalPane = general
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: Self.generalPaneSize(for: settingsLayout),
-            controller: general
+            size: NSSize(width: 560, height: 260),
+            view: GeneralSettingsPane(smartPerch: smartPerch)
         )
-        syncFileFlowPane(in: tabs, layout: settingsLayout)
-        let advanced = NSHostingController(
-            rootView: AdvancedSettingsPane(
-                themeStore: themeStore,
-                edgeSettings: edgeSettings,
-                onSectionChanged: { [weak self] section in
-                    guard let self else { return }
-                    self.advancedSection = section
-                    self.advancedPane?.preferredContentSize = NSSize(
-                        width: 560,
-                        height: section.preferredHeight(for: SettingsLayout.load())
-                    )
-                    self.reconcileAppearancePreview()
-                }
-            )
-        )
-        advancedPane = advanced
         addPane(
-            to: tabs, label: Self.advancedPaneLabel, symbol: "slider.horizontal.3",
-            size: NSSize(
-                width: 560,
-                height: advancedSection.preferredHeight(for: settingsLayout)
-            ),
-            controller: advanced
+            to: tabs, label: Self.shelfPaneLabel, symbol: "rectangle.3.group",
+            size: NSSize(width: 580, height: 530),
+            view: ShelfSettingsPane(themeStore: themeStore, edgeSettings: edgeSettings)
+        )
+        addPane(
+            to: tabs, label: "Behavior", symbol: "cursorarrow.motionlines",
+            size: NSSize(width: 580, height: 570),
+            view: BehaviorSettingsPane(themeStore: themeStore)
+        )
+        addPane(
+            to: tabs, label: "Files", symbol: "arrow.right",
+            size: NSSize(width: 760, height: 350),
+            view: FileSettingsPane()
         )
         syncSmartPerchPane(in: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = tabs.tabViewItems.first?.label ?? "Settings"
-        window.setContentSize(Self.generalPaneSize(for: settingsLayout))
+        window.setContentSize(NSSize(width: 560, height: 260))
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
@@ -128,55 +102,12 @@ final class SettingsWindowController {
         ) { [weak self, weak tabs] _ in
             MainActor.assumeIsolated {
                 guard let self, let tabs else { return }
-                self.syncSettingsLayout(in: tabs)
                 self.syncSmartPerchPane(in: tabs)
             }
         }
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-    }
-
-    private func syncSettingsLayout(in tabs: NSTabViewController) {
-        let layout = SettingsLayout.load()
-        generalPane?.preferredContentSize = Self.generalPaneSize(for: layout)
-        advancedPane?.preferredContentSize = NSSize(
-            width: 560,
-            height: advancedSection.preferredHeight(for: layout)
-        )
-        syncFileFlowPane(in: tabs, layout: layout)
-    }
-
-    private func syncFileFlowPane(
-        in tabs: NSTabViewController,
-        layout: SettingsLayout
-    ) {
-        let existing = tabs.tabViewItems.firstIndex {
-            $0.label == Self.fileFlowPaneLabel
-        }
-
-        guard layout == .beautiful else {
-            guard let existing else { return }
-            if tabs.selectedTabViewItemIndex == existing {
-                tabs.selectedTabViewItemIndex = 0
-            }
-            tabs.removeTabViewItem(tabs.tabViewItems[existing])
-            return
-        }
-
-        guard existing == nil else { return }
-        addPane(
-            to: tabs,
-            label: Self.fileFlowPaneLabel,
-            symbol: "arrow.right",
-            size: NSSize(width: 660, height: 260),
-            at: min(1, tabs.tabViewItems.count),
-            view: FileFlowSettingsPane()
-        )
-    }
-
-    private static func generalPaneSize(for layout: SettingsLayout) -> NSSize {
-        NSSize(width: 560, height: layout == .beautiful ? 300 : 500)
     }
 
     /// Adds or removes the Smart Perch tab to match its access flag.
@@ -204,14 +135,10 @@ final class SettingsWindowController {
         )
     }
 
-    /// Summon or dismiss the preview shelf for the current tab and section. The preview
-    /// exists so appearance options visibly tweak the real card, so it belongs to
-    /// Advanced ▸ Look and nowhere else — it used to appear for the whole Advanced tab,
-    /// including while the user was toggling shake-to-summon.
+    /// Summon or dismiss the preview shelf. It belongs only to Shelf, where every live
+    /// appearance control and location choice now has one permanent home.
     private func reconcileAppearancePreview() {
-        guard selectedPaneLabel == Self.advancedPaneLabel,
-              advancedSection == .look,
-              let frame = window?.frame
+        guard selectedPaneLabel == Self.shelfPaneLabel, let frame = window?.frame
         else {
             onAppearancePaneDeselected?()
             return
@@ -219,7 +146,7 @@ final class SettingsWindowController {
         onAppearancePaneSelected?(frame)
     }
 
-    /// Reopening the window on a still-selected Advanced ▸ Look must re-summon the
+    /// Reopening the window on a still-selected Shelf tab must re-summon the
     /// preview shelf; tab-switch callbacks alone would miss it.
     private func notifyIfAppearanceSelected() {
         guard let window, let tabs = window.contentViewController as? NSTabViewController,
@@ -236,7 +163,6 @@ final class SettingsWindowController {
         label: String,
         symbol: String,
         size: NSSize,
-        at index: Int? = nil,
         view: V
     ) {
         addPane(
@@ -244,7 +170,6 @@ final class SettingsWindowController {
             label: label,
             symbol: symbol,
             size: size,
-            at: index,
             controller: NSHostingController(rootView: view)
         )
     }
@@ -254,7 +179,6 @@ final class SettingsWindowController {
         label: String,
         symbol: String,
         size: NSSize,
-        at index: Int? = nil,
         controller hosting: NSViewController
     ) {
         hosting.preferredContentSize = size
@@ -264,11 +188,7 @@ final class SettingsWindowController {
         let item = NSTabViewItem(viewController: hosting)
         item.label = label
         item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: label)
-        if let index {
-            tabs.insertTabViewItem(item, at: index)
-        } else {
-            tabs.addTabViewItem(item)
-        }
+        tabs.addTabViewItem(item)
     }
 }
 

@@ -1,7 +1,7 @@
 import Combine
 import SwiftUI
 
-/// The two looks the user can toggle between at runtime (Settings ▸ Appearance).
+/// The two looks the user can toggle between at runtime (Settings ▸ Shelf).
 enum ShelfStyle: String, CaseIterable {
     /// Refined native glass: deeper translucency, hairline border, and accent edge pill.
     case glass

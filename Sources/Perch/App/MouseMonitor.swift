@@ -25,6 +25,7 @@ final class MouseMonitor {
     var onSummonAtCursor: ((NSPoint) -> Void)?
 
     private var monitor: Any?
+    private var localMouseMonitor: Any?
     private var isDragging = false
 
     // Shake detector state. We watch horizontal motion and count direction reversals
@@ -57,6 +58,10 @@ final class MouseMonitor {
     func start() {
         guard monitor == nil else { return }
 
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [weak self] event in
+            MainActor.assumeIsolated { self?.handle(event) }
+            return event
+        }
         monitor = NSEvent.addGlobalMonitorForEvents(
             matching: [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .mouseMoved]
         ) { [weak self] event in
@@ -68,6 +73,10 @@ final class MouseMonitor {
 
     /// Remove the global monitor. Idempotent.
     func stop() {
+        if let localMouseMonitor {
+            NSEvent.removeMonitor(localMouseMonitor)
+            self.localMouseMonitor = nil
+        }
         if let monitor {
             NSEvent.removeMonitor(monitor)
             self.monitor = nil

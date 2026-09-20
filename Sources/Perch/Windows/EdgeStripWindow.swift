@@ -55,7 +55,14 @@ final class EdgeStripWindow: NSPanel {
     var showsTab = false {
         didSet {
             guard showsTab != oldValue else { return }
-            (contentView as? EdgeStripTriggerView)?.setTabVisible(showsTab)
+            (contentView as? EdgeStripTriggerView)?.updateAppearance()
+        }
+    }
+
+    var showsShelvedIndicator = false {
+        didSet {
+            guard showsShelvedIndicator != oldValue else { return }
+            (contentView as? EdgeStripTriggerView)?.updateAppearance()
         }
     }
 
@@ -195,6 +202,7 @@ private final class EdgeStripTriggerView: NSView {
         didSet { observeTheme() }
     }
     private var themeCancellable: AnyCancellable?
+    private var drawsShelvedIndicator = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -218,7 +226,13 @@ private final class EdgeStripTriggerView: NSView {
     }
 
     /// Fade the drawn tab in/out (events keep flowing regardless of alpha).
-    func setTabVisible(_ visible: Bool) {
+    func updateAppearance() {
+        guard let strip else { return }
+        let visible = strip.showsTab || strip.showsShelvedIndicator
+        if visible {
+            drawsShelvedIndicator = strip.showsShelvedIndicator
+        }
+        needsDisplay = true
         NSAnimationContext.runAnimationGroup { context in
             context.duration = 0.18
             context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
@@ -232,6 +246,11 @@ private final class EdgeStripTriggerView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+
+        if drawsShelvedIndicator {
+            drawShelvedMound()
+            return
+        }
 
         let theme = strip?.themeStore.theme ?? ShelfTheme.resolve(.glass)
         let accent = theme.tabAccent
@@ -282,6 +301,33 @@ private final class EdgeStripTriggerView: NSView {
             accent.withAlphaComponent(0.55).setFill()
             path.fill()
         }
+    }
+
+    private func drawShelvedMound() {
+        let edge = strip?.edge ?? .right
+        let halfLength: CGFloat = 22
+        let depth: CGFloat = 6
+        func point(_ inward: CGFloat, _ along: CGFloat) -> NSPoint {
+            switch edge {
+            case .left:
+                return NSPoint(x: bounds.minX + inward, y: bounds.midY + along)
+            case .right:
+                return NSPoint(x: bounds.maxX - inward, y: bounds.midY + along)
+            case .notch:
+                return NSPoint(x: bounds.midX + along, y: bounds.minY + EdgeStripWindow.notchCatchExtra - inward)
+            }
+        }
+
+        let mound = NSBezierPath()
+        mound.move(to: point(0, -halfLength))
+        mound.curve(to: point(depth, 0), controlPoint1: point(0, -10), controlPoint2: point(depth, -10))
+        mound.curve(to: point(0, halfLength), controlPoint1: point(depth, 10), controlPoint2: point(0, 10))
+        mound.close()
+        NSColor.windowBackgroundColor.withAlphaComponent(0.94).setFill()
+        mound.fill()
+        NSColor.labelColor.withAlphaComponent(0.18).setStroke()
+        mound.lineWidth = 0.5
+        mound.stroke()
     }
 
     /// Run `draw` with an optional soft glow shadow applied.

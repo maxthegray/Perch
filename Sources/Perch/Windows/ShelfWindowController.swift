@@ -3,8 +3,8 @@ import QuartzCore
 
 /// Reveals / hides / animates the shelf panel and persists its frame.
 ///
-/// Edge shelves always fade in/out in place (the window lands on its final frame and
-/// only alpha animates); the cursor-summoned shelf adds a small center-scale pop.
+/// Edge shelves fade in place, with a directional slide for the shelving gesture;
+/// the cursor-summoned shelf adds a small center-scale pop.
 @MainActor
 final class ShelfWindowController {
     let panel: ShelfPanel
@@ -102,9 +102,8 @@ final class ShelfWindowController {
         healContentViewShear()
     }
 
-    /// Reveal at a specific frame. The window lands at `targetFrame` immediately and
-    /// fades in without lateral motion, independent of which edge owns it.
-    func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge) {
+    /// Reveal at a specific frame, optionally sliding the content in from its edge.
+    func reveal(animated: Bool, targetFrame: NSRect, edge: ShelfEdge, slidingFromEdge: Bool = false) {
         visibilityGeneration &+= 1
         let generation = visibilityGeneration
         usesFreeAnimation = false
@@ -127,6 +126,14 @@ final class ShelfWindowController {
         // tree while it is still invisible.
         phase = .revealing
         panel.orderFrontRegardless()
+        if slidingFromEdge, let layer = panel.contentView?.layer {
+            let transform = CABasicAnimation(keyPath: "transform")
+            transform.fromValue = NSValue(caTransform3D: shelvingTransform(for: layer))
+            transform.toValue = NSValue(caTransform3D: CATransform3DIdentity)
+            transform.duration = Self.revealDuration
+            transform.timingFunction = Self.revealCurve
+            layer.add(transform, forKey: Self.transformKey)
+        }
 
         NSAnimationContext.runAnimationGroup { context in
             context.duration = Self.revealDuration
@@ -231,7 +238,16 @@ final class ShelfWindowController {
         }
     }
 
-    func hide(animated: Bool) {
+    private func shelvingTransform(for layer: CALayer) -> CATransform3D {
+        switch edge {
+        case .left: return CATransform3DMakeTranslation(-layer.bounds.width, 0, 0)
+        case .right: return CATransform3DMakeTranslation(layer.bounds.width, 0, 0)
+        case .notch:
+            return CATransform3DMakeTranslation(0, layer.isGeometryFlipped ? -layer.bounds.height : layer.bounds.height, 0)
+        }
+    }
+
+    func hide(animated: Bool, slidingToEdge: Bool = false) {
         visibilityGeneration &+= 1
         activeRevealGeneration = nil
         let generation = visibilityGeneration
@@ -246,9 +262,16 @@ final class ShelfWindowController {
         }
 
         let transformKey = Self.transformKey
-        // Edge shelves fade out in place; only the cursor-summoned shelf keeps its
-        // center-scale pop (a scale, not a slide).
-        if usesFreeAnimation {
+        if slidingToEdge && !usesFreeAnimation {
+            let transform = CABasicAnimation(keyPath: "transform")
+            transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
+            transform.toValue = NSValue(caTransform3D: shelvingTransform(for: layer))
+            transform.duration = Self.hideDuration
+            transform.timingFunction = Self.hideCurve
+            transform.fillMode = .forwards
+            transform.isRemovedOnCompletion = false
+            layer.add(transform, forKey: transformKey)
+        } else if usesFreeAnimation {
             let transform = CABasicAnimation(keyPath: "transform")
             transform.fromValue = NSValue(caTransform3D: CATransform3DIdentity)
             transform.toValue = NSValue(caTransform3D: Self.centerScaleTransform(in: layer.bounds))

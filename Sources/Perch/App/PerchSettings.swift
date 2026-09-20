@@ -5,7 +5,7 @@ import Foundation
 /// Keys used to live on whichever type happened to read them, which meant the controller
 /// reached into a *view* (`ShelfHostView.shakeToSummonKey`) for a flag the view never
 /// touched, and the same string could be spelled twice in two files. Declaring them here
-/// keeps the settings tiers legible — General, Advanced, Smart Perch — and makes a
+/// keeps the settings panes legible and makes a
 /// collision or typo a compile error rather than a silently separate preference.
 ///
 /// The string values are load-bearing: they are what is already on disk in every install.
@@ -13,24 +13,17 @@ import Foundation
 enum PerchSettings {
     // MARK: - General
 
-    /// When true, dragging an item out leaves the original on the shelf (copy); otherwise
-    /// it is removed once it lands somewhere (move — the default).
-    static let vendCopies = "Perch.VendCopies"
-    /// Controls whether Settings uses the visual file flow or its original forms.
-    static let settingsLayout = "Perch.SettingsLayout"
-    /// Raw values of the edges the shelf is allowed to dock to.
-    static let enabledEdges = "Perch.EnabledEdges"
     /// The last version whose What's New window was shown (or skipped, on a new install).
     /// Anything newer than this on launch is an update the user has not been told about.
     static let lastSeenVersion = "Perch.LastSeenVersion"
 
-    // MARK: - Advanced ▸ Appearance
+    // MARK: - Shelf
 
+    /// Raw values of the edges the shelf is allowed to dock to.
+    static let enabledEdges = "Perch.EnabledEdges"
     static let shelfStyle = "Perch.ShelfStyle"
     static let showsLabels = "Perch.ShowsLabels"
-    static let showsGrabHandle = "Perch.ShowsGrabHandle"
     static let showsShadow = "Perch.ShowsShadow"
-    static let showsEdgeTab = "Perch.ShowsEdgeTab"
     static let sizePreset = "Perch.SizePreset"
     static let stacksItems = "Perch.StacksItems"
     /// Retired in favour of `sizePreset`. The two slider values are read once to place an
@@ -41,9 +34,12 @@ enum PerchSettings {
     /// Retired outright. It only ever disambiguated the Square preset from the slider
     /// values that produced it, and those values now land on `wide` without help.
     static let squarePresetSelected = "Perch.SquarePresetSelected"
+    static let snapBesideDock = "Perch.SnapBesideDock"
 
-    // MARK: - Advanced ▸ Behavior
+    // MARK: - Behavior
 
+    static let showsGrabHandle = "Perch.ShowsGrabHandle"
+    static let showsEdgeTab = "Perch.ShowsEdgeTab"
     /// Reveal the shelf at the nearest enabled edge the moment a drag starts, instead of
     /// waiting for the pointer to reach the edge tab. Defaults on.
     static let revealOnDragStart = "Perch.RevealOnDragStart"
@@ -55,20 +51,24 @@ enum PerchSettings {
     /// A free-floating shelf stays put (as the empty drop tile) after its last item
     /// leaves, instead of dismissing itself. Defaults on.
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
+    /// Touching the current edge toggles the shelf after a short dwell. Defaults on.
+    static let shelveOnEdgeTouch = "Perch.ShelveOnEdgeTouch"
     /// Touching another enabled screen edge moves a populated docked shelf there after
     /// a short confirmation dwell. Defaults off.
     static let moveOpenShelfBetweenEdges = "Perch.MoveOpenShelfBetweenEdges"
-    /// Offer recently downloaded files as ghost rows.
+
+    // MARK: - Files
+
+    /// When true, dragging an item out leaves the original on the shelf (copy); otherwise
+    /// it is removed once it lands somewhere (move — the default).
+    static let vendCopies = "Perch.VendCopies"
+    /// Offer recently arrived files from Downloads or the Desktop as ghost rows.
     static let offerRecentArrivals = "Perch.OfferRecentArrivals"
     /// Keep concrete files at their source and persist a bookmark to them instead of
     /// moving them into Perch's holding directory. Defaults off.
     static let referenceDroppedFiles = "Perch.ReferenceDroppedFiles"
     /// Whether transforms keep their source rows or replace them after success.
     static let transformOutputMode = "Perch.TransformOutputMode"
-
-    // MARK: - Advanced ▸ Docking
-
-    static let snapBesideDock = "Perch.SnapBesideDock"
 
     // MARK: - Smart Perch
 
