@@ -668,8 +668,7 @@ struct ShelfContentView: View {
     }
 
     private var emptyState: some View {
-        EmptyPerchMark()
-            .frame(width: 52, height: 52)
+        Color.clear
             .frame(maxWidth: .infinity)
             .frame(height: RowMetrics.emptyTileHeight)
     }

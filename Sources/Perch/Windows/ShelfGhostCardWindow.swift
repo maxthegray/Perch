@@ -68,8 +68,8 @@ final class ShelfGhostCardWindow {
     }
 }
 
-/// The card with nothing on it: the same background, corner, stroke, and empty-perch
-/// symbol `ShelfContentView` draws when the shelf is holding nothing.
+/// The card with nothing on it: the same background, corner, and stroke
+/// `ShelfContentView` draws when the shelf is holding nothing.
 private struct ShelfGhostCardView: View {
     let theme: ShelfTheme
 
@@ -78,8 +78,7 @@ private struct ShelfGhostCardView: View {
     }
 
     var body: some View {
-        EmptyPerchMark()
-            .frame(width: 52, height: 52)
+        Color.clear
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(theme.cardBackground)
             .clipShape(cardShape)
