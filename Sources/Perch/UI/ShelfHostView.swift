@@ -25,6 +25,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     private let routeSuggestions: RouteSuggestionStore
     let interaction = RowInteractionState()
     private let thumbnails = ThumbnailStore()
+    private let quickLook = ShelfQuickLook()
+    private let sharing = ShelfSharing()
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
@@ -44,6 +46,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     private var menuTargetArrival: ArrivalGhost?
     /// Stable operand order for the transform submenu while AppKit tracks it.
     private var menuTransformItems: [StoredItem] = []
+    /// Where the context menu was opened, as a share-sheet anchor when no row frame fits.
+    private var menuPoint: NSPoint = .zero
     /// True while the right-click context menu (or one of its submenus) is open. The
     /// controller checks this so an empty shelf doesn't retract out from under the menu
     /// when the pointer moves into a submenu outside the card.
@@ -606,6 +610,15 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     override func mouseUp(with event: NSEvent) {
         guard hasActiveLeftPress else { return }
+        if event.clickCount == 2, let item = dragItem,
+           !reorderActive, !vendStarted, !shelfDragArmed, pendingCommandSelectionItem == nil {
+            let targets = actionItems(for: item).filter(quickLook.canPreview)
+            if !targets.isEmpty {
+                resetDragState()
+                showQuickLook(targets)
+                return
+            }
+        }
 
         if let ghost = pendingArrival {
             pendingArrival = nil
@@ -676,6 +689,24 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         }
         resetDragState()
         updateGrabberHover(at: convert(event.locationInWindow, from: nil))
+    }
+
+    private func showQuickLook(_ items: [StoredItem]) {
+        quickLook.show(items) { [weak self] item in
+            guard let self, let window = self.window, let frame = self.rowFrame(of: item) else { return nil }
+            return window.convertToScreen(self.convert(frame, to: nil))
+        }
+    }
+
+    /// The item's row in view coordinates, or nil where rows aren't laid out as a list.
+    private func rowFrame(of item: StoredItem) -> NSRect? {
+        guard !usesStackedRows,
+              let index = visibleRows.firstIndex(where: {
+                  if case let .item(row) = $0 { return row.id == item.id }
+                  return false
+              })
+        else { return nil }
+        return itemRowRect(forRow: index)
     }
 
     // MARK: Reorder / vend
@@ -1299,6 +1330,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
+        menuPoint = point
         onCardInteraction?()
         let menu = NSMenu()
         menu.delegate = self
@@ -1365,6 +1397,30 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 )
                 dismissRoute.target = self
                 menu.addItem(dismissRoute)
+                menu.addItem(.separator())
+            }
+
+            let previewable = targets.filter(quickLook.canPreview)
+            if !previewable.isEmpty {
+                let quickLookItem = NSMenuItem(
+                    title: previewable.count > 1 ? "Quick Look \(previewable.count) Items" : "Quick Look",
+                    action: #selector(quickLookMenuAction(_:)),
+                    keyEquivalent: ""
+                )
+                quickLookItem.target = self
+                menu.addItem(quickLookItem)
+            }
+            let shareable = targets.filter(sharing.canShare)
+            if !shareable.isEmpty {
+                let shareItem = NSMenuItem(
+                    title: "Share…",
+                    action: #selector(shareMenuAction(_:)),
+                    keyEquivalent: ""
+                )
+                shareItem.target = self
+                menu.addItem(shareItem)
+            }
+            if menu.items.last?.isSeparatorItem == false {
                 menu.addItem(.separator())
             }
 
@@ -1594,6 +1650,19 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     @objc private func deleteMenuAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }
         removeWithBounce(actionItems(for: item), returnToOrigin: false)
+        menuTargetItem = nil
+    }
+
+    @objc private func quickLookMenuAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        showQuickLook(actionItems(for: item).filter(quickLook.canPreview))
+        menuTargetItem = nil
+    }
+
+    @objc private func shareMenuAction(_ sender: NSMenuItem) {
+        guard let item = menuTargetItem else { return }
+        let anchor = rowFrame(of: item) ?? NSRect(origin: menuPoint, size: .zero).insetBy(dx: -1, dy: -1)
+        sharing.show(actionItems(for: item).filter(sharing.canShare), relativeTo: anchor, of: self)
         menuTargetItem = nil
     }
 

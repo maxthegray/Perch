@@ -65,13 +65,7 @@ def as_markdown(entry):
         if highlight["detail"]:
             lines.append(highlight["detail"])
         lines.append("")
-    lines.append("Download Perch.zip, unzip it, and move Perch into the Applications folder.")
-    lines.append("")
-    lines.append(
-        "Perch is signed and notarized by Apple, and requires macOS 14 or later. "
-        "Smart Perch is included as an optional, entirely local feature."
-    )
-    return "\n".join(lines)
+    return "\n".join(lines).strip()
 
 
 def main():
