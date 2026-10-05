@@ -4,21 +4,71 @@ import XCTest
 
 @MainActor
 final class ShelfQuickLookTests: XCTestCase {
-    private var root: URL!
-
-    override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("ShelfQuickLookTests-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    func testFileItemPreviewsItsBackingFiles() throws {
+        let fixture = QuickLookFixture()
+        defer { fixture.remove() }
+        let item = try fixture.makeItem(files: ["a.png", "b.pdf"], reps: [(.string, "ignored")])
+        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: fixture.scratch)
+        XCTAssertEqual(urls, item.backingFileURLs())
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fixture.scratch.path))
     }
 
-    override func tearDownWithError() throws {
+    func testTextClippingIsWrittenToATextFile() throws {
+        let fixture = QuickLookFixture()
+        defer { fixture.remove() }
+        let item = try fixture.makeItem(reps: [(.string, "Hello shelf")])
+        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: fixture.scratch)
+        XCTAssertEqual(urls.count, 1)
+        XCTAssertEqual(urls.first?.pathExtension, "txt")
+        XCTAssertEqual(try String(contentsOf: urls[0], encoding: .utf8), "Hello shelf")
+    }
+
+    func testLinkClippingFallsBackToURLText() throws {
+        let fixture = QuickLookFixture()
+        defer { fixture.remove() }
+        let item = try fixture.makeItem(reps: [(.URL, "https://example.com")])
+        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: fixture.scratch)
+        XCTAssertEqual(try String(contentsOf: urls[0], encoding: .utf8), "https://example.com")
+        XCTAssertTrue(ShelfQuickLook().canPreview(item))
+    }
+
+    func testItemWithNothingToShowIsNotPreviewable() throws {
+        let fixture = QuickLookFixture()
+        defer { fixture.remove() }
+        let item = try fixture.makeItem(reps: [(.png, "")])
+        XCTAssertEqual(ShelfQuickLook.previewURLs(for: item, scratchDirectory: fixture.scratch), [])
+        XCTAssertFalse(ShelfQuickLook().canPreview(item))
+    }
+
+    func testShareItemsPreferFilesThenLinksThenText() throws {
+        let fixture = QuickLookFixture()
+        defer { fixture.remove() }
+        let file = try fixture.makeItem(files: ["a.png"], reps: [(.string, "ignored")])
+        XCTAssertEqual(ShelfSharing.shareItems(for: file) as? [URL], file.backingFileURLs())
+
+        let link = try fixture.makeItem(reps: [(.string, "Example"), (.URL, "https://example.com")])
+        XCTAssertEqual(ShelfSharing.shareItems(for: link) as? [URL], [URL(string: "https://example.com")!])
+
+        let text = try fixture.makeItem(reps: [(.string, "Hello shelf")])
+        XCTAssertEqual(ShelfSharing.shareItems(for: text) as? [String], ["Hello shelf"])
+
+        let empty = try fixture.makeItem(reps: [(.png, "")])
+        XCTAssertTrue(ShelfSharing.shareItems(for: empty).isEmpty)
+    }
+}
+
+@MainActor
+private struct QuickLookFixture {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("ShelfQuickLookTests-\(UUID().uuidString)", isDirectory: true)
+
+    var scratch: URL { root.appendingPathComponent("scratch", isDirectory: true) }
+
+    func remove() {
         try? FileManager.default.removeItem(at: root)
     }
 
-    private var scratch: URL { root.appendingPathComponent("scratch", isDirectory: true) }
-
-    private func makeItem(
+    func makeItem(
         files: [String] = [],
         reps: [(NSPasteboard.PasteboardType, String)] = []
     ) throws -> StoredItem {
@@ -46,47 +96,5 @@ final class ShelfQuickLookTests: XCTestCase {
             primaryFileType: nil
         )
         return StoredItem(metadata: metadata, directoryURL: directory)
-    }
-
-    func testFileItemPreviewsItsBackingFiles() throws {
-        let item = try makeItem(files: ["a.png", "b.pdf"], reps: [(.string, "ignored")])
-        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: scratch)
-        XCTAssertEqual(urls, item.backingFileURLs())
-        XCTAssertFalse(FileManager.default.fileExists(atPath: scratch.path))
-    }
-
-    func testTextClippingIsWrittenToATextFile() throws {
-        let item = try makeItem(reps: [(.string, "Hello shelf")])
-        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: scratch)
-        XCTAssertEqual(urls.count, 1)
-        XCTAssertEqual(urls.first?.pathExtension, "txt")
-        XCTAssertEqual(try String(contentsOf: urls[0], encoding: .utf8), "Hello shelf")
-    }
-
-    func testLinkClippingFallsBackToURLText() throws {
-        let item = try makeItem(reps: [(.URL, "https://example.com")])
-        let urls = ShelfQuickLook.previewURLs(for: item, scratchDirectory: scratch)
-        XCTAssertEqual(try String(contentsOf: urls[0], encoding: .utf8), "https://example.com")
-        XCTAssertTrue(ShelfQuickLook().canPreview(item))
-    }
-
-    func testItemWithNothingToShowIsNotPreviewable() throws {
-        let item = try makeItem(reps: [(.png, "")])
-        XCTAssertEqual(ShelfQuickLook.previewURLs(for: item, scratchDirectory: scratch), [])
-        XCTAssertFalse(ShelfQuickLook().canPreview(item))
-    }
-
-    func testShareItemsPreferFilesThenLinksThenText() throws {
-        let file = try makeItem(files: ["a.png"], reps: [(.string, "ignored")])
-        XCTAssertEqual(ShelfSharing.shareItems(for: file) as? [URL], file.backingFileURLs())
-
-        let link = try makeItem(reps: [(.string, "Example"), (.URL, "https://example.com")])
-        XCTAssertEqual(ShelfSharing.shareItems(for: link) as? [URL], [URL(string: "https://example.com")!])
-
-        let text = try makeItem(reps: [(.string, "Hello shelf")])
-        XCTAssertEqual(ShelfSharing.shareItems(for: text) as? [String], ["Hello shelf"])
-
-        let empty = try makeItem(reps: [(.png, "")])
-        XCTAssertTrue(ShelfSharing.shareItems(for: empty).isEmpty)
     }
 }
