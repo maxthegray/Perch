@@ -44,7 +44,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private var shelvesOnEdgeTouch: Bool {
-        PerchSettings.flag(PerchSettings.shelveOnEdgeTouch, default: true)
+        PerchSettings.flag(PerchSettings.shelveOnEdgeTouch, default: false)
     }
     /// Still copies of the card at the chosen edges the real one isn't coming out of,
     /// for the length of the first-run demonstration only.
@@ -95,9 +95,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         PerchSettings.flag(PerchSettings.revealOnDragStart, default: true)
     }
     /// Whether resting the pointer at an enabled edge reveals the shelf at all.
-    /// User-toggled; defaults on, matching the behavior that had no switch.
+    /// User-toggled; defaults off.
     private var revealOnHover: Bool {
-        PerchSettings.flag(PerchSettings.revealOnHover, default: true)
+        PerchSettings.flag(PerchSettings.revealOnHover, default: false)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults off.
     private var shakeToSummonEnabled: Bool {

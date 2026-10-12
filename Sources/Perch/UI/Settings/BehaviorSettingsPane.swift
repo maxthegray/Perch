@@ -4,9 +4,9 @@ import SwiftUI
 struct BehaviorSettingsPane: View {
     @ObservedObject var themeStore: ThemeStore
 
-    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
+    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = false
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
-    @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
+    @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = false
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
     @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)

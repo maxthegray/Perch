@@ -43,15 +43,15 @@ enum PerchSettings {
     /// Reveal the shelf at the nearest enabled edge the moment a drag starts, instead of
     /// waiting for the pointer to reach the edge tab. Defaults on.
     static let revealOnDragStart = "Perch.RevealOnDragStart"
-    /// Reveal the shelf when the pointer rests at an enabled edge. Defaults on, matching
-    /// the behavior that had no switch — off leaves the edges inert until a drag.
+    /// Reveal the shelf when the pointer rests at an enabled edge. Defaults off, which
+    /// leaves the edges inert until a drag.
     static let revealOnHover = "Perch.RevealOnHover"
     /// Shaking the cursor summons a free-floating shelf at the pointer. Defaults off.
     static let shakeToSummon = "Perch.ShakeToSummon"
     /// A free-floating shelf stays put (as the empty drop tile) after its last item
     /// leaves, instead of dismissing itself. Defaults on.
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
-    /// Touching the current edge toggles the shelf after a short dwell. Defaults on.
+    /// Touching the current edge toggles the shelf after a short dwell. Defaults off.
     static let shelveOnEdgeTouch = "Perch.ShelveOnEdgeTouch"
     /// Touching another enabled screen edge moves a populated docked shelf there after
     /// a short confirmation dwell. Defaults off.

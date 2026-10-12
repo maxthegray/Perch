@@ -8,6 +8,11 @@
           "symbol": "eye",
           "title": "Quick Look and Share",
           "detail": ""
+        },
+        {
+          "symbol": "hand.raised",
+          "title": "Quieter edges",
+          "detail": "Revealing Perch by resting at an edge, and tucking it away by touching its edge, are now off by default. Turn them on in Settings."
         }
       ]
     },
