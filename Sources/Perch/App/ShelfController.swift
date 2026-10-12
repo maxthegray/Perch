@@ -44,7 +44,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private var shelvesOnEdgeTouch: Bool {
-        PerchSettings.flag(PerchSettings.shelveOnEdgeTouch, default: false)
+        PerchSettings.flag(PerchSettings.shelveOnEdgeTouch, default: true)
     }
     /// Still copies of the card at the chosen edges the real one isn't coming out of,
     /// for the length of the first-run demonstration only.
@@ -88,6 +88,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// This keeps tiny cursor movements at an exact midpoint from bouncing it repeatedly.
     private static let edgeHandoffHysteresis: CGFloat = 48
     private static let edgeTransferDwell = Duration.milliseconds(250)
+    /// Tucking a shelf away hides what is on it, so it asks for a deliberate hold and then
+    /// two pulses toward the wall — a last chance to pull away — before it retracts.
+    private static let edgeShelvingDwell = Duration.milliseconds(450)
 
     /// Whether the shelf should pop out at the nearest enabled edge the instant a drag
     /// starts (vs. waiting for the pointer to reach the edge tab). User-toggled; defaults on.
@@ -1462,6 +1465,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         edgeShelvingTask?.cancel()
         edgeShelvingTask = nil
         armedShelvingStrip = nil
+        windowController.cancelShelvingPulse()
+    }
+
+    private func edgeShelvingStillArmed(for target: EdgeStripWindow) -> Bool {
+        armedShelvingStrip === target
+            && canToggleEdgeShelf
+            && edgeStrips.contains(where: { $0 === target })
+            && target.edge == shownEdge && target.pinnedScreen == shownScreen
+            && target.wallContactContains(NSEvent.mouseLocation)
     }
 
     private func updateEdgeShelving(to point: NSPoint) -> Bool {
@@ -1489,18 +1501,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         cancelOpen()
         cancelRetract()
         armedShelvingStrip = target
+        let tucksAway = shelvedStrip == nil
         edgeShelvingTask = Task { @MainActor [weak self, weak target] in
             do {
-                try await Task.sleep(for: Self.edgeTransferDwell)
+                try await Task.sleep(for: tucksAway ? Self.edgeShelvingDwell : Self.edgeTransferDwell)
             } catch { return }
-            guard let self, let target,
-                  self.armedShelvingStrip === target,
-                  self.canToggleEdgeShelf,
-                  self.edgeStrips.contains(where: { $0 === target }),
-                  target.edge == self.shownEdge, target.pinnedScreen == self.shownScreen,
-                  target.wallContactContains(NSEvent.mouseLocation) else {
+            guard let self, let target, self.edgeShelvingStillArmed(for: target) else {
                 self?.cancelEdgeShelving()
                 return
+            }
+            if tucksAway {
+                let pulse = self.windowController.pulseTowardEdge()
+                do {
+                    try await Task.sleep(for: .seconds(pulse))
+                } catch { return }
+                guard self.edgeShelvingStillArmed(for: target) else {
+                    self.cancelEdgeShelving()
+                    return
+                }
             }
             self.cancelEdgeShelving()
             self.cancelOpen()

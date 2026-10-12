@@ -6,7 +6,7 @@ struct BehaviorSettingsPane: View {
 
     @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = false
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
-    @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = false
+    @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
     @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)
@@ -49,7 +49,7 @@ struct BehaviorSettingsPane: View {
             Section("Staying open") {
                 settingToggle(
                     title: "Touch the current edge to hide or show Perch",
-                    caption: "Rest the pointer against Perch’s edge to slide it away. Move away and touch that edge again to bring it back.",
+                    caption: "Hold the pointer against Perch’s edge until it pulses twice to slide it away. Move away and touch that edge again to bring it back.",
                     isOn: $shelveOnEdgeTouch
                 )
                 settingToggle(

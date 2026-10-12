@@ -51,7 +51,8 @@ enum PerchSettings {
     /// A free-floating shelf stays put (as the empty drop tile) after its last item
     /// leaves, instead of dismissing itself. Defaults on.
     static let keepEmptyShelf = "Perch.KeepEmptyShelf"
-    /// Touching the current edge toggles the shelf after a short dwell. Defaults off.
+    /// Holding the pointer against the current edge tucks the shelf away after a dwell and
+    /// two warning pulses; touching it again brings the shelf back. Defaults on.
     static let shelveOnEdgeTouch = "Perch.ShelveOnEdgeTouch"
     /// Touching another enabled screen edge moves a populated docked shelf there after
     /// a short confirmation dwell. Defaults off.

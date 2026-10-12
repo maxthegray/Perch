@@ -1493,6 +1493,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         quit.target = self
         menu.addItem(quit)
 
+        menu.addItem(.separator())
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+        let about = NSMenuItem(
+            title: "\(PerchProductIdentity.displayName) \(version)",
+            action: nil,
+            keyEquivalent: ""
+        )
+        about.isEnabled = false
+        menu.addItem(about)
+
         return menu
     }
 

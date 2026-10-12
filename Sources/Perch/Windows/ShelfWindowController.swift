@@ -9,6 +9,9 @@ import QuartzCore
 final class ShelfWindowController {
     let panel: ShelfPanel
     private static let transformKey = "perch.reveal.transform"
+    private static let shelvingPulseKey = "perch.shelving.pulse"
+    private static let shelvingPulseDuration: CFTimeInterval = 0.56
+    private static let shelvingPulseDistance: CGFloat = 10
 
     // Internal rather than private so the first-run card copies (`ShelfGhostCardWindow`)
     // can move on the shelf's own timing instead of a second set of numbers that would
@@ -239,12 +242,36 @@ final class ShelfWindowController {
     }
 
     private func shelvingTransform(for layer: CALayer) -> CATransform3D {
+        translationTowardEdge(by: edge == .notch ? layer.bounds.height : layer.bounds.width, in: layer)
+    }
+
+    private func translationTowardEdge(by distance: CGFloat, in layer: CALayer) -> CATransform3D {
         switch edge {
-        case .left: return CATransform3DMakeTranslation(-layer.bounds.width, 0, 0)
-        case .right: return CATransform3DMakeTranslation(layer.bounds.width, 0, 0)
+        case .left: return CATransform3DMakeTranslation(-distance, 0, 0)
+        case .right: return CATransform3DMakeTranslation(distance, 0, 0)
         case .notch:
-            return CATransform3DMakeTranslation(0, layer.isGeometryFlipped ? -layer.bounds.height : layer.bounds.height, 0)
+            return CATransform3DMakeTranslation(0, layer.isGeometryFlipped ? -distance : distance, 0)
         }
+    }
+
+    /// Nudge the card toward its wall twice, warning that holding on will tuck it away.
+    /// Returns how long the pulse runs.
+    @discardableResult
+    func pulseTowardEdge() -> TimeInterval {
+        guard !usesFreeAnimation, let layer = panel.contentView?.layer else { return 0 }
+        let rest = NSValue(caTransform3D: CATransform3DIdentity)
+        let nudged = NSValue(caTransform3D: translationTowardEdge(by: Self.shelvingPulseDistance, in: layer))
+        let pulse = CAKeyframeAnimation(keyPath: "transform")
+        pulse.values = [rest, nudged, rest, nudged, rest]
+        pulse.keyTimes = [0, 0.25, 0.5, 0.75, 1]
+        pulse.timingFunctions = Array(repeating: CAMediaTimingFunction(name: .easeInEaseOut), count: 4)
+        pulse.duration = Self.shelvingPulseDuration
+        layer.add(pulse, forKey: Self.shelvingPulseKey)
+        return Self.shelvingPulseDuration
+    }
+
+    func cancelShelvingPulse() {
+        panel.contentView?.layer?.removeAnimation(forKey: Self.shelvingPulseKey)
     }
 
     func hide(animated: Bool, slidingToEdge: Bool = false) {

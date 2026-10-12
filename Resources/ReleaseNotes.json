@@ -12,7 +12,7 @@
         {
           "symbol": "hand.raised",
           "title": "Quieter edges",
-          "detail": "Revealing Perch by resting at an edge, and tucking it away by touching its edge, are now off by default. Turn them on in Settings."
+          "detail": "Resting at an edge no longer reveals Perch unless you turn it on in Settings. Tucking Perch away now takes a deliberate hold: it pulses twice, then slides away."
         }
       ]
     },
