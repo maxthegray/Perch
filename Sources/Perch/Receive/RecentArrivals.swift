@@ -22,6 +22,8 @@ final class RecentArrivals: ObservableObject {
     static let enabledKey = PerchSettings.offerRecentArrivals
 
     static let window: TimeInterval = 15 * 60
+    /// How long after arriving a ghost keeps the edge live with hover reveal off.
+    static let hoverRecallWindow: TimeInterval = 5 * 60
     static let maxSessions = 5
     static let maxReveals = 3
 
@@ -195,6 +197,13 @@ final class RecentArrivals: ObservableObject {
             Set(fresh.filter(\.isBatch).map(\.id))
         )
         publishVisibleGhosts()
+    }
+
+    /// Whether any offer arrived within `hoverRecallWindow`. While one has, a hover at
+    /// the edge brings the shelf back even with hover reveal turned off.
+    var hasLiveGhosts: Bool {
+        let cutoff = Date().addingTimeInterval(-Self.hoverRecallWindow)
+        return enabled && sessions.contains { $0.offers.contains { $0.addedAt > cutoff } }
     }
 
     /// The user dismissed a ghost from its context menu: never offer it again.

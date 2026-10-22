@@ -43,4 +43,41 @@ final class HoverRevealPolicyTests: XCTestCase {
             )
         )
     }
+
+    func testALiveGhostLetsAHoverRevealWithHoverRevealOff() {
+        XCTAssertTrue(
+            HoverRevealPolicy.armsReveal(
+                revealOnHoverEnabled: false,
+                hasLiveGhosts: true,
+                usesEdgeDock: true
+            )
+        )
+        XCTAssertTrue(
+            HoverRevealPolicy.completesArmedReveal(
+                revealOnHoverEnabled: false,
+                hasLiveGhosts: true,
+                pointerStillInCatchZone: true
+            )
+        )
+    }
+
+    func testALiveGhostStillNeedsADwell() {
+        XCTAssertFalse(
+            HoverRevealPolicy.completesArmedReveal(
+                revealOnHoverEnabled: false,
+                hasLiveGhosts: true,
+                pointerStillInCatchZone: false
+            )
+        )
+    }
+
+    func testALiveGhostDoesNotGiveAFreeFloatingShelfAnEdge() {
+        XCTAssertFalse(
+            HoverRevealPolicy.armsReveal(
+                revealOnHoverEnabled: false,
+                hasLiveGhosts: true,
+                usesEdgeDock: false
+            )
+        )
+    }
 }

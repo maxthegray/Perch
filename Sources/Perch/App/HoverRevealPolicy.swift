@@ -5,10 +5,16 @@
 /// — where, holding items, it stayed. Two gates now gate that path: the user can turn
 /// hover reveal off outright, and an armed reveal has to still find the pointer in the
 /// catch zone when its delay elapses, which is what separates a dwell from a fly-past.
+/// A live recent-arrival ghost stands in for the switch: the shelf just offered
+/// something, so the edge stays a way back to it for as long as the offer lasts.
 enum HoverRevealPolicy {
     /// Whether a plain (non-drag) pointer entry into an edge catch zone may arm a reveal.
-    static func armsReveal(revealOnHoverEnabled: Bool, usesEdgeDock: Bool) -> Bool {
-        revealOnHoverEnabled && usesEdgeDock
+    static func armsReveal(
+        revealOnHoverEnabled: Bool,
+        hasLiveGhosts: Bool = false,
+        usesEdgeDock: Bool
+    ) -> Bool {
+        (revealOnHoverEnabled || hasLiveGhosts) && usesEdgeDock
     }
 
     /// Whether an armed reveal should still fire now its delay has elapsed. Both inputs
@@ -16,8 +22,9 @@ enum HoverRevealPolicy {
     /// during the dwell — cancels instead of revealing.
     static func completesArmedReveal(
         revealOnHoverEnabled: Bool,
+        hasLiveGhosts: Bool = false,
         pointerStillInCatchZone: Bool
     ) -> Bool {
-        revealOnHoverEnabled && pointerStillInCatchZone
+        (revealOnHoverEnabled || hasLiveGhosts) && pointerStillInCatchZone
     }
 }

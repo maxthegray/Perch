@@ -2487,16 +2487,22 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         // With hover reveal off, a pass over the edge does nothing at all — in particular
         // it does not re-home the shelf, which would otherwise let an incidental sweep
-        // along the left edge move the dock the user had settled on the right.
+        // along the left edge move the dock the user had settled on the right. A live
+        // ghost still lets the hover through, but only to bring the shelf back: the
+        // edge it opens on is not saved as the shelf's home.
+        let hoverRevealEnabled = revealOnHover
         guard HoverRevealPolicy.armsReveal(
-            revealOnHoverEnabled: revealOnHover,
+            revealOnHoverEnabled: hoverRevealEnabled,
+            hasLiveGhosts: arrivals.hasLiveGhosts,
             usesEdgeDock: usesEdgeDock
         ) else { return }
 
         // A deliberate ordinary hover selects this as the shelf's future home.
         preferredScreen = strip.pinnedScreen
         preferredEdge = strip.edge
-        persistPreferredEdge()
+        if hoverRevealEnabled {
+            persistPreferredEdge()
+        }
         enterRegion(immediate: false)
     }
 
@@ -3013,6 +3019,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // real cursor is authoritative, and the delay above is the dwell.
             guard HoverRevealPolicy.completesArmedReveal(
                 revealOnHoverEnabled: self.revealOnHover,
+                hasLiveGhosts: self.arrivals.hasLiveGhosts,
                 pointerStillInCatchZone: self.pointerOverEdgeCatchZone(NSEvent.mouseLocation)
             ) else {
                 self.openTask = nil
@@ -3024,7 +3031,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self.revealProvenance = .unusedHover
             }
             self.pointerInRegion = true
-            self.revealIfNeeded()
+            // Going back for a ghost with hover reveal off is the user fetching an offer,
+            // not the shelf offering it again — it must not spend the ghost's reveals.
+            self.revealIfNeeded(spendingArrivalOffers: self.revealOnHover)
             self.openTask = nil
         }
     }
@@ -3156,7 +3165,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
     }
 
-    private func revealIfNeeded() {
+    private func revealIfNeeded(spendingArrivalOffers: Bool = true) {
         shelvedStrip = nil
         cancelEdgeShelving()
         cancelRetract()
@@ -3168,7 +3177,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             windowController.ensurePresented()
             return
         }
-        refreshArrivals(markRevealed: true)
+        refreshArrivals(markRevealed: spendingArrivalOffers)
         revealAtPreferredEdge()
     }
 
