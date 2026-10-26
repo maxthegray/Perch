@@ -1481,6 +1481,15 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        // Short on purpose: no wider than the version line, so it never widens the menu.
+        let updates = NSMenuItem(
+            title: "Updates…",
+            action: #selector(checkForUpdatesAction(_:)),
+            keyEquivalent: ""
+        )
+        updates.target = self
+        menu.addItem(updates)
+
         menu.addItem(.separator())
         let quit = NSMenuItem(
             title: "Quit",
@@ -1492,21 +1501,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
         menu.addItem(.separator())
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
-        // A quiet footer rather than a full-size row: the version, doubling as the way
-        // to check for a newer one.
         let about = NSMenuItem(
-            title: "",
-            action: #selector(checkForUpdatesAction(_:)),
+            title: "\(PerchProductIdentity.displayName) \(version)",
+            action: nil,
             keyEquivalent: ""
         )
-        about.attributedTitle = NSAttributedString(
-            string: "\(PerchProductIdentity.displayName) \(version) · Check for Updates…",
-            attributes: [
-                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor
-            ]
-        )
-        about.target = self
+        about.isEnabled = false
         menu.addItem(about)
 
         return menu
