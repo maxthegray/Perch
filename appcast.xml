@@ -2,23 +2,23 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.7.1/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.7.2/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.1</title>
+      <title>Version 1.7.2</title>
       <description><![CDATA[
 <ul>
-  <li><b>Get back to new files</b><br>For five minutes after a download or screenshot arrives, resting at the edge brings Perch back to it, even with hover reveal off.</li>
-  <li><b>Hold Option at the edge</b><br>With hover reveal off, hold Option as you move to an edge to bring Perch out anyway.</li>
+  <li><b>Option moves the shelf</b><br>With the shelf set to move by modifier, hold Option instead of Command and drag anywhere on it. Pressing Option with the pointer already at an edge now brings Perch out too.</li>
+  <li><b>Check for updates from the shelf</b><br>The version line at the bottom of the shelf's menu now checks for a newer Perch.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Mon, 26 Oct 2026 03:19:16 +0000</pubDate>
-      <sparkle:version>1070010</sparkle:version>
-      <sparkle:shortVersionString>1.7.1</sparkle:shortVersionString>
+      <pubDate>Mon, 26 Oct 2026 16:00:57 +0000</pubDate>
+      <sparkle:version>1070020</sparkle:version>
+      <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.7.1/Perch.zip" sparkle:edSignature="nVFLaea9vhAK3vZjCp72ivnIqfO0eAlq/flbULp80md+U7QSqlArQiRFUQqGCrM08nnOPDnLRKML3fy1tl0CAA==" length="4231358" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.7.2/Perch.zip" sparkle:edSignature="6EujFxdudv4Q0FJ3iJD3+Hhvl7D0v1wswwP3Lkb3skKoonI+3UD5aRao9LkQxVRsJFq5kSBmwaaidZ7fI3/WDg==" length="4231910" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
