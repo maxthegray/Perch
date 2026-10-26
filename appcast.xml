@@ -2,23 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.7.2/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.7.3/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.2</title>
+      <title>Version 1.7.3</title>
       <description><![CDATA[
 <ul>
-  <li><b>Option moves the shelf</b><br>With the shelf set to move by modifier, hold Option instead of Command and drag anywhere on it. Pressing Option with the pointer already at an edge now brings Perch out too.</li>
-  <li><b>Check for updates from the shelf</b><br>The version line at the bottom of the shelf's menu now checks for a newer Perch.</li>
+  <li><b>Updates in the shelf menu</b><br>Check for a newer Perch from Updates… in the shelf's right-click menu.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Mon, 26 Oct 2026 16:00:57 +0000</pubDate>
-      <sparkle:version>1070020</sparkle:version>
-      <sparkle:shortVersionString>1.7.2</sparkle:shortVersionString>
+      <pubDate>Mon, 26 Oct 2026 18:48:01 +0000</pubDate>
+      <sparkle:version>1070030</sparkle:version>
+      <sparkle:shortVersionString>1.7.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.7.2/Perch.zip" sparkle:edSignature="6EujFxdudv4Q0FJ3iJD3+Hhvl7D0v1wswwP3Lkb3skKoonI+3UD5aRao9LkQxVRsJFq5kSBmwaaidZ7fI3/WDg==" length="4231910" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.7.3/Perch.zip" sparkle:edSignature="YptJbBLrpeon+ee9QuUzYb0+nt7l4rEQyzKh3S64KDwhOaRXW0jskna1c7XexPbza0GKeGsN+90TNjN5wEEWCA==" length="4231277" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
