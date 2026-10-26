@@ -102,6 +102,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var revealOnHover: Bool {
         PerchSettings.flag(PerchSettings.revealOnHover, default: false)
     }
+    /// Hover reveal for this hover: the setting, or Option held to ask for it anyway.
+    private var hoverRevealRequested: Bool {
+        revealOnHover || NSEvent.modifierFlags.contains(.option)
+    }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults off.
     private var shakeToSummonEnabled: Bool {
         PerchSettings.flag(PerchSettings.shakeToSummon, default: false)
@@ -2485,12 +2489,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
 
-        // With hover reveal off, a pass over the edge does nothing at all — in particular
-        // it does not re-home the shelf, which would otherwise let an incidental sweep
-        // along the left edge move the dock the user had settled on the right. A live
+        // With hover reveal off and Option not held, a pass over the edge does nothing at
+        // all — in particular it does not re-home the shelf, which would otherwise let an
+        // incidental sweep along the left edge move the dock the user had settled on the
+        // right. Holding Option is a deliberate hover, as if the setting were on. A live
         // ghost still lets the hover through, but only to bring the shelf back: the
         // edge it opens on is not saved as the shelf's home.
-        let hoverRevealEnabled = revealOnHover
+        let hoverRevealEnabled = hoverRevealRequested
         guard HoverRevealPolicy.armsReveal(
             revealOnHoverEnabled: hoverRevealEnabled,
             hasLiveGhosts: arrivals.hasLiveGhosts,
@@ -3018,7 +3023,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // the cursor — which is the dwell requirement, at no cost in new state: the
             // real cursor is authoritative, and the delay above is the dwell.
             guard HoverRevealPolicy.completesArmedReveal(
-                revealOnHoverEnabled: self.revealOnHover,
+                revealOnHoverEnabled: self.hoverRevealRequested,
                 hasLiveGhosts: self.arrivals.hasLiveGhosts,
                 pointerStillInCatchZone: self.pointerOverEdgeCatchZone(NSEvent.mouseLocation)
             ) else {
@@ -3033,7 +3038,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self.pointerInRegion = true
             // Going back for a ghost with hover reveal off is the user fetching an offer,
             // not the shelf offering it again — it must not spend the ghost's reveals.
-            self.revealIfNeeded(spendingArrivalOffers: self.revealOnHover)
+            self.revealIfNeeded(spendingArrivalOffers: self.hoverRevealRequested)
             self.openTask = nil
         }
     }

@@ -17,7 +17,7 @@ struct BehaviorSettingsPane: View {
             Section("Showing Perch") {
                 settingToggle(
                     title: "Show when pointer touches an edge",
-                    caption: "Rest the pointer at an enabled edge to reveal the shelf.",
+                    caption: "Rest the pointer at an enabled edge to reveal the shelf. When off, hold Option to reveal it anyway.",
                     isOn: $revealOnHover
                 )
                 settingToggle(
