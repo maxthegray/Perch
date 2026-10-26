@@ -213,7 +213,7 @@ final class ThemeStore: ObservableObject {
     }
 
     /// How the user moves the shelf. On, hovering reveals a dedicated grab handle;
-    /// off, holding Command while dragging anywhere on the card moves it instead.
+    /// off, holding Option while dragging anywhere on the card moves it instead.
     /// The existing boolean key is retained so upgrades preserve the user's choice.
     @Published var showsGrabHandle: Bool {
         didSet {

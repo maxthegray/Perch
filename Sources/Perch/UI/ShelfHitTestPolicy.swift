@@ -20,7 +20,7 @@ enum ShelfHitTestPolicy {
         var isOverGrabHandle = false
         /// A row's ✕ / file-it button, whose hit rect is deliberately larger than the glyph.
         var isOverTrailingButton = false
-        /// Command-drag moves the whole card from anywhere on it (the alternative to the
+        /// Option-drag moves the whole card from anywhere on it (the alternative to the
         /// grab handle), so the held modifier makes every point draggable.
         var shelfDragModifierHeld = false
         /// Right-click (or Control-click) must still open the context menu anywhere on

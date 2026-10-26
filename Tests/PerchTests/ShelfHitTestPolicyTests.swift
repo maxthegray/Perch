@@ -27,7 +27,7 @@ final class ShelfHitTestPolicyTests: XCTestCase {
             ("ghost row", { $0.isOverGhostRow = true }),
             ("grab handle", { $0.isOverGrabHandle = true }),
             ("trailing button", { $0.isOverTrailingButton = true }),
-            ("command-drag", { $0.shelfDragModifierHeld = true }),
+            ("option-drag", { $0.shelfDragModifierHeld = true }),
             ("context click", { $0.isContextClick = true }),
             ("scroll", { $0.isScrollEvent = true }),
             ("empty free tile", { $0.dismissesEmptyFreeShelf = true }),

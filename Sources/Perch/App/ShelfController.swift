@@ -59,6 +59,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private weak var hoveredStrip: EdgeStripWindow?
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
+    /// Polls for Option while the pointer rests in a catch zone that hover reveal
+    /// ignored. Pressing a modifier is not a pointer event, so nothing else would notice.
+    private var optionRevealWatch: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
     /// Holds late hover/measurement callbacks off while a free shelf is fading away;
@@ -354,7 +357,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.revealIfNeeded()
         }
 
-        // Dragging the card with the configured gesture (handle or Command-drag) moves
+        // Dragging the card with the configured gesture (handle or Option-drag) moves
         // the whole card. From an edge it tears the docked shelf off: past a small
         // distance it pins where it's dropped as a free-floating shelf; otherwise it
         // snaps back. A free shelf moves freely unless it is released near an enabled
@@ -2500,7 +2503,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             revealOnHoverEnabled: hoverRevealEnabled,
             hasLiveGhosts: arrivals.hasLiveGhosts,
             usesEdgeDock: usesEdgeDock
-        ) else { return }
+        ) else {
+            watchForOptionReveal(at: strip)
+            return
+        }
 
         // A deliberate ordinary hover selects this as the shelf's future home.
         preferredScreen = strip.pinnedScreen
@@ -2509,6 +2515,25 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             persistPreferredEdge()
         }
         enterRegion(immediate: false)
+    }
+
+    /// Pressing Option with the pointer already resting at the edge counts as arriving
+    /// with it held. Polls `NSEvent.modifierFlags` rather than monitoring key events,
+    /// which would need Accessibility permission; the watch ends when the pointer
+    /// leaves this strip.
+    private func watchForOptionReveal(at strip: EdgeStripWindow) {
+        optionRevealWatch?.cancel()
+        optionRevealWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard let self, !Task.isCancelled, self.hoveredStrip === strip else { return }
+                if !self.panel.isVisible, NSEvent.modifierFlags.contains(.option) {
+                    self.optionRevealWatch = nil
+                    self.edgeStrip(strip, pointerDidEnterViaDrag: false)
+                    return
+                }
+            }
+        }
     }
 
     func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
@@ -3015,6 +3040,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         cancelOpen()
+        // A quick Option tap arms the reveal; it need not still be held when the dwell ends.
+        let optionHeldAtArm = NSEvent.modifierFlags.contains(.option)
         openTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
             guard let self, !Task.isCancelled else { return }
@@ -3023,7 +3050,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // the cursor — which is the dwell requirement, at no cost in new state: the
             // real cursor is authoritative, and the delay above is the dwell.
             guard HoverRevealPolicy.completesArmedReveal(
-                revealOnHoverEnabled: self.hoverRevealRequested,
+                revealOnHoverEnabled: optionHeldAtArm || self.hoverRevealRequested,
                 hasLiveGhosts: self.arrivals.hasLiveGhosts,
                 pointerStillInCatchZone: self.pointerOverEdgeCatchZone(NSEvent.mouseLocation)
             ) else {
@@ -3038,7 +3065,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self.pointerInRegion = true
             // Going back for a ghost with hover reveal off is the user fetching an offer,
             // not the shelf offering it again — it must not spend the ghost's reveals.
-            self.revealIfNeeded(spendingArrivalOffers: self.hoverRevealRequested)
+            self.revealIfNeeded(
+                spendingArrivalOffers: optionHeldAtArm || self.hoverRevealRequested
+            )
             self.openTask = nil
         }
     }

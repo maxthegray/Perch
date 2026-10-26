@@ -69,8 +69,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// whether this is a drag. If it remains a click, mouse-up restores the usual
     /// normal-click behavior by collapsing the selection to that row.
     private var preservesSelectionForDrag = false
-    /// Command-click is resolved on mouse-up so the same press can still become the
-    /// configured Command-drag shelf movement after crossing the drag threshold.
+    /// Command-click is resolved on mouse-up so the same press can still become a
+    /// reorder or vend after crossing the drag threshold.
     private var pendingCommandSelectionItem: StoredItem?
     /// True once a reorder is underway (rows live-shuffle a preview order).
     private var reorderActive = false
@@ -87,7 +87,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// True while a shelf-move gesture is dragging the whole card (drag-to-pin).
     private var shelfDragActive = false
     /// Captured at mouse-down so only the interaction selected in Settings can move the
-    /// shelf: its visible handle, or Command-drag anywhere on the card.
+    /// shelf: its visible handle, or Option-drag anywhere on the card.
     private var shelfDragArmed = false
     /// Invalidates deferred mouse-exit checks. Resizing the panel rebuilds AppKit's
     /// tracking geometry and can emit a transient exit even though the cursor is still
@@ -303,12 +303,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         guard targets.isInsideCard else { return targets }
 
         // Which event is being routed decides some of this: a right-click opens the menu
-        // anywhere, and Command-drag moves the card from anywhere.
+        // anywhere, and Option-drag moves the card from anywhere.
         let event = NSApp.currentEvent
         targets.isContextClick = event.map(Self.isContextClick) ?? false
         targets.isScrollEvent = event?.type == .scrollWheel
         targets.shelfDragModifierHeld = !themeStore.showsGrabHandle
-            && event?.modifierFlags.contains(.command) == true
+            && event?.modifierFlags.contains(.option) == true
 
         targets.isOverGrabHandle = grabberZoneContains(point)
         targets.isOverRow = rowIndex(at: point) != nil
@@ -479,16 +479,13 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
         // Shelf movement takes precedence over row/delete/arrival interactions only
         // when the selected gesture is used. In handle mode, ordinary row drags keep
-        // vending or reordering items. In Command mode, the modifier deliberately
+        // vending or reordering items. In Option mode, the modifier deliberately
         // turns that same press into a whole-card move from anywhere on the shelf.
         let requestedShelfDrag = themeStore.showsGrabHandle
             ? grabberZoneContains(point)
-            : event.modifierFlags.contains(.command)
+            : event.modifierFlags.contains(.option)
         if requestedShelfDrag, canBeginShelfDrag?() == true {
             shelfDragArmed = true
-            if event.modifierFlags.contains(.command) {
-                pendingCommandSelectionItem = item(at: point)
-            }
             dragStartPoint = point
             shelfDragScreenStart = NSEvent.mouseLocation
             return
@@ -1088,7 +1085,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Whether `point` (view coords) falls in the grab-handle strip pinned to the very
     /// top of a populated card, full width. The floored card's empty space elsewhere is
-    /// plain background and is not draggable unless Command mode is selected.
+    /// plain background and is not draggable unless Option mode is selected.
     private func grabberZoneContains(_ point: NSPoint) -> Bool {
         let height = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         return hasGrabber && bounds.contains(point) && point.y < height
@@ -1495,12 +1492,21 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
         menu.addItem(.separator())
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
+        // A quiet footer rather than a full-size row: the version, doubling as the way
+        // to check for a newer one.
         let about = NSMenuItem(
-            title: "\(PerchProductIdentity.displayName) \(version)",
-            action: nil,
+            title: "",
+            action: #selector(checkForUpdatesAction(_:)),
             keyEquivalent: ""
         )
-        about.isEnabled = false
+        about.attributedTitle = NSAttributedString(
+            string: "\(PerchProductIdentity.displayName) \(version) · Check for Updates…",
+            attributes: [
+                .font: NSFont.menuFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor
+            ]
+        )
+        about.target = self
         menu.addItem(about)
 
         return menu
@@ -1643,6 +1649,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     @objc private func quitAction(_ sender: NSMenuItem) {
         NSApp.terminate(nil)
+    }
+
+    @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {
+        Updater.shared.checkForUpdates()
     }
 
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
