@@ -85,14 +85,14 @@ struct BehaviorSettingsPane: View {
                 Text("Move the shelf using")
                 Text(themeStore.showsGrabHandle
                     ? "Hover over the shelf, then drag its handle."
-                    : "Hold Option and drag anywhere on the shelf.")
+                    : "Hold Control and drag anywhere on the shelf.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
             Picker("Move the shelf using", selection: $themeStore.showsGrabHandle) {
                 Text("Handle").tag(true)
-                Text("Option-drag").tag(false)
+                Text("Control-drag").tag(false)
             }
             .pickerStyle(.segmented)
             .labelsHidden()

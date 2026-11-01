@@ -357,7 +357,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.revealIfNeeded()
         }
 
-        // Dragging the card with the configured gesture (handle or Option-drag) moves
+        // Dragging the card with the configured gesture (handle or Control-drag) moves
         // the whole card. From an edge it tears the docked shelf off: past a small
         // distance it pins where it's dropped as a free-floating shelf; otherwise it
         // snaps back. A free shelf moves freely unless it is released near an enabled

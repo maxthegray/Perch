@@ -87,8 +87,11 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// True while a shelf-move gesture is dragging the whole card (drag-to-pin).
     private var shelfDragActive = false
     /// Captured at mouse-down so only the interaction selected in Settings can move the
-    /// shelf: its visible handle, or Option-drag anywhere on the card.
+    /// shelf: its visible handle, or Control-drag anywhere on the card.
     private var shelfDragArmed = false
+    /// A Control press armed as a shelf move. If it never becomes a drag it was a
+    /// Control-click after all, and its context menu opens on mouse-up.
+    private var deferredContextClick: NSEvent?
     /// Invalidates deferred mouse-exit checks. Resizing the panel rebuilds AppKit's
     /// tracking geometry and can emit a transient exit even though the cursor is still
     /// inside the window; accepting that exit immediately reverses the resize and can
@@ -166,7 +169,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// Re-present any rows that consequently remain in the store.
     var onVendPrehideNeedsRecovery: (() -> Void)?
 
-    /// Gate + hooks for whole-card drags (the grab handle or Command-drag; from an
+    /// Gate + hooks for whole-card drags (the grab handle or Control-drag; from an
     /// edge they tear the docked card off). The controller answers whether a card drag
     /// may start, captures the docked frame when one begins, and decides pin vs.
     /// snap-back when it ends.
@@ -303,12 +306,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         guard targets.isInsideCard else { return targets }
 
         // Which event is being routed decides some of this: a right-click opens the menu
-        // anywhere, and Option-drag moves the card from anywhere.
+        // anywhere, and Control-drag moves the card from anywhere.
         let event = NSApp.currentEvent
         targets.isContextClick = event.map(Self.isContextClick) ?? false
         targets.isScrollEvent = event?.type == .scrollWheel
         targets.shelfDragModifierHeld = !themeStore.showsGrabHandle
-            && event?.modifierFlags.contains(.option) == true
+            && event?.modifierFlags.contains(Self.shelfDragModifier) == true
 
         targets.isOverGrabHandle = grabberZoneContains(point)
         targets.isOverRow = rowIndex(at: point) != nil
@@ -332,6 +335,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                     || routeActionHitRect(forRow: $0).contains(point))
         }
     }
+
+    /// Option is left to copy items as they're dragged out, as in Finder.
+    private static let shelfDragModifier: NSEvent.ModifierFlags = .control
 
     /// A press that must open the context menu rather than act on a row.
     private static func isContextClick(_ event: NSEvent) -> Bool {
@@ -479,13 +485,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
         // Shelf movement takes precedence over row/delete/arrival interactions only
         // when the selected gesture is used. In handle mode, ordinary row drags keep
-        // vending or reordering items. In Option mode, the modifier deliberately
+        // vending or reordering items. In Control mode, the modifier deliberately
         // turns that same press into a whole-card move from anywhere on the shelf.
         let requestedShelfDrag = themeStore.showsGrabHandle
             ? grabberZoneContains(point)
-            : event.modifierFlags.contains(.option)
+            : event.modifierFlags.contains(Self.shelfDragModifier)
         if requestedShelfDrag, canBeginShelfDrag?() == true {
             shelfDragArmed = true
+            if !themeStore.showsGrabHandle {
+                deferredContextClick = event
+            }
             dragStartPoint = point
             shelfDragScreenStart = NSEvent.mouseLocation
             return
@@ -658,6 +667,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             commitReorder()
         } else if shelfDragActive {
             onShelfDragEnded?()
+        } else if let press = deferredContextClick {
+            let location = NSEvent.mouseLocation
+            if hypot(location.x - shelfDragScreenStart.x, location.y - shelfDragScreenStart.y) < 4,
+               let menu = contextMenu(for: press) {
+                resetDragState()
+                NSMenu.popUpContextMenu(menu, with: press, for: self)
+                return
+            }
         } else if let item = pendingCommandSelectionItem {
             interaction.clickSelection(
                 item.id,
@@ -922,6 +939,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         vendStarted = false
         shelfDragActive = false
         shelfDragArmed = false
+        deferredContextClick = nil
         reorderBaseOrder = []
         reorderMovingItemIDs = []
         interaction.draggingItemIDs = []
@@ -1085,7 +1103,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Whether `point` (view coords) falls in the grab-handle strip pinned to the very
     /// top of a populated card, full width. The floored card's empty space elsewhere is
-    /// plain background and is not draggable unless Option mode is selected.
+    /// plain background and is not draggable unless Control mode is selected.
     private func grabberZoneContains(_ point: NSPoint) -> Bool {
         let height = RowMetrics.grabberZoneHeight * interaction.grabberRevealProgress
         return hasGrabber && bounds.contains(point) && point.y < height
@@ -1326,6 +1344,17 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     // MARK: - Context menu (AppKit; reliable while the panel is non-key)
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        // In Control mode a Control-click may be the start of a shelf move, so it is
+        // left to mouseDown; mouse-up opens the menu if the press never moved.
+        if event.type == .leftMouseDown, !themeStore.showsGrabHandle,
+           event.modifierFlags.contains(Self.shelfDragModifier),
+           canBeginShelfDrag?() == true {
+            return nil
+        }
+        return contextMenu(for: event)
+    }
+
+    private func contextMenu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
         menuPoint = point
         onCardInteraction?()
