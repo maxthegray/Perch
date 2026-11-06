@@ -139,6 +139,11 @@ struct WelcomeView: View {
                 detail: "Item actions and Settings live in its menu. "
                     + "That is the way back to every preference."
             )
+            Text("Every gesture: right-click the shelf → Shortcuts")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 40)
+                .padding(.top, -10)
         }
     }
 

@@ -69,6 +69,20 @@ final class ShelfDropView: NSView {
         return super.menu(for: event)
     }
 
+    /// Left presses the host declines arrive here for the same reason right-clicks do.
+    var onUnclaimedPress: (() -> Void)?
+    var onUnclaimedDrag: ((NSEvent) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        onUnclaimedPress?()
+        super.mouseDown(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        onUnclaimedDrag?(event)
+        super.mouseDragged(with: event)
+    }
+
     override func mouseEntered(with event: NSEvent) {
         dropHandler?.pointerDidEnterShelf()
     }

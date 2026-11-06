@@ -17,6 +17,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let settingsWindow: SettingsWindowController
     private let mergePDFWindow: MergePDFWindowController
     private let splitPDFWindow: SplitPDFWindowController
+    private let shortcutsWindow = ShortcutsWindowController()
     private let snapshotter: PasteboardSnapshotter
     private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
@@ -434,6 +435,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
+        }
+        hostView.onShowShortcuts = { [weak self] in
+            self?.shortcutsWindow.show()
+        }
+        dropView.onUnclaimedPress = { [weak hostView] in hostView?.unclaimedPressBegan() }
+        dropView.onUnclaimedDrag = { [weak hostView] event in
+            hostView?.unclaimedPressDragged(event)
         }
 
         // Recent downloads can be adopted individually or as one temporal session.

@@ -151,6 +151,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Called when the user picks "Settings"; the controller opens the window.
     var onShowSettings: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
 
     /// Called when an empty cursor-summoned tile is tapped — there are no items to remove,
     /// so a plain click dismisses the whole tile.
@@ -456,6 +457,87 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         guard interaction.isCardHovered != hovered else { return }
         interaction.isCardHovered = hovered
         onCardHoverChanged?(hovered)
+        startModifierHintWatch()
+        if !hovered, interaction.modifierHint == .moveShelf || interaction.modifierHint == .copyOut {
+            NSCursor.arrow.set()
+        }
+    }
+
+    // MARK: Modifier hints
+
+    private var modifierHintWatch: Task<Void, Never>?
+    private var modifierHintDebouncer = ModifierHintDebouncer()
+
+    /// The panel is never key, so it receives no flagsChanged events; poll the modifier
+    /// state while the shelf is on screen (key monitoring would need Accessibility).
+    func startModifierHintWatch() {
+        guard modifierHintWatch == nil else { return }
+        modifierHintWatch = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let visible = self?.pollModifierHint() else { return }
+                try? await Task.sleep(for: .milliseconds(visible ? 40 : 250))
+            }
+        }
+    }
+
+    /// One poll; returns whether the shelf is on screen.
+    private func pollModifierHint() -> Bool {
+        let visible = window?.isVisible == true
+        if visible {
+            refreshModifierHint()
+        } else if interaction.modifierHint != .none {
+            modifierHintDebouncer = ModifierHintDebouncer()
+            interaction.modifierHint = .none
+        }
+        return visible
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil {
+            modifierHintWatch?.cancel()
+            modifierHintWatch = nil
+        } else {
+            startModifierHintWatch()
+        }
+    }
+
+    private func refreshModifierHint() {
+        var context = ModifierHintPolicy.Context()
+        context.modifiers = NSEvent.modifierFlags
+        context.isPointerOverItem = interaction.hoveredItemID != nil
+        context.isInteracting = shelfDragActive || vendStarted || reorderActive
+        context.showsGrabHandle = themeStore.showsGrabHandle
+        context.canMoveShelf = !themeStore.showsGrabHandle && canBeginShelfDrag?() == true
+        context.copiesByDefault = vendCopies
+        context.hasSelectionAnchor = interaction.selectionAnchorItemID.map { anchor in
+            store.items.contains { $0.id == anchor }
+        } ?? false
+        let hint = modifierHintDebouncer.update(
+            ModifierHintPolicy.hint(for: context),
+            now: ProcessInfo.processInfo.systemUptime
+        )
+        applyModifierHint(hint)
+    }
+
+    private func applyModifierHint(_ hint: ModifierHint) {
+        guard interaction.modifierHint != hint else { return }
+        let previous = interaction.modifierHint
+        withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
+            interaction.modifierHint = hint
+        }
+        guard interaction.isCardHovered else { return }
+        switch hint {
+        case .moveShelf:
+            NSCursor.openHand.set()
+        case .copyOut:
+            NSCursor.dragCopy.set()
+        case .none, .toggleSelection, .rangeSelection:
+            if previous == .moveShelf || previous == .copyOut,
+               !shelfDragActive, !interaction.isGrabberHovered {
+                NSCursor.arrow.set()
+            }
+        }
     }
 
     /// Highlight the grab handle under the pointer and match the cursor to it: open
@@ -467,8 +549,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         }
         if shelfDragActive {
             NSCursor.closedHand.set()
-        } else if over {
+        } else if over || interaction.modifierHint == .moveShelf {
             NSCursor.openHand.set()
+        } else if interaction.modifierHint == .copyOut {
+            NSCursor.dragCopy.set()
         } else {
             NSCursor.arrow.set()
         }
@@ -591,7 +675,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             trackShelfDrag()
             return
         }
-        guard let item = dragItem else { return }
+        guard let item = dragItem else {
+            considerMoveShelfTip(from: shelfDragScreenStart, event: event)
+            return
+        }
         let point = convert(event.locationInWindow, from: nil)
 
         if !reorderActive {
@@ -789,9 +876,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         // Keep the source row geometrically stable until AppKit resolves the drop. Move
         // mode lifts it subtly, then removes it only after a successful external landing;
         // cancellation simply settles it back in place.
+        let optionHeld = event.modifierFlags.contains(.option)
         let copiesItems = VendModePolicy.copiesItems(
             copiesByDefault: vendCopies,
-            optionKeyDown: event.modifierFlags.contains(.option)
+            optionKeyDown: optionHeld
         )
         let isMove = !copiesItems
         if isMove {
@@ -882,6 +970,15 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 && self.store.items.allSatisfy { itemIDs.contains($0.id) }
             let hidesBeforeRetirement = finishesEveryItem
                 && (self.onWillRemoveLastItem?() ?? false)
+            if GestureTipPolicy.showsKeepCopyTip(
+                alreadyShown: Self.hasShown(.keepCopy),
+                copiesByDefault: self.vendCopies,
+                optionHeld: optionHeld,
+                landedOutsidePerch: !returnedToPerch && !operation.isEmpty,
+                cardStaysVisible: !finishesEveryItem && self.window?.isVisible == true
+            ) {
+                self.showGestureTip(.keepCopy)
+            }
 
             let finishVend = { [weak self] in
                 guard let self else { return }
@@ -926,6 +1023,50 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             y: shelfDragWindowOrigin.y + (location.y - shelfDragScreenStart.y)
         ))
         onShelfDragMoved?()
+    }
+
+    // MARK: Gesture tips
+
+    private var unclaimedPressScreenStart: NSPoint?
+    private var gestureTipDismissal: Task<Void, Never>?
+
+    /// A press on inert background is declined by `hitTest` and lands on the drop view
+    /// underneath, which hands it back here so a drag that did nothing is still noticed.
+    func unclaimedPressBegan() {
+        unclaimedPressScreenStart = NSEvent.mouseLocation
+    }
+
+    func unclaimedPressDragged(_ event: NSEvent) {
+        guard let start = unclaimedPressScreenStart else { return }
+        considerMoveShelfTip(from: start, event: event)
+    }
+
+    private func considerMoveShelfTip(from screenStart: NSPoint, event: NSEvent) {
+        let location = NSEvent.mouseLocation
+        let held = event.modifierFlags.intersection([.control, .option, .command, .shift])
+        guard GestureTipPolicy.showsMoveShelfTip(
+            alreadyShown: Self.hasShown(.moveShelf),
+            showsGrabHandle: themeStore.showsGrabHandle,
+            isPlainDrag: held.isEmpty,
+            canMoveShelf: canBeginShelfDrag?() == true,
+            dragDistance: hypot(location.x - screenStart.x, location.y - screenStart.y)
+        ) else { return }
+        showGestureTip(.moveShelf)
+    }
+
+    private static func hasShown(_ tip: GestureTip) -> Bool {
+        UserDefaults.standard.bool(forKey: tip.shownFlagKey)
+    }
+
+    private func showGestureTip(_ tip: GestureTip) {
+        UserDefaults.standard.set(true, forKey: tip.shownFlagKey)
+        interaction.gestureTip = tip
+        gestureTipDismissal?.cancel()
+        gestureTipDismissal = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(GestureTipPolicy.displayDuration))
+            guard !Task.isCancelled, let self, self.interaction.gestureTip == tip else { return }
+            self.interaction.gestureTip = nil
+        }
     }
 
     private func resetDragState() {
@@ -1510,6 +1651,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        let shortcuts = NSMenuItem(
+            title: "Shortcuts…",
+            action: #selector(showShortcutsAction(_:)),
+            keyEquivalent: ""
+        )
+        shortcuts.target = self
+        menu.addItem(shortcuts)
+
         // Short on purpose: no wider than the version line, so it never widens the menu.
         let updates = NSMenuItem(
             title: "Updates…",
@@ -1686,6 +1835,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
         onShowSettings?()
+    }
+
+    @objc private func showShortcutsAction(_ sender: NSMenuItem) {
+        onShowShortcuts?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {

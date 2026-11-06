@@ -126,6 +126,42 @@ struct ShelfContentView: View {
         RoundedRectangle(cornerRadius: theme.cardCornerRadius, style: .continuous)
     }
 
+    private var isGrabbable: Bool { interaction.modifierHint == .moveShelf }
+
+    /// ⌃ held in Control-drag mode: the card settles slightly into the hand and its
+    /// rim catches the light, so it reads as one object about to move.
+    private var grabOutline: some View {
+        ZStack {
+            cardShape.strokeBorder(Color.primary.opacity(0.35), lineWidth: 1.5)
+            cardShape.fill(Color.primary.opacity(0.04))
+        }
+        .opacity(isGrabbable ? 1 : 0)
+        .allowsHitTesting(false)
+    }
+
+    private var hintedCopyIDs: Set<UUID> {
+        guard interaction.modifierHint == .copyOut else { return [] }
+        return ModifierHintPolicy.copyTargets(
+            hovered: interaction.hoveredItemID,
+            selected: interaction.selectedItemIDs,
+            all: store.items.map(\.id)
+        )
+    }
+
+    private var hintedRangeIDs: Set<UUID> {
+        guard interaction.modifierHint == .rangeSelection else { return [] }
+        return ModifierHintPolicy.rangePreview(
+            anchor: interaction.selectionAnchorItemID,
+            hovered: interaction.hoveredItemID,
+            orderedIDs: store.items.map(\.id)
+        )
+    }
+
+    private func selectionRing(for itemID: UUID) -> SelectionRingState? {
+        guard interaction.modifierHint == .toggleSelection else { return nil }
+        return interaction.selectedItemIDs.contains(itemID) ? .selected : .unselected
+    }
+
     var body: some View {
         measuredContent
             // Center, not top: in a card floored taller than its content (the Height
@@ -135,6 +171,9 @@ struct ShelfContentView: View {
             .clipShape(cardShape)
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
             .overlay(dragBeacon)
+            .overlay(grabOutline)
+            .gestureTipOverlay(interaction.gestureTip)
+            .scaleEffect(isGrabbable ? 0.985 : 1)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsGrabHandle)
@@ -424,22 +463,30 @@ struct ShelfContentView: View {
         let thumbnail = thumbnails.thumbnail(for: item, pointSize: side)
         let isLifted = interaction.draggingItemIDs.contains(item.id)
             || interaction.vendingItemIDs.contains(item.id)
-        return ZStack {
-            if let thumbnail {
-                Image(nsImage: thumbnail)
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: side, height: side)
-            } else {
-                Image(nsImage: item.iconImage())
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: side * 0.78, height: side * 0.78)
+        let showsCopyHint = hintedCopyIDs.contains(item.id)
+        return deckSample(item, thumbnail: thumbnail, side: side)
+        .background {
+            if showsCopyHint {
+                deckSample(item, thumbnail: thumbnail, side: side)
+                    .opacity(0.55)
+                    .overlay(alignment: .topLeading) {
+                        CopyBadgeView()
+                            .scaleEffect(max(1, side / 56))
+                            .padding(max(2, side * 0.04))
+                    }
+                    .rotationEffect(.degrees(-6), anchor: .bottomTrailing)
+                    .offset(x: -side * 0.08, y: -side * 0.06)
+                    .transition(.offset(x: side * 0.08, y: side * 0.06).combined(with: .opacity))
             }
         }
-        .frame(width: side, height: side)
+        .overlay(alignment: .topTrailing) {
+            if let ring = selectionRing(for: item.id)
+                ?? (hintedRangeIDs.contains(item.id) ? .previewed : nil) {
+                SelectionRingView(state: ring)
+                    .padding(max(3, side * 0.06))
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
+            }
+        }
         .overlay(alignment: .bottomTrailing) {
             if !themeStore.showsLabels,
                let label = FileTypeBadgePresentation.label(
@@ -461,10 +508,31 @@ struct ShelfContentView: View {
         .frame(maxWidth: .infinity, alignment: .center)
         .animation(.easeOut(duration: 0.14), value: interaction.hoveredItemID == item.id)
         .animation(.easeOut(duration: 0.18), value: thumbnail != nil)
+        .animation(.spring(response: 0.34, dampingFraction: 0.58), value: showsCopyHint)
+        .animation(.spring(response: 0.24, dampingFraction: 0.7), value: interaction.modifierHint)
         .transition(.asymmetric(
             insertion: .opacity,
             removal: .opacity.combined(with: .scale(scale: 0.8))
         ))
+    }
+
+    private func deckSample(_ item: StoredItem, thumbnail: NSImage?, side: CGFloat) -> some View {
+        ZStack {
+            if let thumbnail {
+                Image(nsImage: thumbnail)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: side, height: side)
+            } else {
+                Image(nsImage: item.iconImage())
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: side * 0.78, height: side * 0.78)
+            }
+        }
+        .frame(width: side, height: side)
     }
 
     /// Arrival suggestions use the same chrome-free sample treatment, remaining dimmer
@@ -518,7 +586,10 @@ struct ShelfContentView: View {
             showsTrailingActions: themeStore.showsLabels,
             learnedDestinationName: routeSuggestions.suggestion(for: item.id).map {
                 RouteDestinationPresentation.shortName(for: $0.destination)
-            }
+            },
+            showsCopyHint: hintedCopyIDs.contains(item.id),
+            selectionRing: selectionRing(for: item.id),
+            isRangePreviewed: hintedRangeIDs.contains(item.id)
         )
         .transition(.asymmetric(
             insertion: .opacity,

@@ -96,6 +96,9 @@ enum PerchSettings {
     /// Once written, later launches preserve whatever the user chooses in Settings.
     static let edgeTabOffByDefaultMigrationCompleted =
         "Perch.EdgeTabOffByDefaultMigrationCompleted"
+    /// One-time gesture tips (`GestureTip`), each set once its pill has been shown.
+    static let moveShelfTipShown = "Perch.MoveShelfTipShown"
+    static let keepCopyTipShown = "Perch.KeepCopyTipShown"
 
     // MARK: - Reading
 

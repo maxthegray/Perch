@@ -118,6 +118,14 @@ final class RowInteractionState: ObservableObject {
     /// whole-card drags are refused until it's unlocked or closed.
     @Published var isLockedInPlace = false
 
+    /// The one-time hint currently shown on the card, if any.
+    @Published var gestureTip: GestureTip?
+
+    /// What the modifier currently held over the card would do, shown as motion.
+    @Published var modifierHint: ModifierHint = .none
+
+    var selectionAnchorItemID: UUID? { selectionPolicy.anchorItemID }
+
     func clickSelection(
         _ itemID: UUID,
         modifier: ShelfSelectionPolicy<UUID>.Modifier,

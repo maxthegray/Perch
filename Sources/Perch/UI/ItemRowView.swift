@@ -89,6 +89,9 @@ struct ItemRowView: View {
     /// Short name of the folder this item has repeatedly been dragged to, if Perch has
     /// learned one. Its presence adds the file-it button and the destination subtitle.
     let learnedDestinationName: String?
+    var showsCopyHint = false
+    var selectionRing: SelectionRingState?
+    var isRangePreviewed = false
 
     var body: some View {
         HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
@@ -133,7 +136,7 @@ struct ItemRowView: View {
         )
         .background(
             RoundedRectangle(cornerRadius: theme.rowCornerRadius, style: .continuous)
-                .fill(isSelected ? Color.accentColor.opacity(0.22) : (isHovered ? theme.rowHoverFill : theme.rowFill))
+                .fill(rowFill)
         )
         .overlay(alignment: .bottom) { separator }
         .overlay(alignment: .trailing) { trailingActions }
@@ -144,6 +147,9 @@ struct ItemRowView: View {
         .zIndex(isDragging || isDeleting ? 1 : 0)
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.13), value: isSelected)
+        .animation(.easeOut(duration: 0.13), value: isRangePreviewed)
+        .animation(.spring(response: 0.34, dampingFraction: 0.58), value: showsCopyHint)
+        .animation(.spring(response: 0.24, dampingFraction: 0.7), value: selectionRing)
         .animation(.easeOut(duration: 0.2), value: thumbnail != nil)
         .animation(.easeOut(duration: 0.18), value: displayTitle)
         .animation(.easeOut(duration: 0.18), value: learnedDestinationName)
@@ -155,6 +161,12 @@ struct ItemRowView: View {
 
     private var rowWidth: CGFloat {
         maximumWidth
+    }
+
+    private var rowFill: Color {
+        if isSelected { return Color.accentColor.opacity(0.22) }
+        if isRangePreviewed { return Color.accentColor.opacity(0.11) }
+        return isHovered ? theme.rowHoverFill : theme.rowFill
     }
 
     /// A real preview is shown as a small rounded "photo" tile; a generic file icon is
@@ -191,6 +203,44 @@ struct ItemRowView: View {
             }
         }
         .frame(width: theme.iconSize, height: theme.iconSize)
+        .background {
+            if showsCopyHint {
+                iconImage
+                    .opacity(0.6)
+                    .overlay(alignment: .topLeading) {
+                        CopyBadgeView()
+                            .offset(x: -4, y: -4)
+                    }
+                    .rotationEffect(.degrees(-8), anchor: .bottomTrailing)
+                    .offset(x: -5, y: -3)
+                    .transition(.offset(x: 5, y: 3).combined(with: .opacity))
+            }
+        }
+        .overlay(alignment: .topLeading) {
+            if let selectionRing {
+                SelectionRingView(state: selectionRing)
+                    .offset(x: -3.5, y: -3.5)
+                    .transition(.scale(scale: 0.4).combined(with: .opacity))
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var iconImage: some View {
+        if let thumbnail {
+            Image(nsImage: thumbnail)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fill)
+                .frame(width: theme.iconSize, height: theme.iconSize)
+                .clipShape(RoundedRectangle(cornerRadius: theme.iconCornerRadius, style: .continuous))
+        } else {
+            Image(nsImage: item.iconImage())
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(width: theme.iconSize, height: theme.iconSize)
+        }
     }
 
     @ViewBuilder
@@ -274,5 +324,52 @@ struct ItemRowView: View {
             backingFileNames: item.metadata.backingFileNames,
             primaryFileType: item.metadata.primaryFileType
         )
+    }
+}
+
+enum SelectionRingState: Equatable {
+    case unselected
+    case selected
+    /// Would be selected by the pending ⇧-click.
+    case previewed
+}
+
+/// The ⌘ affordance: a small ring per item, filled for those already selected.
+struct SelectionRingView: View {
+    let state: SelectionRingState
+
+    var body: some View {
+        ZStack {
+            switch state {
+            case .unselected:
+                Circle().fill(.thinMaterial)
+                Circle().strokeBorder(Color.primary.opacity(0.45), lineWidth: 1.2)
+            case .selected, .previewed:
+                Circle().fill(Color.accentColor.opacity(state == .selected ? 1 : 0.55))
+                Image(systemName: "checkmark")
+                    .font(.system(size: 6.5, weight: .heavy))
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: 12, height: 12)
+        .shadow(color: .black.opacity(0.2), radius: 1.5, y: 0.5)
+        .animation(.spring(response: 0.22, dampingFraction: 0.7), value: state)
+        .allowsHitTesting(false)
+    }
+}
+
+/// The ⌥ affordance's corner mark: the green ⊕ Finder's copy cursor uses.
+struct CopyBadgeView: View {
+    var body: some View {
+        ZStack {
+            Circle().fill(Color(nsColor: .systemGreen))
+            Image(systemName: "plus")
+                .font(.system(size: 7, weight: .heavy))
+                .foregroundStyle(.white)
+        }
+        .frame(width: 12, height: 12)
+        .overlay(Circle().strokeBorder(.white.opacity(0.9), lineWidth: 1))
+        .shadow(color: .black.opacity(0.25), radius: 1.5, y: 0.5)
+        .allowsHitTesting(false)
     }
 }
