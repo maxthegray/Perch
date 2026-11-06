@@ -152,6 +152,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// Called when the user picks "Settings"; the controller opens the window.
     var onShowSettings: (() -> Void)?
     var onShowShortcuts: (() -> Void)?
+    var onShowWelcome: (() -> Void)?
+    /// Triple-click anywhere on the card: put the shelf away.
+    var onTripleClick: (() -> Void)?
+    /// An item was dragged out and landed somewhere outside Perch. Returns whether the
+    /// shelf is about to hide in response.
+    var onVendLanded: (() -> Bool)?
 
     /// Called when an empty cursor-summoned tile is tapped — there are no items to remove,
     /// so a plain click dismisses the whole tile.
@@ -564,6 +570,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         let point = convert(event.locationInWindow, from: nil)
         resetDragState()
         guard !isContextMenuOpen else { return }
+        if event.clickCount >= 3 {
+            handleTripleClick()
+            return
+        }
         hasActiveLeftPress = true
         onCardInteraction?()
 
@@ -708,7 +718,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             let targets = actionItems(for: item).filter(quickLook.canPreview)
             if !targets.isEmpty {
                 resetDragState()
-                showQuickLook(targets)
+                scheduleQuickLook(targets)
                 return
             }
         }
@@ -970,7 +980,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 && self.store.items.allSatisfy { itemIDs.contains($0.id) }
             let hidesBeforeRetirement = finishesEveryItem
                 && (self.onWillRemoveLastItem?() ?? false)
-            if GestureTipPolicy.showsKeepCopyTip(
+            let shelfWillHide = self.onVendLanded?() ?? false
+            if !shelfWillHide, GestureTipPolicy.showsKeepCopyTip(
                 alreadyShown: Self.hasShown(.keepCopy),
                 copiesByDefault: self.vendCopies,
                 optionHeld: optionHeld,
@@ -1032,8 +1043,36 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// A press on inert background is declined by `hitTest` and lands on the drop view
     /// underneath, which hands it back here so a drag that did nothing is still noticed.
-    func unclaimedPressBegan() {
+    func unclaimedPressBegan(_ event: NSEvent) {
+        if event.clickCount >= 3 {
+            unclaimedPressScreenStart = nil
+            handleTripleClick()
+            return
+        }
         unclaimedPressScreenStart = NSEvent.mouseLocation
+    }
+
+    /// The double-click that preceded it may have opened Quick Look; that goes too.
+    private func handleTripleClick() {
+        pendingQuickLook?.cancel()
+        pendingQuickLook = nil
+        quickLook.close()
+        onTripleClick?()
+    }
+
+    private var pendingQuickLook: Task<Void, Never>?
+
+    /// A double-click may be the first two clicks of a triple-click, which puts the shelf
+    /// away; Quick Look waits out the system's multi-click interval so it never flashes
+    /// open just to be closed again.
+    private func scheduleQuickLook(_ targets: [StoredItem]) {
+        pendingQuickLook?.cancel()
+        pendingQuickLook = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(NSEvent.doubleClickInterval))
+            guard !Task.isCancelled, let self else { return }
+            self.pendingQuickLook = nil
+            self.showQuickLook(targets)
+        }
     }
 
     func unclaimedPressDragged(_ event: NSEvent) {
@@ -1054,12 +1093,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         showGestureTip(.moveShelf)
     }
 
-    private static func hasShown(_ tip: GestureTip) -> Bool {
-        UserDefaults.standard.bool(forKey: tip.shownFlagKey)
+    static func hasShown(_ tip: GestureTip) -> Bool {
+        tip.shownFlagKey.map { UserDefaults.standard.bool(forKey: $0) } ?? false
     }
 
-    private func showGestureTip(_ tip: GestureTip) {
-        UserDefaults.standard.set(true, forKey: tip.shownFlagKey)
+    func showGestureTip(_ tip: GestureTip) {
+        if let key = tip.shownFlagKey {
+            UserDefaults.standard.set(true, forKey: key)
+        }
         interaction.gestureTip = tip
         gestureTipDismissal?.cancel()
         gestureTipDismissal = Task { @MainActor [weak self] in
@@ -1659,6 +1700,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         shortcuts.target = self
         menu.addItem(shortcuts)
 
+        let welcome = NSMenuItem(
+            title: "Welcome Screen…",
+            action: #selector(showWelcomeAction(_:)),
+            keyEquivalent: ""
+        )
+        welcome.target = self
+        menu.addItem(welcome)
+
         // Short on purpose: no wider than the version line, so it never widens the menu.
         let updates = NSMenuItem(
             title: "Updates…",
@@ -1839,6 +1888,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     @objc private func showShortcutsAction(_ sender: NSMenuItem) {
         onShowShortcuts?()
+    }
+
+    @objc private func showWelcomeAction(_ sender: NSMenuItem) {
+        onShowWelcome?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {

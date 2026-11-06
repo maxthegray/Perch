@@ -19,7 +19,7 @@ enum GestureShortcuts {
     ) -> [GestureShortcut] {
         var rows: [GestureShortcut] = []
         if !copiesByDefault {
-            rows.append(GestureShortcut(key: "⌥", gesture: "Drag out", action: "Keep a copy"))
+            rows.append(GestureShortcut(key: "⌥", gesture: "Drag", action: "Drag out a duplicate"))
         }
         rows.append(showsGrabHandle
             ? GestureShortcut(gesture: "Drag handle", action: "Move shelf")
@@ -28,10 +28,11 @@ enum GestureShortcuts {
             GestureShortcut(key: "⌘", gesture: "Click", action: "Add to selection"),
             GestureShortcut(key: "⇧", gesture: "Click", action: "Select range"),
             GestureShortcut(gesture: "Double-click", action: "Quick Look"),
-            GestureShortcut(gesture: "Right-click", action: "Menu")
+            GestureShortcut(gesture: "Right-click", action: "Menu"),
+            GestureShortcut(gesture: "Triple-click", action: "Hide shelf")
         ]
         if !revealOnHover {
-            rows.append(GestureShortcut(key: "⌥", gesture: "At edge", action: "Show shelf"))
+            rows.append(GestureShortcut(key: "⌃", gesture: "At edge", action: "Show shelf"))
         }
         if shelvesOnEdgeTouch {
             rows.append(GestureShortcut(gesture: "Hold at edge", action: "Tuck away"))
@@ -85,14 +86,30 @@ struct ShortcutsView: View {
     }
 }
 
-/// A modifier glyph drawn as a small key. Shared with the on-card tip pill.
+/// A modifier drawn as a small key, its name spelled out beside the symbol for anyone
+/// who doesn't read ⌥ as Option. Shared with the on-card tips and the welcome window.
 struct Keycap: View {
     let glyph: String
     var size: CGFloat = 11
 
+    static func name(for glyph: String) -> String? {
+        switch glyph {
+        case "⌥": return "Option"
+        case "⌃": return "Control"
+        case "⌘": return "Command"
+        case "⇧": return "Shift"
+        default: return nil
+        }
+    }
+
+    private var label: String {
+        Self.name(for: glyph).map { "\(glyph) \($0)" } ?? glyph
+    }
+
     var body: some View {
-        Text(glyph)
+        Text(label)
             .font(.system(size: size, weight: .medium))
+            .padding(.horizontal, label.count > 1 ? 5 : 0)
             .frame(minWidth: size + 7, minHeight: size + 5)
             .background(
                 RoundedRectangle(cornerRadius: 4, style: .continuous)

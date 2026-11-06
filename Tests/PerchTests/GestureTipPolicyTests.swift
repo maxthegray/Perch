@@ -103,8 +103,8 @@ final class GestureShortcutsTests: XCTestCase {
 
     func testDefaultsListEveryCoreGesture() {
         XCTAssertEqual(rows().map(\.action), [
-            "Keep a copy", "Move shelf", "Add to selection", "Select range",
-            "Quick Look", "Menu", "Show shelf", "Tuck away"
+            "Drag out a duplicate", "Move shelf", "Add to selection", "Select range",
+            "Quick Look", "Menu", "Hide shelf", "Show shelf", "Tuck away"
         ])
     }
 
@@ -120,10 +120,17 @@ final class GestureShortcutsTests: XCTestCase {
     }
 
     func testCopyByDefaultDropsTheOptionCopyRow() {
-        XCTAssertFalse(rows(copiesByDefault: true).contains { $0.action == "Keep a copy" })
+        XCTAssertFalse(rows(copiesByDefault: true).contains { $0.action == "Drag out a duplicate" })
     }
 
-    func testRevealOnHoverDropsTheOptionEdgeRow() {
+    func testControlAtTheEdgeShowsTheShelf() {
+        XCTAssertEqual(
+            rows().first { $0.action == "Show shelf" },
+            GestureShortcut(key: "⌃", gesture: "At edge", action: "Show shelf")
+        )
+    }
+
+    func testRevealOnHoverDropsTheControlEdgeRow() {
         XCTAssertFalse(rows(revealOnHover: true).contains { $0.action == "Show shelf" })
     }
 

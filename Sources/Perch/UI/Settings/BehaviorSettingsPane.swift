@@ -17,7 +17,7 @@ struct BehaviorSettingsPane: View {
             Section("Showing Perch") {
                 settingToggle(
                     title: "Show when pointer touches an edge",
-                    caption: "Rest the pointer at an enabled edge to reveal the shelf. When off, hold Option to reveal it anyway.",
+                    caption: "Rest the pointer at an enabled edge to reveal the shelf. When off, hold ⌃ Control to reveal it anyway.",
                     isOn: $revealOnHover
                 )
                 settingToggle(
@@ -85,14 +85,14 @@ struct BehaviorSettingsPane: View {
                 Text("Move the shelf using")
                 Text(themeStore.showsGrabHandle
                     ? "Hover over the shelf, then drag its handle."
-                    : "Hold Control and drag anywhere on the shelf.")
+                    : "Hold ⌃ Control and drag anywhere on the shelf.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 12)
             Picker("Move the shelf using", selection: $themeStore.showsGrabHandle) {
                 Text("Handle").tag(true)
-                Text("Control-drag").tag(false)
+                Text("⌃ Control-drag").tag(false)
             }
             .pickerStyle(.segmented)
             .labelsHidden()

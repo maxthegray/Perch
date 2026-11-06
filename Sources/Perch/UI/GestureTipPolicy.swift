@@ -1,32 +1,49 @@
 import CoreGraphics
 
-/// A one-time hint shown on the card when the user seems to be reaching for a gesture
-/// that needs a modifier.
+/// A hint shown on the card: most once ever, when the user seems to be reaching for a
+/// gesture; `controlAtEdge` each time the menu bar icon does what ⌃ could have.
 enum GestureTip: Equatable {
     /// A plain drag on the card's background, in Control-drag mode, did nothing.
     case moveShelf
     /// An item just left the shelf in move mode.
     case keepCopy
+    /// The menu bar icon summoned the shelf; ⌃ at this edge does the same.
+    case controlAtEdge(ShelfEdge)
 
-    var key: String {
+    var key: String? {
         switch self {
-        case .moveShelf: return "⌃"
+        case .moveShelf, .controlAtEdge: return "⌃"
         case .keepCopy: return "⌥"
         }
     }
 
-    var text: String {
+    /// An SF Symbol drawn after the keycap (or alone).
+    var symbol: String? {
         switch self {
-        case .moveShelf: return "drag to move"
-        case .keepCopy: return "keeps a copy"
+        case .moveShelf, .keepCopy: return nil
+        case let .controlAtEdge(edge):
+            switch edge {
+            case .left: return "arrow.left.to.line"
+            case .right: return "arrow.right.to.line"
+            case .notch: return "arrow.up.to.line"
+            }
         }
     }
 
-    /// Each tip is shown at most once, ever.
-    var shownFlagKey: String {
+    var text: String? {
+        switch self {
+        case .moveShelf: return "drag to move"
+        case .keepCopy: return "drags out a duplicate"
+        case .controlAtEdge: return nil
+        }
+    }
+
+    /// Set once the tip has been shown; nil for tips that repeat.
+    var shownFlagKey: String? {
         switch self {
         case .moveShelf: return PerchSettings.moveShelfTipShown
         case .keepCopy: return PerchSettings.keepCopyTipShown
+        case .controlAtEdge: return nil
         }
     }
 }

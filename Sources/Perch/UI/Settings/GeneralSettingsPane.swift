@@ -8,6 +8,7 @@ struct GeneralSettingsPane: View {
     @State private var launchAtLogin = false
     @State private var versionClicks = 0
     @State private var showsSmartPerchPrompt = false
+    @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
 
     var body: some View {
         Form {
@@ -18,12 +19,20 @@ struct GeneralSettingsPane: View {
                 }
             }
 
+            Section {
+                Toggle(isOn: $showsMenuBarIcon) {
+                    Text("Show in menu bar")
+                    Text("Click to bring out the shelf, or drop files on it.")
+                }
+            }
+
             Section("About") {
                 LabeledContent("Version", value: "\(productName) \(appVersion)")
                     // The way into Smart Perch. Nothing about the
                     // row suggests it, and the count resets whenever the pane goes away.
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionClick() }
+                LabeledContent("Made by", value: "Maxie")
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }

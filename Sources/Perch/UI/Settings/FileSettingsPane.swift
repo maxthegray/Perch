@@ -141,7 +141,7 @@ struct FileSettingsPane: View {
 
             Text(vendCopies
                 ? "The item stays on the shelf."
-                : "The item leaves the shelf. Hold Option to keep it once.")
+                : "The item leaves the shelf. Hold ⌥ Option to keep it once.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

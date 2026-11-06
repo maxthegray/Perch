@@ -2,6 +2,38 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch — a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself, or \"showsWelcome\": true to show updating users the welcome window itself instead of these notes, for a release that changes how Perch introduces itself. Their existing settings are pre-filled, so the window changes nothing they do not change.",
   "versions": [
     {
+      "version": "1.8.0",
+      "headline": "The Lively Update",
+      "showsWelcome": true,
+      "highlights": [
+        {
+          "symbol": "bird",
+          "title": "Perch in the menu bar",
+          "detail": "Click the bird to show or hide the shelf, drop files on it, or find Settings and every shortcut. Hide it from its menu whenever you've got the hang of things."
+        },
+        {
+          "symbol": "control",
+          "title": "⌃ Control handles the shelf, ⌥ Option handles items",
+          "detail": "Hold ⌃ Control at an edge to bring the shelf out, and Control-drag to move it. ⌥ Option-drag drags out a duplicate."
+        },
+        {
+          "symbol": "keyboard",
+          "title": "See what a key does before you use it",
+          "detail": "Hold ⌃ Control, ⌥ Option, ⌘ Command or ⇧ Shift and the shelf shows what that key would do."
+        },
+        {
+          "symbol": "hand.tap",
+          "title": "Triple-click to put it away",
+          "detail": "A shelf holding your stuff tucks into its edge. An empty one just goes."
+        },
+        {
+          "symbol": "list.bullet.rectangle",
+          "title": "Every shortcut in one place",
+          "detail": "Shortcuts… in the shelf's right-click menu or the menu bar lists everything Perch can do. Welcome Screen… brings back the tour anytime."
+        }
+      ]
+    },
+    {
       "version": "1.7.4",
       "highlights": [
         {

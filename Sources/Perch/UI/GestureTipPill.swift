@@ -8,14 +8,23 @@ struct GestureTipPill: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Keycap(glyph: tip.key, size: 10.5)
-            Text(tip.text)
-                .font(.system(size: 11, weight: .medium))
-                .lineLimit(1)
-                .minimumScaleFactor(0.75)
+            if let key = tip.key {
+                Keycap(glyph: key, size: 10.5)
+            }
+            if let symbol = tip.symbol {
+                Image(systemName: symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            if let text = tip.text {
+                Text(text)
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.75)
+            }
         }
-        .padding(.leading, 5)
-        .padding(.trailing, 9)
+        .padding(.leading, tip.key == nil ? 9 : 5)
+        .padding(.trailing, tip.text == nil ? 7 : 9)
         .padding(.vertical, 4)
         .background(.regularMaterial, in: Capsule())
         .overlay(Capsule().strokeBorder(.white.opacity(0.12), lineWidth: 0.5))

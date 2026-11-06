@@ -17,6 +17,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let controller = try ShelfController()
             self.controller = controller
+            controller.onShowWelcome = { [weak self] in self?.presentWelcomeAgain() }
             controller.start()
             begin(firstRun, with: controller)
             // Start Sparkle's background update checks.
@@ -65,7 +66,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 offeredEdges: FirstRunExperience.offerableEdges()
             )
             self.welcome = welcome
-            welcome.onFinish = { [weak self, weak controller] launchAtLogin, edges in
+            welcome.onFinish = { [weak self, weak controller] launchAtLogin, edges, showsLabels in
+                controller?.setShowsItemNames(showsLabels)
                 if loginItem.isAvailable {
                     loginItem.setEnabled(launchAtLogin)
                 }
@@ -76,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 // very closure that is still running.
                 DispatchQueue.main.async { self?.welcome = nil }
             }
+            welcome.onShowShortcuts = { [weak controller] in controller?.showShortcuts() }
             welcome.show()
         }
     }
@@ -120,6 +123,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// only alter what the user deliberately alters.
     @MainActor
     private func presentWelcomeAgain() {
+        if let welcome {
+            welcome.show()
+            return
+        }
         guard let controller else {
             WhatsNewExperience.markSeen()
             return
@@ -131,12 +138,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             mode: .revisit,
             choices: WelcomeChoices(
                 launchAtLogin: loginItem.isEnabled,
-                edges: controller.currentEnabledEdges
+                edges: controller.currentEnabledEdges,
+                revealOnHover: PerchSettings.flag(PerchSettings.revealOnHover, default: false),
+                showsMenuBarIcon: PerchSettings.flag(PerchSettings.showsMenuBarIcon, default: true),
+                showsLabels: controller.showsItemNames
             )
         )
         self.welcome = welcome
-        NSLog("Perch is showing the welcome window again for this update")
-        welcome.onFinish = { [weak self, weak controller] launchAtLogin, edges in
+        NSLog("Perch is showing the welcome window again")
+        welcome.onFinish = { [weak self, weak controller] launchAtLogin, edges, showsLabels in
+            controller?.setShowsItemNames(showsLabels)
             if loginItem.isAvailable {
                 loginItem.setEnabled(launchAtLogin)
             }
@@ -144,6 +155,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller?.completeFirstRun(enabling: edges)
             DispatchQueue.main.async { self?.welcome = nil }
         }
+        welcome.onShowShortcuts = { [weak controller] in controller?.showShortcuts() }
         welcome.show()
     }
 

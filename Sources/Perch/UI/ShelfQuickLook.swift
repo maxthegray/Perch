@@ -17,6 +17,12 @@ final class ShelfQuickLook: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDe
         !item.metadata.backingFileNames.isEmpty || Self.clippingText(for: item) != nil
     }
 
+    func close() {
+        guard QLPreviewPanel.sharedPreviewPanelExists(),
+              let panel = QLPreviewPanel.shared(), panel.isVisible else { return }
+        panel.orderOut(nil)
+    }
+
     func show(_ items: [StoredItem], sourceFrame: @escaping (StoredItem) -> NSRect?) {
         try? FileManager.default.removeItem(at: Self.scratchDirectory)
         let entries = items.flatMap { item in

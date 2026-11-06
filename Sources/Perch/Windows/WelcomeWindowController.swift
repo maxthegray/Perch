@@ -7,6 +7,12 @@ import SwiftUI
 final class WelcomeChoices: ObservableObject {
     @Published var launchAtLogin: Bool
     @Published var edges: Set<ShelfEdge>
+    /// Whether resting the pointer at an edge brings the shelf out, rather than only a
+    /// drag or ⌥.
+    @Published var revealOnHover: Bool
+    @Published var showsMenuBarIcon: Bool
+    /// Item names on the shelf. New installs start with icons only.
+    @Published var showsLabels: Bool
 
     /// A new install starts on Perch's shipping defaults: both side docks (the notch is
     /// opt-in, and only offered at all on a display that has one) and Launch at Login on.
@@ -15,9 +21,18 @@ final class WelcomeChoices: ObservableObject {
     /// commits its answers on any dismissal, so defaults here would mean closing it turned
     /// Launch at Login back on for someone who had switched it off, and replaced their
     /// edge selection with Perch's — settings changed by a window they only glanced at.
-    init(launchAtLogin: Bool = true, edges: Set<ShelfEdge> = [.left, .right]) {
+    init(
+        launchAtLogin: Bool = true,
+        edges: Set<ShelfEdge> = [.left, .right],
+        revealOnHover: Bool = false,
+        showsMenuBarIcon: Bool = true,
+        showsLabels: Bool = false
+    ) {
         self.launchAtLogin = launchAtLogin
         self.edges = edges
+        self.revealOnHover = revealOnHover
+        self.showsMenuBarIcon = showsMenuBarIcon
+        self.showsLabels = showsLabels
     }
 }
 
@@ -29,8 +44,9 @@ final class WelcomeChoices: ObservableObject {
 final class WelcomeWindowController: NSObject, NSWindowDelegate {
     /// Fires once with the collected answers, whether the user pressed the button or
     /// closed the window. Never fires twice.
-    var onFinish: ((_ launchAtLogin: Bool, _ edges: Set<ShelfEdge>) -> Void)?
+    var onFinish: ((_ launchAtLogin: Bool, _ edges: Set<ShelfEdge>, _ showsLabels: Bool) -> Void)?
 
+    var onShowShortcuts: (() -> Void)?
     private let choices: WelcomeChoices
     private let loginItemAvailable: Bool
     private let offeredEdges: [ShelfEdge]
@@ -65,7 +81,8 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
                 loginItemAvailable: loginItemAvailable,
                 offeredEdges: offeredEdges,
                 mode: mode,
-                onFinish: { [weak self] in self?.finish() }
+                onFinish: { [weak self] in self?.finish() },
+                onShowShortcuts: { [weak self] in self?.onShowShortcuts?() }
             )
         )
         let window = NSWindow(contentViewController: hosting)
@@ -90,7 +107,9 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
     private func finish() {
         guard !hasFinished else { return }
         hasFinished = true
-        onFinish?(loginItemAvailable && choices.launchAtLogin, choices.edges)
+        UserDefaults.standard.set(choices.revealOnHover, forKey: PerchSettings.revealOnHover)
+        UserDefaults.standard.set(choices.showsMenuBarIcon, forKey: PerchSettings.showsMenuBarIcon)
+        onFinish?(loginItemAvailable && choices.launchAtLogin, choices.edges, choices.showsLabels)
         window?.close()
     }
 

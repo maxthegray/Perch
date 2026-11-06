@@ -99,6 +99,12 @@ enum PerchSettings {
     /// One-time gesture tips (`GestureTip`), each set once its pill has been shown.
     static let moveShelfTipShown = "Perch.MoveShelfTipShown"
     static let keepCopyTipShown = "Perch.KeepCopyTipShown"
+    /// The menu bar icon: training wheels for summoning the shelf. Defaults on.
+    static let showsMenuBarIcon = "Perch.ShowsMenuBarIcon"
+    /// Times the user brought the shelf out without the icon (⌥ at an edge, or dropping
+    /// something on it), which earns the one-time offer to hide the icon.
+    static let selfSummonCount = "Perch.SelfSummonCount"
+    static let menuBarRetireOffered = "Perch.MenuBarRetireOffered"
 
     // MARK: - Reading
 

@@ -18,6 +18,16 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let mergePDFWindow: MergePDFWindowController
     private let splitPDFWindow: SplitPDFWindowController
     private let shortcutsWindow = ShortcutsWindowController()
+    private let menuBarIcon = MenuBarIconController()
+    /// Shown from the menu bar icon: the shelf stays out until something has been
+    /// dragged in and back out again, or it's triple-clicked away.
+    private var menuBarPinned = false
+    private var menuBarPinReceivedItem = false
+    /// Set when the user puts the shelf away while pointing at it. The card fades out
+    /// under the pointer, and its tracking area reports an enter that would otherwise
+    /// re-present it mid-fade; only a real reveal (drag, ⌃, menu, summon) clears this.
+    private var dismissedUnderPointer = false
+    private var droppingViaMenuBar = false
     private let snapshotter: PasteboardSnapshotter
     private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
@@ -60,9 +70,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private weak var hoveredStrip: EdgeStripWindow?
     private let mouseMonitor = MouseMonitor()
     private var openTask: Task<Void, Never>?
-    /// Polls for Option while the pointer rests in a catch zone that hover reveal
+    /// Polls for Control while the pointer rests in a catch zone that hover reveal
     /// ignored. Pressing a modifier is not a pointer event, so nothing else would notice.
-    private var optionRevealWatch: Task<Void, Never>?
+    private var controlRevealWatch: Task<Void, Never>?
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
     /// Holds late hover/measurement callbacks off while a free shelf is fading away;
@@ -106,9 +116,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var revealOnHover: Bool {
         PerchSettings.flag(PerchSettings.revealOnHover, default: false)
     }
-    /// Hover reveal for this hover: the setting, or Option held to ask for it anyway.
+    /// Hover reveal for this hover: the setting, or Control held to ask for it anyway.
     private var hoverRevealRequested: Bool {
-        revealOnHover || NSEvent.modifierFlags.contains(.option)
+        revealOnHover || NSEvent.modifierFlags.contains(.control)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults off.
     private var shakeToSummonEnabled: Bool {
@@ -439,7 +449,37 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onShowShortcuts = { [weak self] in
             self?.shortcutsWindow.show()
         }
-        dropView.onUnclaimedPress = { [weak hostView] in hostView?.unclaimedPressBegan() }
+        hostView.onShowWelcome = { [weak self] in
+            self?.onShowWelcome?()
+        }
+        menuBarIcon.onShowWelcome = { [weak self] in
+            self?.onShowWelcome?()
+        }
+        menuBarIcon.onToggleShelf = { [weak self] point in
+            self?.toggleFromMenuBar(iconPoint: point)
+        }
+        menuBarIcon.isShelfVisible = { [weak self] in
+            self?.panel.isVisible == true
+        }
+        menuBarIcon.onDrop = { [weak self] pasteboard in
+            guard let self else { return false }
+            self.droppingViaMenuBar = true
+            defer { self.droppingViaMenuBar = false }
+            return self.handleDrop(pasteboard, fromPerch: false)
+        }
+        menuBarIcon.onShowSettings = { [weak self] in
+            self?.settingsWindow.show()
+        }
+        menuBarIcon.onShowShortcuts = { [weak self] in
+            self?.shortcutsWindow.show()
+        }
+        dropView.onUnclaimedPress = { [weak hostView] event in hostView?.unclaimedPressBegan(event) }
+        hostView.onTripleClick = { [weak self] in
+            self?.putShelfAway()
+        }
+        hostView.onVendLanded = { [weak self] in
+            self?.menuBarPinRoundTripCompleted() ?? false
+        }
         dropView.onUnclaimedDrag = { [weak hostView] event in
             hostView?.unclaimedPressDragged(event)
         }
@@ -510,6 +550,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         // always use the freshly computed frame rather than a stale persisted one.
         windowController.hide(animated: false)
         installEdgeStripIfNeeded()
+        menuBarIcon.start()
 
         // Rebuild the edge tabs when displays are added/removed or change resolution,
         // so they never sit at stale positions or on a screen that no longer exists.
@@ -527,6 +568,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             guard let self else { return }
             self.setDragActive(active)
             if active {
+                self.menuBarIcon.bounce()
                 self.beginEdgeTabReminder()
                 if self.usesEdgeDock, self.revealOnDragStart {
                     self.revealForDrag(at: NSEvent.mouseLocation)
@@ -1749,6 +1791,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Works whether the shelf is currently hidden or already docked at an edge. A
     /// locked free shelf is a fixture — the summon must not yank it from its spot.
     private func summonAtCursor(_ point: NSPoint) {
+        dismissedUnderPointer = false
         if revealMode == .free, freeShelfLocked, panel.isVisible { return }
         shelvedStrip = nil
         cancelEdgeShelving()
@@ -2399,6 +2442,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return true
         }
 
+        if !droppingViaMenuBar {
+            Self.countSelfSummon()
+        }
+        if menuBarPinned {
+            menuBarPinReceivedItem = true
+        }
         let beforeCount = store.items.count
         let batchID = UUID()
         let droppedAt = Date()
@@ -2453,6 +2502,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     func pointerDidEnterShelf() {
+        if dismissedUnderPointer, !dragActive { return }
         // Pointer (hover or drag) is inside the panel — keep it open.
         enterRegion(immediate: true)
     }
@@ -2500,10 +2550,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
 
-        // With hover reveal off and Option not held, a pass over the edge does nothing at
+        // With hover reveal off and Control not held, a pass over the edge does nothing at
         // all — in particular it does not re-home the shelf, which would otherwise let an
         // incidental sweep along the left edge move the dock the user had settled on the
-        // right. Holding Option is a deliberate hover, as if the setting were on. A live
+        // right. Holding Control is a deliberate hover, as if the setting were on. A live
         // ghost still lets the hover through, but only to bring the shelf back: the
         // edge it opens on is not saved as the shelf's home.
         let hoverRevealEnabled = hoverRevealRequested
@@ -2512,7 +2562,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             hasLiveGhosts: arrivals.hasLiveGhosts,
             usesEdgeDock: usesEdgeDock
         ) else {
-            watchForOptionReveal(at: strip)
+            watchForControlReveal(at: strip)
             return
         }
 
@@ -2525,18 +2575,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         enterRegion(immediate: false)
     }
 
-    /// Pressing Option with the pointer already resting at the edge counts as arriving
+    /// Pressing Control with the pointer already resting at the edge counts as arriving
     /// with it held. Polls `NSEvent.modifierFlags` rather than monitoring key events,
     /// which would need Accessibility permission; the watch ends when the pointer
     /// leaves this strip.
-    private func watchForOptionReveal(at strip: EdgeStripWindow) {
-        optionRevealWatch?.cancel()
-        optionRevealWatch = Task { @MainActor [weak self] in
+    private func watchForControlReveal(at strip: EdgeStripWindow) {
+        controlRevealWatch?.cancel()
+        controlRevealWatch = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard let self, !Task.isCancelled, self.hoveredStrip === strip else { return }
-                if !self.panel.isVisible, NSEvent.modifierFlags.contains(.option) {
-                    self.optionRevealWatch = nil
+                if !self.panel.isVisible, NSEvent.modifierFlags.contains(.control) {
+                    self.controlRevealWatch = nil
                     self.edgeStrip(strip, pointerDidEnterViaDrag: false)
                     return
                 }
@@ -2875,6 +2925,19 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Adopt the edges chosen during first run, then show them off. Applying the
     /// selection first means the tabs are already rebuilt by the time they are lit.
+    var showsItemNames: Bool { themeStore.showsLabels }
+
+    /// Reopens the welcome window, seeded with the current settings.
+    var onShowWelcome: (() -> Void)?
+
+    func showShortcuts() {
+        shortcutsWindow.show()
+    }
+
+    func setShowsItemNames(_ shows: Bool) {
+        themeStore.showsLabels = shows
+    }
+
     func completeFirstRun(enabling edges: Set<ShelfEdge>) {
         edgeSettings.setEnabledEdges(edges)
         // Only retarget when the current home is no longer on offer. A returning user
@@ -3048,8 +3111,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         cancelOpen()
-        // A quick Option tap arms the reveal; it need not still be held when the dwell ends.
-        let optionHeldAtArm = NSEvent.modifierFlags.contains(.option)
+        // A quick Control tap arms the reveal; it need not still be held when the dwell ends.
+        let controlHeldAtArm = NSEvent.modifierFlags.contains(.control)
         openTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(180))
             guard let self, !Task.isCancelled else { return }
@@ -3058,7 +3121,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // the cursor — which is the dwell requirement, at no cost in new state: the
             // real cursor is authoritative, and the delay above is the dwell.
             guard HoverRevealPolicy.completesArmedReveal(
-                revealOnHoverEnabled: optionHeldAtArm || self.hoverRevealRequested,
+                revealOnHoverEnabled: controlHeldAtArm || self.hoverRevealRequested,
                 hasLiveGhosts: self.arrivals.hasLiveGhosts,
                 pointerStillInCatchZone: self.pointerOverEdgeCatchZone(NSEvent.mouseLocation)
             ) else {
@@ -3069,12 +3132,13 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // leaves again with nothing done, it is taken back.
             if !self.panel.isVisible {
                 self.revealProvenance = .unusedHover
+                Self.countSelfSummon()
             }
             self.pointerInRegion = true
             // Going back for a ghost with hover reveal off is the user fetching an offer,
             // not the shelf offering it again — it must not spend the ghost's reveals.
             self.revealIfNeeded(
-                spendingArrivalOffers: optionHeldAtArm || self.hoverRevealRequested
+                spendingArrivalOffers: controlHeldAtArm || self.hoverRevealRequested
             )
             self.openTask = nil
         }
@@ -3208,6 +3272,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func revealIfNeeded(spendingArrivalOffers: Bool = true) {
+        if !panel.isVisible {
+            menuBarPinned = false
+            dismissedUnderPointer = false
+        }
         shelvedStrip = nil
         cancelEdgeShelving()
         cancelRetract()
@@ -3258,6 +3326,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         transitioningBetweenEdges: Bool = false,
         slidingFromEdge: Bool = false
     ) {
+        dismissedUnderPointer = false
         shelvedStrip = nil
         cancelEdgeShelving()
         if strip.wallContactContains(NSEvent.mouseLocation) {
@@ -3362,7 +3431,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func shouldAutomaticallyRetractShelf(
         pointerInKeepAliveRegion: Bool
     ) -> Bool {
-        ShelfRetractionPolicy.shouldRetractShelf(
+        if menuBarPinned, panel.isVisible { return false }
+        return ShelfRetractionPolicy.shouldRetractShelf(
             reveal: revealProvenance,
             dragActive: dragActive || edgeTransferTask != nil || edgeShelvingTask != nil,
             shelfDragActive: dragOutDockedFrame != nil,
@@ -3371,6 +3441,71 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             pointerInKeepAliveRegion: pointerInKeepAliveRegion,
             contextMenuOpen: hostView.isContextMenuOpen
         )
+    }
+
+    // MARK: Menu bar icon
+
+    private static func countSelfSummon() {
+        let defaults = UserDefaults.standard
+        defaults.set(defaults.integer(forKey: PerchSettings.selfSummonCount) + 1,
+                     forKey: PerchSettings.selfSummonCount)
+    }
+
+    /// Show the shelf and keep it out (see `menuBarPinned`), pointing at the edge so the
+    /// icon teaches its own replacement. Choosing it again hides the shelf.
+    private func toggleFromMenuBar(iconPoint: NSPoint) {
+        if panel.isVisible {
+            putShelfAway()
+            return
+        }
+        guard usesEdgeDock, resolvedPreferredStrip() != nil else {
+            summonAtCursor(NSPoint(x: iconPoint.x - 60, y: iconPoint.y - 8))
+            return
+        }
+        markRevealUsed()
+        revealIfNeeded()
+        guard panel.isVisible else { return }
+        menuBarPinned = true
+        menuBarPinReceivedItem = false
+        hostView.showGestureTip(.controlAtEdge(shownEdge))
+    }
+
+
+    /// Triple-click, or the menu bar icon's Hide Shelf. A docked shelf holding things
+    /// tucks into its edge exactly as holding the pointer there would, lump and all, so
+    /// pushing into the edge brings it back; an empty one just goes.
+    private func putShelfAway() {
+        menuBarPinned = false
+        dismissedUnderPointer = true
+        guard panel.isVisible else { return }
+        if revealMode == .edge, !store.items.isEmpty, shelvesOnEdgeTouch,
+           let strip = edgeStrips.first(where: {
+               $0.edge == shownEdge && $0.pinnedScreen == shownScreen
+           }) {
+            cancelEdgeShelving()
+            cancelOpen()
+            cancelRetract()
+            stopRetractWatcher()
+            shelvedStrip = strip
+            hostView.resetInteraction()
+            windowController.hide(animated: true, slidingToEdge: true)
+            return
+        }
+        if revealMode == .free {
+            dismissFreeShelf()
+        } else {
+            hideShelf(animated: true)
+        }
+    }
+
+    private func menuBarPinRoundTripCompleted() -> Bool {
+        guard menuBarPinned, menuBarPinReceivedItem else { return false }
+        menuBarPinned = false
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(250))
+            self?.putShelfAway()
+        }
+        return true
     }
 
     private func hideShelf(animated: Bool) {

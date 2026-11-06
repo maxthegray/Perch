@@ -1,66 +1,39 @@
 import AppKit
 import SwiftUI
 
-/// Who is looking at the welcome window.
-///
-/// The same three lessons and the same question serve both audiences; only the framing
-/// changes. A returning user is not being welcomed — they have used Perch for months —
-/// so the window says what it actually is: a look at how the app introduces itself now,
-/// with their existing settings already filled in.
+/// Who is looking at the welcome window. Both see the same words; a returning user's
+/// title just says "(again)", and their controls arrive seeded with what they have.
 enum WelcomeMode {
     case firstRun
-    /// Shown once to an existing install updating into a release that changed how Perch
-    /// presents itself. Every control arrives seeded from what the user already has.
+    /// Reopened from a menu, or shown to an install updating into a release that changed
+    /// how Perch presents itself.
     case revisit
 
-    var windowTitle: String {
-        switch self {
-        case .firstRun: return "Welcome to \(PerchProductIdentity.displayName)"
-        case .revisit: return "A Look Around \(PerchProductIdentity.displayName)"
-        }
-    }
+    var windowTitle: String { title }
 
     var title: String {
         switch self {
         case .firstRun: return "Welcome to \(PerchProductIdentity.displayName)"
-        case .revisit: return "A look around \(PerchProductIdentity.displayName)"
+        case .revisit: return "Welcome to \(PerchProductIdentity.displayName) (again)"
         }
     }
 
-    var subtitle: String {
-        switch self {
-        case .firstRun: return "A place to set things down while you work."
-        case .revisit: return "This is how Perch introduces itself now. "
-            + "Nothing changes unless you change it."
-        }
-    }
+    var subtitle: String { "Mac utility for moving things" }
 
-    var edgeQuestion: String {
-        switch self {
-        case .firstRun: return "Where should it wait?"
-        case .revisit: return "Where it waits"
-        }
-    }
+    var edgeQuestion: String { "Where should it hang out?" }
 
-    var confirmTitle: String {
-        switch self {
-        case .firstRun: return "Show Me Where It Lives"
-        case .revisit: return "Show Me"
-        }
-    }
+    var confirmTitle: String { "Show me where it lives" }
 }
 
 /// The one thing Perch shows on a new install.
 ///
-/// Perch is an accessory app with no Dock tile and no menu-bar item, so an ordinary
-/// launch produces *nothing on screen*. That is fine on the hundredth launch and
-/// disorienting on the first: there is no evidence the app started, no way to reach
-/// Settings (they live behind a right-click on a shelf the user has not met yet), and no
-/// hint that dragging is what summons it. This window is the one place that says so.
+/// Perch keeps out of the way, so an ordinary launch produces almost nothing on screen.
+/// That is fine on the hundredth launch and disorienting on the first: nothing says that
+/// dragging is what summons the shelf, or where Settings live. This window says so.
 ///
-/// It is deliberately a single card rather than a paged tour. There are exactly three
-/// things to know and one question to ask, and a wizard for that much would be heavier
-/// than the app it introduces.
+/// It is deliberately a single card rather than a paged tour. There are three things to
+/// know and two questions to ask, and a wizard for that much would be heavier than the
+/// app it introduces.
 struct WelcomeView: View {
     /// Held by the window controller rather than the view, so closing the window with
     /// its red button commits the same answer the "Show Me" button would have — there is
@@ -76,15 +49,18 @@ struct WelcomeView: View {
     var mode: WelcomeMode = .firstRun
     /// Called when the user is done. The answers are read from `choices`.
     let onFinish: () -> Void
+    var onShowShortcuts: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
             header
             lessons
-                .padding(.top, 24)
+                .padding(.top, 18)
             edgeChoice
-                .padding(.top, 22)
-            Spacer(minLength: 18)
+                .padding(.top, 16)
+            revealChoice
+                .padding(.top, 14)
+            Spacer(minLength: 14)
             footer
         }
         .padding(.horizontal, 34)
@@ -102,7 +78,7 @@ struct WelcomeView: View {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 76, height: 76)
+                    .frame(width: 60, height: 60)
                     .accessibilityHidden(true)
             }
             Text(mode.title)
@@ -120,30 +96,47 @@ struct WelcomeView: View {
     }
 
     private var lessons: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 13) {
             Lesson(
                 symbol: "cursorarrow.motionlines",
-                title: "Start dragging",
-                detail: "Pick up a file, image, or link and the shelf slides out from "
-                    + "the edge of your screen. Drop it there to set it down."
+                title: "Drag something",
+                detail: "Drag a file and Perch will reveal itself at the edge closest to "
+                    + "you. Drop it in and it'll hold onto it. Double-click anything on "
+                    + "it to Quick Look it."
             )
             Lesson(
                 symbol: "rectangle.righthalf.inset.filled",
-                title: "Come back for it",
-                detail: "Hover that same edge and the shelf returns with your things. "
-                    + "Drag them out into Finder, a message, anywhere."
+                title: "Hide it, bring it back",
+                detail: "Once it's holding your stuff it stays out. Push your mouse into "
+                    + "that edge to tuck it away, and again to bring it back. "
+                    + "Triple-clicking it tucks it away too."
             )
             Lesson(
-                symbol: "contextualmenu.and.cursorarrow",
-                title: "Right-click the shelf",
-                detail: "Item actions and Settings live in its menu. "
-                    + "That is the way back to every preference."
+                symbol: "arrow.down.circle.dotted",
+                title: "Your downloads show up on their own",
+                detail: "New files from Downloads or your Desktop pop onto the shelf as "
+                    + "ghosts. Drag one out to use it, or click it to keep it."
             )
-            Text("Every gesture: right-click the shelf → Shortcuts")
+            Lesson(
+                symbol: "bird",
+                title: "Find it anytime",
+                detail: "The bird up in your menu bar or right-clicking the shelf gets you "
+                    + "settings + every shortcut."
+            )
+            Text("No bird? Your menu bar's full. Hold ⌘ and drag some icons out.")
                 .font(.caption)
                 .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 40)
                 .padding(.top, -10)
+            HStack(spacing: 4) {
+                Text("There's a lot more it can do.")
+                    .foregroundStyle(.secondary)
+                Button("See all the shortcuts", action: onShowShortcuts)
+                    .buttonStyle(.link)
+            }
+            .font(.system(size: 12))
+            .padding(.leading, 40)
         }
     }
 
@@ -156,7 +149,7 @@ struct WelcomeView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(mode.edgeQuestion)
                     .font(.system(size: 13, weight: .semibold))
-                Text("Pick as many edges as you like. You can change this later.")
+                Text("Pick as many as you want. You can change it later.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -175,6 +168,33 @@ struct WelcomeView: View {
         }
     }
 
+    /// Asked on day one because it is about how someone works, not taste: whether the
+    /// shelf may appear unbidden at an edge, or only when reached for.
+    private var revealChoice: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("When should it pop out?")
+                .font(.system(size: 13, weight: .semibold))
+            HStack(spacing: 10) {
+                RevealOption(
+                    symbol: "hand.draw",
+                    title: "When I need it",
+                    detail: "Drag something or hold ⌃ Control at the edge",
+                    isSelected: !choices.revealOnHover,
+                    select: { choices.revealOnHover = false }
+                )
+                RevealOption(
+                    symbol: "cursorarrow.rays",
+                    title: "When I touch the edge",
+                    detail: "Just put your mouse there",
+                    isSelected: choices.revealOnHover,
+                    select: { choices.revealOnHover = true }
+                )
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .animation(.easeOut(duration: 0.15), value: choices.revealOnHover)
+    }
+
     private func toggle(_ edge: ShelfEdge) {
         if choices.edges.contains(edge) {
             guard choices.edges.count > 1 else { return }
@@ -185,25 +205,41 @@ struct WelcomeView: View {
     }
 
     private var footer: some View {
-        VStack(spacing: 16) {
-            if loginItemAvailable {
-                Divider()
-                Toggle(isOn: $choices.launchAtLogin) {
+        VStack(spacing: 13) {
+            Divider()
+            VStack(alignment: .leading, spacing: 8) {
+                Toggle(isOn: $choices.showsMenuBarIcon) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Open Perch when I log in")
-                        Text("Perch has no Dock or menu bar icon, so it is easy to "
-                            + "lose track of after a restart.")
+                        Text("Show Perch in the menu bar")
+                        Text("Handy while you're still learning the shortcuts")
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
-                .toggleStyle(.checkbox)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                Toggle(isOn: $choices.showsLabels) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show file names")
+                        Text("Off just shows the icons, which keeps the shelf skinny")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                if loginItemAvailable {
+                    Toggle(isOn: $choices.launchAtLogin) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Open Perch when I log in")
+                            Text("So it's still there after you restart")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
+            .toggleStyle(.checkbox)
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             HStack(spacing: 12) {
-                Text("Everything stays on this Mac.")
+                Text("Everything stays on your Mac")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer(minLength: 8)
@@ -245,7 +281,7 @@ private struct EdgeOption: View {
             )
         }
         .buttonStyle(.plain)
-        .help(isLocked ? "Perch needs at least one edge." : "")
+        .help(isLocked ? "Perch needs at least one edge" : "")
         .accessibilityLabel(label)
         .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
@@ -287,6 +323,51 @@ private struct EdgeOption: View {
         case .right: return "Right"
         case .notch: return "Top"
         }
+    }
+}
+
+/// One answer to "when should it come out?", drawn like the edge options beside it.
+private struct RevealOption: View {
+    let symbol: String
+    let title: String
+    let detail: String
+    let isSelected: Bool
+    let select: () -> Void
+
+    var body: some View {
+        Button(action: select) {
+            HStack(alignment: .top, spacing: 9) {
+                Image(systemName: symbol)
+                    .font(.system(size: 16))
+                    .foregroundStyle(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+                    .symbolEffect(.bounce, value: isSelected)
+                    .frame(width: 20)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                        .foregroundStyle(isSelected ? .primary : .secondary)
+                    Text(detail)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(isSelected ? AnyShapeStyle(.tint.opacity(0.14)) : AnyShapeStyle(.quaternary.opacity(0.5)))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(isSelected ? AnyShapeStyle(.tint) : AnyShapeStyle(.clear), lineWidth: 1.5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(title)
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 }
 
