@@ -7,17 +7,12 @@ import XCTest
 /// beneath it receives.
 @MainActor
 final class ShelfTripleClickTests: XCTestCase {
-    private var panel: NSPanel!
-    private var hostView: ShelfHostView!
-    private var tripleClicks = 0
-
-    override func setUp() {
-        super.setUp()
+    func testTripleClickOnAnEmptyShelfPutsItAway() {
         let holding = HoldingDirectory(
             root: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ShelfTripleClickTests-\(UUID().uuidString)", isDirectory: true)
         )
-        hostView = ShelfHostView(
+        let hostView = ShelfHostView(
             store: ItemStore(holding: holding),
             themeStore: ThemeStore(),
             ledger: ProvenanceLedger(holding: holding),
@@ -25,49 +20,43 @@ final class ShelfTripleClickTests: XCTestCase {
             smartNames: SmartNameStore(),
             routeSuggestions: RouteSuggestionStore()
         )
-        hostView.onTripleClick = { [weak self] in self?.tripleClicks += 1 }
+        var tripleClicks = 0
+        hostView.onTripleClick = { tripleClicks += 1 }
 
-        panel = NSPanel(
+        let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 240, height: 160),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: false
         )
+        defer { panel.close() }
         let dropView = ShelfDropView(frame: panel.contentView!.bounds)
         dropView.addSubview(hostView)
         hostView.frame = dropView.bounds
-        let host = hostView!
-        dropView.onUnclaimedPress = { @MainActor event in host.unclaimedPressBegan(event) }
+        dropView.onUnclaimedPress = { event in hostView.unclaimedPressBegan(event) }
         panel.contentView = dropView
+        // Mouse events only route to a window that is ordered in; far off-screen so
+        // nothing appears on the display running the tests.
         panel.setFrameOrigin(NSPoint(x: -20_000, y: -20_000))
         panel.orderFrontRegardless()
-    }
 
-    override func tearDown() {
-        panel.close()
-        panel = nil
-        hostView = nil
-        super.tearDown()
-    }
-
-    private func press(clickCount: Int) {
-        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
-            let event = NSEvent.mouseEvent(
-                with: type,
-                location: NSPoint(x: 120, y: 80),
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: panel.windowNumber,
-                context: nil,
-                eventNumber: 0,
-                clickCount: clickCount,
-                pressure: 1
-            )!
-            panel.sendEvent(event)
+        func press(clickCount: Int) {
+            for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+                let event = NSEvent.mouseEvent(
+                    with: type,
+                    location: NSPoint(x: 120, y: 80),
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: panel.windowNumber,
+                    context: nil,
+                    eventNumber: 0,
+                    clickCount: clickCount,
+                    pressure: 1
+                )!
+                panel.sendEvent(event)
+            }
         }
-    }
 
-    func testTripleClickOnAnEmptyShelfPutsItAway() {
         press(clickCount: 1)
         press(clickCount: 2)
         XCTAssertEqual(tripleClicks, 0)
