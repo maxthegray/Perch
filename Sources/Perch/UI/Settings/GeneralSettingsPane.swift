@@ -32,7 +32,7 @@ struct GeneralSettingsPane: View {
                     // row suggests it, and the count resets whenever the pane goes away.
                     .contentShape(Rectangle())
                     .onTapGesture { registerVersionClick() }
-                LabeledContent("Made by", value: "Maxie")
+                LabeledContent("Made by", value: "Max")
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
