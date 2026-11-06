@@ -2,22 +2,27 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.7.4/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.8.0/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.7.4</title>
+      <title>Version 1.8.0</title>
       <description><![CDATA[
+<p>The Lively Update</p>
 <ul>
-  <li><b>Control moves the shelf</b><br>With the shelf set to move by modifier, hold Control and drag anywhere on it. Option-drag copies an item out of the shelf again, as in Finder.</li>
+  <li><b>Perch in the menu bar</b><br>Click the bird to show or hide the shelf, drop files on it, or find Settings and every shortcut. Hide it from its menu whenever you've got the hang of things.</li>
+  <li><b>⌃ Control handles the shelf, ⌥ Option handles items</b><br>Hold ⌃ Control at an edge to bring the shelf out, and Control-drag to move it. ⌥ Option-drag drags out a duplicate.</li>
+  <li><b>See what a key does before you use it</b><br>Hold ⌃ Control, ⌥ Option, ⌘ Command or ⇧ Shift and the shelf shows what that key would do.</li>
+  <li><b>Triple-click to put it away</b><br>A shelf holding your stuff tucks into its edge. An empty one just goes.</li>
+  <li><b>Every shortcut in one place</b><br>Shortcuts… in the shelf's right-click menu or the menu bar lists everything Perch can do. Welcome Screen… brings back the tour anytime.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Sun, 01 Nov 2026 21:28:47 +0000</pubDate>
-      <sparkle:version>1070040</sparkle:version>
-      <sparkle:shortVersionString>1.7.4</sparkle:shortVersionString>
+      <pubDate>Fri, 06 Nov 2026 04:29:50 +0000</pubDate>
+      <sparkle:version>1080000</sparkle:version>
+      <sparkle:shortVersionString>1.8.0</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.7.4/Perch.zip" sparkle:edSignature="TYCw+KlHmVYFGGxqulZgeHcggtQX9FxvhPYopjxwfw5cM4yfkv9j++fXbYAOVx4XNIemRcv3Z3vv5xDQ1QuZAg==" length="4231854" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.8.0/Perch.zip" sparkle:edSignature="Hwap8ny2oA/0w80AbQB64jyOYrYvIXLs+d9U1pu0FTiJXLyTtNF8OMvIPNqstO/+9ZeLFh7ESVQZT0RuQ8UbAQ==" length="4335728" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
