@@ -6,7 +6,6 @@ struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
     @ObservedObject var smartPerch: SmartPerchCoordinator
     @State private var launchAtLogin = false
-    @State private var versionClicks = 0
     @State private var showsSmartPerchPrompt = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
 
@@ -28,18 +27,18 @@ struct GeneralSettingsPane: View {
 
             Section("About") {
                 LabeledContent("Version", value: "\(productName) \(appVersion)")
-                    // The way into Smart Perch. Nothing about the
-                    // row suggests it, and the count resets whenever the pane goes away.
-                    .contentShape(Rectangle())
-                    .onTapGesture { registerVersionClick() }
                 LabeledContent("Made by", value: "Max")
+                    // The way into Smart Perch. Nothing about the row suggests it.
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if !SmartPerchAccess.isUnlocked { showsSmartPerchPrompt = true }
+                    }
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
             }
         }
         .formStyle(.grouped)
-        .onDisappear { versionClicks = 0 }
         .alert("Enable Smart Perch?", isPresented: $showsSmartPerchPrompt) {
             Button("Enable Smart Perch") {
                 smartPerch.setEnabled(true)
@@ -51,14 +50,6 @@ struct GeneralSettingsPane: View {
                     + "you put things. Everything stays on this Mac."
             )
         }
-    }
-
-    private func registerVersionClick() {
-        guard !SmartPerchAccess.isUnlocked else { return }
-        versionClicks += 1
-        guard versionClicks >= SmartPerchAccess.unlockClickCount else { return }
-        versionClicks = 0
-        showsSmartPerchPrompt = true
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.

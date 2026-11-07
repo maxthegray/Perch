@@ -6,8 +6,6 @@ enum SmartPerchAccess {
         UserDefaults.standard.bool(forKey: PerchSettings.smartPerchUnlocked)
     }
 
-    static let unlockClickCount = 5
-
     static func unlock() {
         guard !isUnlocked else { return }
         UserDefaults.standard.set(true, forKey: PerchSettings.smartPerchUnlocked)
