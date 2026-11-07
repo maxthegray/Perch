@@ -75,16 +75,7 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let hosting = NSHostingController(
-            rootView: WelcomeView(
-                choices: choices,
-                loginItemAvailable: loginItemAvailable,
-                offeredEdges: offeredEdges,
-                mode: mode,
-                onFinish: { [weak self] in self?.finish() },
-                onShowShortcuts: { [weak self] in self?.onShowShortcuts?() }
-            )
-        )
+        let hosting = NSHostingController(rootView: makeView(scrolls: false))
         let window = NSWindow(contentViewController: hosting)
         window.styleMask = [.titled, .closable, .fullSizeContentView]
         // A welcome card, not a document: keep the close button but drop the chrome the
@@ -95,11 +86,35 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
         window.title = mode.windowTitle
         window.isReleasedWhenClosed = false
         window.delegate = self
-        window.center()
+        // `window.frame` is still unsized here; the hosting view already knows its height.
+        let size = window.frameRect(forContentRect: NSRect(origin: .zero, size: hosting.view.fittingSize)).size
+        if let visible = (window.screen ?? NSScreen.main)?.visibleFrame,
+           let frame = WelcomeWindowPlacement.clampedFrame(for: size, in: visible) {
+            // Too tall for the space the menu bar and Dock leave. Stop the hosting
+            // controller pinning the window to the view's ideal height, then let the tour
+            // scroll above a footer that stays in reach.
+            hosting.sizingOptions = []
+            hosting.rootView = makeView(scrolls: true)
+            window.setFrame(frame, display: false)
+        } else {
+            window.center()
+        }
         self.window = window
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func makeView(scrolls: Bool) -> WelcomeView {
+        WelcomeView(
+            choices: choices,
+            loginItemAvailable: loginItemAvailable,
+            offeredEdges: offeredEdges,
+            mode: mode,
+            scrolls: scrolls,
+            onFinish: { [weak self] in self?.finish() },
+            onShowShortcuts: { [weak self] in self?.onShowShortcuts?() }
+        )
     }
 
     /// Commit the answers and close. Idempotent: `windowWillClose` routes through here
@@ -115,5 +130,24 @@ final class WelcomeWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         finish()
+    }
+}
+
+/// Keeps the welcome window inside the part of the screen the menu bar and Dock leave free.
+enum WelcomeWindowPlacement {
+    static let margin: CGFloat = 12
+
+    /// `nil` when the window already fits; otherwise a frame that does, centred in `visible`.
+    static func clampedFrame(for size: NSSize, in visible: NSRect) -> NSRect? {
+        let available = visible.insetBy(dx: margin, dy: margin)
+        guard size.height > available.height || size.width > available.width else { return nil }
+        let width = min(size.width, available.width)
+        let height = min(size.height, available.height)
+        return NSRect(
+            x: (available.midX - width / 2).rounded(),
+            y: (available.midY - height / 2).rounded(),
+            width: width,
+            height: height
+        )
     }
 }

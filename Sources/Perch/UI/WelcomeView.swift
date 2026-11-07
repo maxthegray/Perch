@@ -47,56 +47,70 @@ struct WelcomeView: View {
     let offeredEdges: [ShelfEdge]
     /// First run, or a returning user taking the tour again.
     var mode: WelcomeMode = .firstRun
+    /// Set when the screen is too short for the whole window: the tour scrolls and the
+    /// footer stays put.
+    var scrolls = false
     /// Called when the user is done. The answers are read from `choices`.
     let onFinish: () -> Void
     var onShowShortcuts: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
+            if scrolls {
+                ScrollView { tour }
+            } else {
+                tour
+            }
+            footer
+                .padding(.horizontal, 34)
+                .padding(.top, 14)
+        }
+        .padding(.bottom, 22)
+        .frame(width: 560)
+        .background(.background)
+    }
+
+    private var tour: some View {
+        VStack(spacing: 0) {
             header
             lessons
-                .padding(.top, 18)
-            edgeChoice
                 .padding(.top, 16)
+            edgeChoice
+                .padding(.top, 14)
             revealChoice
                 .padding(.top, 14)
-            Spacer(minLength: 14)
-            footer
         }
         .padding(.horizontal, 34)
         // The title bar is transparent rather than absent, so it already contributes the
         // clearance the traffic lights need; only a little more is wanted above the icon.
-        .padding(.top, 18)
-        .padding(.bottom, 22)
-        .frame(width: 460)
-        .background(.background)
+        .padding(.top, 8)
     }
 
     private var header: some View {
-        VStack(spacing: 8) {
+        HStack(spacing: 14) {
             if let icon = NSApp.applicationIconImage {
                 Image(nsImage: icon)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: 60, height: 60)
+                    .frame(width: 52, height: 52)
                     .accessibilityHidden(true)
             }
-            Text(mode.title)
-                .font(.system(size: 22, weight: .semibold))
-                .padding(.top, 2)
-            Text(mode.subtitle)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                // The first-run subtitle is one short line; the revisit's is not, and
-                // without this it truncates mid-word instead of wrapping.
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(mode.title)
+                    .font(.system(size: 22, weight: .semibold))
+                Text(mode.subtitle)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    // The first-run subtitle is one short line; the revisit's is not, and
+                    // without this it truncates mid-word instead of wrapping.
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var lessons: some View {
-        VStack(alignment: .leading, spacing: 13) {
+        VStack(alignment: .leading, spacing: 11) {
             Lesson(
                 symbol: "cursorarrow.motionlines",
                 title: "Drag something",
@@ -128,7 +142,7 @@ struct WelcomeView: View {
                 .foregroundStyle(.tertiary)
                 .fixedSize(horizontal: false, vertical: true)
                 .padding(.leading, 40)
-                .padding(.top, -10)
+                .padding(.top, -8)
             HStack(spacing: 4) {
                 Text("There's a lot more it can do.")
                     .foregroundStyle(.secondary)
