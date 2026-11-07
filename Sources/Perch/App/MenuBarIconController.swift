@@ -17,9 +17,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     private var statusItem: NSStatusItem?
     private var iconView: NSImageView?
     private var defaultsObserver: NSObjectProtocol?
-    private var retireOffer: NSPopover?
-
-    static let retireOfferThreshold = 3
 
     func start() {
         defaultsObserver = NotificationCenter.default.addObserver(
@@ -40,7 +37,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
         if isEnabled, statusItem == nil {
             install()
         } else if !isEnabled, let item = statusItem {
-            retireOffer?.close()
             NSStatusBar.system.removeStatusItem(item)
             statusItem = nil
         }
@@ -110,11 +106,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
 
     @objc private func toggleShelf() {
         onToggleShelf?(iconBottomCenter)
-        // After the menu has finished closing, or the popover has nothing to anchor to.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let button = self.statusItem?.button else { return }
-            self.offerRetirementIfEarned(from: button)
-        }
     }
 
     @objc private func showShortcuts() { onShowShortcuts?() }
@@ -123,7 +114,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     @objc private func quit() { NSApp.terminate(nil) }
 
     @objc private func hideIcon() {
-        UserDefaults.standard.set(true, forKey: PerchSettings.menuBarRetireOffered)
         UserDefaults.standard.set(false, forKey: PerchSettings.showsMenuBarIcon)
     }
 
@@ -133,29 +123,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     /// along so the two read as one thing.
     func bounce() {
         iconView?.addSymbolEffect(.bounce.down, options: .nonRepeating)
-    }
-
-    // MARK: Retirement
-
-    private func offerRetirementIfEarned(from button: NSStatusBarButton) {
-        let defaults = UserDefaults.standard
-        guard !defaults.bool(forKey: PerchSettings.menuBarRetireOffered),
-              defaults.integer(forKey: PerchSettings.selfSummonCount) >= Self.retireOfferThreshold
-        else { return }
-        defaults.set(true, forKey: PerchSettings.menuBarRetireOffered)
-
-        let popover = NSPopover()
-        popover.behavior = .transient
-        popover.contentViewController = NSHostingController(rootView: MenuBarRetireOfferView(
-            onHide: { [weak self] in
-                self?.retireOffer?.close()
-                UserDefaults.standard.set(false, forKey: PerchSettings.showsMenuBarIcon)
-            },
-            onKeep: { [weak self] in self?.retireOffer?.close() }
-        ))
-        retireOffer = popover
-        NSApp.activate()
-        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
     }
 
     // MARK: Drops on the icon (NSWindowDelegate forwards the status window's drags)
@@ -178,34 +145,6 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
 
     private func highlight(_ on: Bool) {
         statusItem?.button?.highlight(on)
-    }
-}
-
-/// "You've got it" — offered once, after the user has summoned the shelf on their own.
-struct MenuBarRetireOfferView: View {
-    let onHide: () -> Void
-    let onKeep: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("You've got the hang of it")
-                .font(.system(size: 13, weight: .semibold))
-            HStack(spacing: 6) {
-                Keycap(glyph: "⌃")
-                Text("at the edge, or just drag a file.")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.system(size: 12))
-            HStack {
-                Spacer()
-                Button("Keep Icon", action: onKeep)
-                Button("Hide Icon", action: onHide)
-                    .keyboardShortcut(.defaultAction)
-            }
-            .padding(.top, 2)
-        }
-        .padding(14)
-        .frame(width: 270)
     }
 }
 

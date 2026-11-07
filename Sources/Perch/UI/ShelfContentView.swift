@@ -172,7 +172,6 @@ struct ShelfContentView: View {
             .overlay(cardShape.stroke(theme.cardStrokeColor, lineWidth: theme.cardStrokeWidth))
             .overlay(dragBeacon)
             .overlay(grabOutline)
-            .gestureTipOverlay(interaction.gestureTip)
             .scaleEffect(isGrabbable ? 0.985 : 1)
             .animation(.easeInOut(duration: 0.22), value: themeStore.style)
             .animation(.easeInOut(duration: 0.2), value: themeStore.showsLabels)

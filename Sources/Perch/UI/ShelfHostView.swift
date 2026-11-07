@@ -685,10 +685,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             trackShelfDrag()
             return
         }
-        guard let item = dragItem else {
-            considerMoveShelfTip(from: shelfDragScreenStart, event: event)
-            return
-        }
+        guard let item = dragItem else { return }
         let point = convert(event.locationInWindow, from: nil)
 
         if !reorderActive {
@@ -980,16 +977,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 && self.store.items.allSatisfy { itemIDs.contains($0.id) }
             let hidesBeforeRetirement = finishesEveryItem
                 && (self.onWillRemoveLastItem?() ?? false)
-            let shelfWillHide = self.onVendLanded?() ?? false
-            if !shelfWillHide, GestureTipPolicy.showsKeepCopyTip(
-                alreadyShown: Self.hasShown(.keepCopy),
-                copiesByDefault: self.vendCopies,
-                optionHeld: optionHeld,
-                landedOutsidePerch: !returnedToPerch && !operation.isEmpty,
-                cardStaysVisible: !finishesEveryItem && self.window?.isVisible == true
-            ) {
-                self.showGestureTip(.keepCopy)
-            }
+            _ = self.onVendLanded?()
 
             let finishVend = { [weak self] in
                 guard let self else { return }
@@ -1036,20 +1024,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         onShelfDragMoved?()
     }
 
-    // MARK: Gesture tips
-
-    private var unclaimedPressScreenStart: NSPoint?
-    private var gestureTipDismissal: Task<Void, Never>?
+    // MARK: Unclaimed presses
 
     /// A press on inert background is declined by `hitTest` and lands on the drop view
-    /// underneath, which hands it back here so a drag that did nothing is still noticed.
+    /// underneath, which hands it back here so a triple-click there still counts.
     func unclaimedPressBegan(_ event: NSEvent) {
         if event.clickCount >= 3 {
-            unclaimedPressScreenStart = nil
             handleTripleClick()
-            return
         }
-        unclaimedPressScreenStart = NSEvent.mouseLocation
     }
 
     /// The double-click that preceded it may have opened Quick Look; that goes too.
@@ -1072,41 +1054,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             guard !Task.isCancelled, let self else { return }
             self.pendingQuickLook = nil
             self.showQuickLook(targets)
-        }
-    }
-
-    func unclaimedPressDragged(_ event: NSEvent) {
-        guard let start = unclaimedPressScreenStart else { return }
-        considerMoveShelfTip(from: start, event: event)
-    }
-
-    private func considerMoveShelfTip(from screenStart: NSPoint, event: NSEvent) {
-        let location = NSEvent.mouseLocation
-        let held = event.modifierFlags.intersection([.control, .option, .command, .shift])
-        guard GestureTipPolicy.showsMoveShelfTip(
-            alreadyShown: Self.hasShown(.moveShelf),
-            showsGrabHandle: themeStore.showsGrabHandle,
-            isPlainDrag: held.isEmpty,
-            canMoveShelf: canBeginShelfDrag?() == true,
-            dragDistance: hypot(location.x - screenStart.x, location.y - screenStart.y)
-        ) else { return }
-        showGestureTip(.moveShelf)
-    }
-
-    static func hasShown(_ tip: GestureTip) -> Bool {
-        tip.shownFlagKey.map { UserDefaults.standard.bool(forKey: $0) } ?? false
-    }
-
-    func showGestureTip(_ tip: GestureTip) {
-        if let key = tip.shownFlagKey {
-            UserDefaults.standard.set(true, forKey: key)
-        }
-        interaction.gestureTip = tip
-        gestureTipDismissal?.cancel()
-        gestureTipDismissal = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(GestureTipPolicy.displayDuration))
-            guard !Task.isCancelled, let self, self.interaction.gestureTip == tip else { return }
-            self.interaction.gestureTip = nil
         }
     }
 

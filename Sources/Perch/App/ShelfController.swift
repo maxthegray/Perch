@@ -480,9 +480,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onVendLanded = { [weak self] in
             self?.menuBarPinRoundTripCompleted() ?? false
         }
-        dropView.onUnclaimedDrag = { [weak hostView] event in
-            hostView?.unclaimedPressDragged(event)
-        }
 
         // Recent downloads can be adopted individually or as one temporal session.
         hostView.onAdoptArrival = { [weak self] offer, session in
@@ -2442,9 +2439,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return true
         }
 
-        if !droppingViaMenuBar {
-            Self.countSelfSummon()
-        }
         if menuBarPinned {
             menuBarPinReceivedItem = true
         }
@@ -3132,7 +3126,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // leaves again with nothing done, it is taken back.
             if !self.panel.isVisible {
                 self.revealProvenance = .unusedHover
-                Self.countSelfSummon()
             }
             self.pointerInRegion = true
             // Going back for a ghost with hover reveal off is the user fetching an offer,
@@ -3445,14 +3438,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     // MARK: Menu bar icon
 
-    private static func countSelfSummon() {
-        let defaults = UserDefaults.standard
-        defaults.set(defaults.integer(forKey: PerchSettings.selfSummonCount) + 1,
-                     forKey: PerchSettings.selfSummonCount)
-    }
-
-    /// Show the shelf and keep it out (see `menuBarPinned`), pointing at the edge so the
-    /// icon teaches its own replacement. Choosing it again hides the shelf.
+    /// Show the shelf and keep it out (see `menuBarPinned`). Choosing it again hides the
+    /// shelf.
     private func toggleFromMenuBar(iconPoint: NSPoint) {
         if panel.isVisible {
             putShelfAway()
@@ -3467,7 +3454,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard panel.isVisible else { return }
         menuBarPinned = true
         menuBarPinReceivedItem = false
-        hostView.showGestureTip(.controlAtEdge(shownEdge))
     }
 
 
