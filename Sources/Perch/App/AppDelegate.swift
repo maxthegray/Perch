@@ -94,12 +94,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             WhatsNewExperience.markSeen()
             return
         }
-        // A release can ask to show the tour itself instead of describing it — see
-        // `ReleaseNote.showsWelcome`.
-        if notes.contains(where: \.revisitsWelcome) {
-            presentWelcomeAgain()
-            return
-        }
         NSLog("Perch is showing What's New for \(notes.map { $0.version.description })")
         let whatsNew = WhatsNewWindowController(notes: notes)
         self.whatsNew = whatsNew
@@ -127,10 +121,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             welcome.show()
             return
         }
-        guard let controller else {
-            WhatsNewExperience.markSeen()
-            return
-        }
+        guard let controller else { return }
         let loginItem = LoginItemController()
         let welcome = WelcomeWindowController(
             loginItemAvailable: loginItem.isAvailable,
@@ -151,7 +142,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if loginItem.isAvailable {
                 loginItem.setEnabled(launchAtLogin)
             }
-            WhatsNewExperience.markSeen()
             controller?.completeFirstRun(enabling: edges)
             DispatchQueue.main.async { self?.welcome = nil }
         }

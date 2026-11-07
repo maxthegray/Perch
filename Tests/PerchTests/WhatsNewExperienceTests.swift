@@ -126,34 +126,6 @@ final class WhatsNewExperienceTests: XCTestCase {
         XCTAssertEqual(decision, .none)
     }
 
-    func testRevisitingTheWelcomeCountsAsAnnouncingItself() {
-        // A release loud enough to redo the tour cannot also be a silent one.
-        let decision = WhatsNewExperience.decide(
-            currentVersion: SemanticVersion("2.0.0")!,
-            lastSeenVersion: SemanticVersion("1.1.0")!,
-            notes: [note("2.0.0", showsWelcome: true)]
-        )
-        XCTAssertEqual(decision, .show([note("2.0.0", showsWelcome: true)]))
-    }
-
-    // MARK: - Showing the tour again
-
-    func testAReleaseCanAskToShowTheWelcomeInsteadOfItsNotes() {
-        let tour = note("1.1.0", showsWelcome: true)
-        guard case let .show(notes) = WhatsNewExperience.decide(
-            currentVersion: SemanticVersion("1.1.0")!,
-            lastSeenVersion: SemanticVersion("1.0.0")!,
-            notes: [tour]
-        ) else {
-            return XCTFail("expected the 1.1.0 notes")
-        }
-        XCTAssertTrue(notes.contains(where: \.revisitsWelcome))
-    }
-
-    func testAnOrdinaryReleaseDoesNotReopenTheWelcome() {
-        XCTAssertFalse(note("1.1.0").revisitsWelcome)
-    }
-
     // MARK: - The bundled file
 
     func testTheShippedNotesParseAndAreOrderedNewestFirst() {
@@ -183,7 +155,6 @@ final class WhatsNewExperienceTests: XCTestCase {
 
     private func note(
         _ version: String,
-        showsWelcome: Bool? = nil,
         announces: Bool? = nil
     ) -> ReleaseNote {
         ReleaseNote(
@@ -192,7 +163,6 @@ final class WhatsNewExperienceTests: XCTestCase {
             highlights: [
                 ReleaseHighlight(symbol: "star", title: "Something", detail: "Happened.")
             ],
-            showsWelcome: showsWelcome,
             showsWhatsNew: announces
         )
     }
