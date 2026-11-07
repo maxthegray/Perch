@@ -2,23 +2,24 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.8.1/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.8.2/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.8.1</title>
+      <title>Version 1.8.2</title>
       <description><![CDATA[
 <ul>
-  <li><b>The welcome screen fits</b><br>It no longer runs under the Dock on smaller screens.</li>
-  <li><b>Fewer interruptions</b><br>No more tip bubbles on the shelf or offers to hide the menu bar icon. Shortcuts… still lists everything.</li>
+  <li><b>A heads-up before the shelf tucks away</b><br>The second click of a triple-click nudges the shelf, so you know the third will put it away.</li>
+  <li><b>Moved shelves tuck to the nearest edge</b><br>Triple-clicking a shelf you dragged off its edge now leaves a tab at the nearest edge to bring it back.</li>
+  <li><b>No more surprise welcome screen</b><br>Updating no longer reopens the welcome window. It only greets new installs.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Sat, 07 Nov 2026 06:02:25 +0000</pubDate>
-      <sparkle:version>1080010</sparkle:version>
-      <sparkle:shortVersionString>1.8.1</sparkle:shortVersionString>
+      <pubDate>Sat, 07 Nov 2026 16:56:18 +0000</pubDate>
+      <sparkle:version>1080020</sparkle:version>
+      <sparkle:shortVersionString>1.8.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.8.1/Perch.zip" sparkle:edSignature="OZB6bH+GT6qp828ni6/ZdvSckE3eBiu5B/Xiv3IRm6FkuYrF4wIYSY9PounKO+/VdVBlZlKtkDj8oKIot7S6CQ==" length="4318997" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.8.2/Perch.zip" sparkle:edSignature="oD/AwxTyXoqGw2qx07ye/M2ZHpT73J8bQNhA+5EEkoJcv+t6UvXH2bgEFr1UUoRhwmIeaZ5BBL7dKvmr5XrkAA==" length="4321105" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
