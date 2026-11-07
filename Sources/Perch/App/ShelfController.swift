@@ -477,6 +477,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onTripleClick = { [weak self] in
             self?.putShelfAway()
         }
+        hostView.onSecondClick = { [weak self] in
+            self?.windowController.warnBeforePuttingAway()
+        }
         hostView.onVendLanded = { [weak self] in
             self?.menuBarPinRoundTripCompleted() ?? false
         }
@@ -3478,7 +3481,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
         if revealMode == .free {
+            // A card that was moved off its edge still holds things, so it tucks into the
+            // nearest edge and leaves the lump there, as a docked one would.
+            let tuckTarget = !store.items.isEmpty && shelvesOnEdgeTouch
+                ? nearestStrip(to: NSPoint(x: panel.frame.midX, y: panel.frame.midY))
+                : nil
             dismissFreeShelf()
+            if let tuckTarget {
+                shownEdge = tuckTarget.edge
+                shownScreen = Self.liveScreen(tuckTarget.pinnedScreen)
+                shelvedStrip = tuckTarget
+            }
         } else {
             hideShelf(animated: true)
         }

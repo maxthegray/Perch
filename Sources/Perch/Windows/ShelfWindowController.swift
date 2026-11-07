@@ -12,6 +12,7 @@ final class ShelfWindowController {
     private static let shelvingPulseKey = "perch.shelving.pulse"
     private static let shelvingPulseDuration: CFTimeInterval = 0.56
     private static let shelvingPulseDistance: CGFloat = 10
+    private static let tuckWarningKey = "perch.tuck.warning"
 
     // Internal rather than private so the first-run card copies (`ShelfGhostCardWindow`)
     // can move on the shelf's own timing instead of a second set of numbers that would
@@ -268,6 +269,33 @@ final class ShelfWindowController {
         pulse.duration = Self.shelvingPulseDuration
         layer.add(pulse, forKey: Self.shelvingPulseKey)
         return Self.shelvingPulseDuration
+    }
+
+    /// The second click of a triple-click: one more puts the shelf away. A docked card
+    /// leans once toward its edge; a free one, with no edge to lean toward, dips.
+    func warnBeforePuttingAway() {
+        guard let layer = panel.contentView?.layer else { return }
+        let rest = NSValue(caTransform3D: CATransform3DIdentity)
+        let warned: CATransform3D
+        if usesFreeAnimation {
+            let bounds = layer.bounds
+            let dx = bounds.midX - layer.anchorPoint.x * bounds.width
+            let dy = bounds.midY - layer.anchorPoint.y * bounds.height
+            var dip = CATransform3DMakeTranslation(dx, dy, 0)
+            dip = CATransform3DScale(dip, 0.96, 0.96, 1)
+            warned = CATransform3DTranslate(dip, -dx, -dy, 0)
+        } else {
+            warned = translationTowardEdge(by: Self.shelvingPulseDistance, in: layer)
+        }
+        let warning = CAKeyframeAnimation(keyPath: "transform")
+        warning.values = [rest, NSValue(caTransform3D: warned), rest]
+        warning.keyTimes = [0, 0.4, 1]
+        warning.timingFunctions = [
+            CAMediaTimingFunction(name: .easeOut),
+            CAMediaTimingFunction(name: .easeInEaseOut)
+        ]
+        warning.duration = 0.26
+        layer.add(warning, forKey: Self.tuckWarningKey)
     }
 
     func cancelShelvingPulse() {

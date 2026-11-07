@@ -155,6 +155,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     var onShowWelcome: (() -> Void)?
     /// Triple-click anywhere on the card: put the shelf away.
     var onTripleClick: (() -> Void)?
+    /// The second click of what may become a triple-click.
+    var onSecondClick: (() -> Void)?
     /// An item was dragged out and landed somewhere outside Perch. Returns whether the
     /// shelf is about to hide in response.
     var onVendLanded: (() -> Bool)?
@@ -573,6 +575,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         if event.clickCount >= 3 {
             handleTripleClick()
             return
+        }
+        if event.clickCount == 2 {
+            onSecondClick?()
         }
         hasActiveLeftPress = true
         onCardInteraction?()
@@ -1031,6 +1036,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     func unclaimedPressBegan(_ event: NSEvent) {
         if event.clickCount >= 3 {
             handleTripleClick()
+        } else if event.clickCount == 2 {
+            onSecondClick?()
         }
     }
 
