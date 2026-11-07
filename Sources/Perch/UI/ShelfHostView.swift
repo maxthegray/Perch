@@ -190,6 +190,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// Fires after the desired hover state flips. The controller grows/shrinks the
     /// panel while streaming its real height back as `grabberRevealProgress`.
     var onCardHoverChanged: ((Bool) -> Void)?
+    /// The pointer has rested on the shelf for a while without pressing anything.
+    var onHoverRest: (() -> Void)?
+    /// That rest ended: the pointer left, pressed, or reached for ⌃.
+    var onHoverRestEnded: (() -> Void)?
 
     /// Fires after AppKit dismisses the context menu. Menu tracking can swallow the
     /// ordinary enter/exit/up sequence, so the controller must reconcile against the
@@ -465,10 +469,35 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         guard interaction.isCardHovered != hovered else { return }
         interaction.isCardHovered = hovered
         onCardHoverChanged?(hovered)
+        if hovered { beginHoverRest() } else { endHoverRest() }
         startModifierHintWatch()
         if !hovered, interaction.modifierHint == .moveShelf || interaction.modifierHint == .copyOut {
             NSCursor.arrow.set()
         }
+    }
+
+    // MARK: Hover rest
+
+    private var hoverRest: Task<Void, Never>?
+
+    private func beginHoverRest() {
+        hoverRest?.cancel()
+        hoverRest = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: MoveShelfReminderPolicy.hoverDelay)
+            guard let self, !Task.isCancelled,
+                  self.interaction.isCardHovered, !self.isContextMenuOpen,
+                  !self.hasActiveLeftPress, !self.shelfDragActive,
+                  !self.vendStarted, !self.reorderActive,
+                  NSEvent.pressedMouseButtons == 0
+            else { return }
+            self.onHoverRest?()
+        }
+    }
+
+    private func endHoverRest() {
+        hoverRest?.cancel()
+        hoverRest = nil
+        onHoverRestEnded?()
     }
 
     // MARK: Modifier hints
@@ -531,6 +560,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     private func applyModifierHint(_ hint: ModifierHint) {
         guard interaction.modifierHint != hint else { return }
         let previous = interaction.modifierHint
+        if hint == .moveShelf { endHoverRest() }
         withAnimation(.spring(response: 0.28, dampingFraction: 0.78)) {
             interaction.modifierHint = hint
         }
@@ -571,6 +601,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         resetDragState()
+        endHoverRest()
         guard !isContextMenuOpen else { return }
         if event.clickCount >= 3 {
             handleTripleClick()
@@ -1034,6 +1065,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// A press on inert background is declined by `hitTest` and lands on the drop view
     /// underneath, which hands it back here so a triple-click there still counts.
     func unclaimedPressBegan(_ event: NSEvent) {
+        endHoverRest()
         if event.clickCount >= 3 {
             handleTripleClick()
         } else if event.clickCount == 2 {
@@ -1469,6 +1501,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         // Cleared without the hover callback: the shelf is hiding, so a re-fit resize
         // would only fight the hide animation. The controller reads the live flag.
         interaction.isCardHovered = false
+        endHoverRest()
         interaction.grabberRevealProgress = 0
         interaction.clearSelection()
         interaction.dismissTransformFailures()

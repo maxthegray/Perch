@@ -61,6 +61,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// for the length of the first-run demonstration only.
     private var firstRunEdgeGhosts: [ShelfGhostCardWindow] = []
     private let themeStore = ThemeStore()
+    private let moveShelfReminder = MoveShelfReminderWindow()
+    private var moveShelfReminderShownAt: TimeInterval?
     private let edgeSettings = EdgeSettings()
     /// Recent files in Downloads / Desktop offered as ghost rows and watched live.
     private let arrivals = RecentArrivals()
@@ -388,6 +390,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onShelfDragBegan = { [weak self] in
             guard let self else { return }
+            self.moveShelfReminder.dismiss()
+            let moves = UserDefaults.standard.integer(forKey: PerchSettings.shelfMoveCount)
+            if moves < MoveShelfReminderPolicy.retireAfterMoves {
+                UserDefaults.standard.set(moves + 1, forKey: PerchSettings.shelfMoveCount)
+            }
             self.cancelEdgeTransfer(resetWallExit: true)
             self.detachFromSystemDock(makeVisible: false)
             self.clearDockSnapPreview()
@@ -407,6 +414,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onCardHoverChanged = { [weak self] hovered in
             self?.resizeForGrabberHover(hovered)
         }
+        hostView.onHoverRest = { [weak self] in self?.offerMoveShelfReminder() }
+        hostView.onHoverRestEnded = { [weak self] in self?.moveShelfReminder.dismiss() }
 
         hostView.onContextMenuClosed = { [weak self] in
             self?.contextMenuDidClose()
@@ -1531,6 +1540,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             && edgeStrips.contains(where: { $0 === target })
             && target.edge == shownEdge && target.pinnedScreen == shownScreen
             && target.wallContactContains(NSEvent.mouseLocation)
+            && isAlongsideShelf(NSEvent.mouseLocation, on: target)
+    }
+
+    /// Tucking is aimed at the shelf itself, so only the stretch of wall beside it counts.
+    /// The rest of a side wall (the corners, a window's controls) is left alone.
+    private func isAlongsideShelf(_ point: NSPoint, on target: EdgeStripWindow) -> Bool {
+        guard target.edge != .notch else { return true }
+        let shelf = shelvedStrip == nil
+            ? panel.frame
+            : panelFrame(for: target.pinnedScreen, edge: target.edge)
+        return point.y >= shelf.minY && point.y <= shelf.maxY
     }
 
     private func updateEdgeShelving(to point: NSPoint) -> Bool {
@@ -1548,7 +1568,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         guard !edgeShelvingGesture.requiresWallExit else { return true }
         guard canToggleEdgeShelf,
               target.edge == shownEdge, target.pinnedScreen == shownScreen,
-              shelvedStrip == nil || shelvedStrip === target else {
+              shelvedStrip == nil || shelvedStrip === target,
+              isAlongsideShelf(point, on: target) else {
             cancelEdgeShelving()
             return false
         }
@@ -3505,6 +3526,24 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             self?.putShelfAway()
         }
         return true
+    }
+
+    private func offerMoveShelfReminder() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let context = MoveShelfReminderPolicy.Context(
+            usesControlToMove: !themeStore.showsGrabHandle,
+            canMoveShelf: hostView.canBeginShelfDrag?() == true,
+            shelfMoves: UserDefaults.standard.integer(forKey: PerchSettings.shelfMoveCount),
+            lastShown: moveShelfReminderShownAt,
+            now: now
+        )
+        guard MoveShelfReminderPolicy.shouldShow(context) else { return }
+        moveShelfReminderShownAt = now
+        moveShelfReminder.show(
+            beside: panel.frame,
+            edge: revealMode == .free ? nil : shownEdge,
+            screen: panel.screen
+        )
     }
 
     private func hideShelf(animated: Bool) {
