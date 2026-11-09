@@ -76,8 +76,20 @@ enum PerchSettings {
     /// Master switch for Smart Perch. Off means the feature is never built: no database,
     /// no OCR, nothing recorded.
     static let smartPerchEnabled = "Perch.SmartPerchEnabled"
-    /// Whether the Smart Perch pane is visible. Off until the user asks for it.
-    static let smartPerchUnlocked = "Perch.LabsUnlocked"
+
+    // MARK: - Labs
+
+    /// Whether the Labs pane is visible. Off until the user asks for it.
+    static let labsUnlocked = "Perch.LabsUnlocked"
+
+    // MARK: - Magpie
+
+    /// Master switch for Magpie, the clipboard history. Defaults on. Off means nothing
+    /// runs: no polling, no database, no hotkey.
+    static let clipboardEnabled = "Perch.ClipboardEnabled"
+    static let clipboardHotKey = "Perch.ClipboardHotKey"
+    /// Raw value of `MagpieStyle`, the popup's look.
+    static let clipboardStyle = "Perch.ClipboardStyle"
 
     // MARK: - Internal state (not user-facing)
 

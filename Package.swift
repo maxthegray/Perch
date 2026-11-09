@@ -19,6 +19,13 @@ let package = Package(
             path: "Sources/SmartPerchCore"
         ),
         .target(
+            name: "ClipboardCore",
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
+            path: "Sources/ClipboardCore"
+        ),
+        .target(
             name: "SmartPerchVision",
             dependencies: ["SmartPerchCore"],
             path: "Sources/SmartPerchVision"
@@ -26,8 +33,10 @@ let package = Package(
         .executableTarget(
             name: "Perch",
             dependencies: [
+                "ClipboardCore",
                 "SmartPerchCore",
                 "SmartPerchVision",
+                .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "Sparkle", package: "Sparkle")
             ],
             path: "Sources/Perch",
@@ -48,13 +57,22 @@ let package = Package(
             path: "Tests/SmartPerchCoreTests"
         ),
         .testTarget(
+            name: "ClipboardCoreTests",
+            dependencies: ["ClipboardCore"],
+            path: "Tests/ClipboardCoreTests"
+        ),
+        .testTarget(
             name: "SmartPerchVisionTests",
             dependencies: ["SmartPerchVision"],
             path: "Tests/SmartPerchVisionTests"
         ),
         .testTarget(
             name: "PerchTests",
-            dependencies: ["Perch"],
+            dependencies: [
+                "Perch",
+                "ClipboardCore",
+                .product(name: "GRDB", package: "GRDB.swift")
+            ],
             path: "Tests/PerchTests",
             resources: [
                 .copy("Fixtures")

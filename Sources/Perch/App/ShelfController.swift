@@ -32,6 +32,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let transformCoordinator: ShelfTransformCoordinator
     private let promiseMaterializer: FilePromiseMaterializer
     private let smartPerch: SmartPerchCoordinator
+    private let clipboard: ClipboardCoordinator
     private let dropView: ShelfDropView
     private let hostView: ShelfHostView
     private let dockSnapPreview = DockSnapPreviewWindow()
@@ -275,10 +276,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             store: store,
             themeStore: themeStore
         )
+        clipboard = ClipboardCoordinator(databaseURL: holding.clipboardHistoryFile)
         settingsWindow = SettingsWindowController(
             themeStore: themeStore,
             edgeSettings: edgeSettings,
-            smartPerch: smartPerch
+            smartPerch: smartPerch,
+            clipboard: clipboard
         )
         mergePDFWindow = MergePDFWindowController()
         splitPDFWindow = SplitPDFWindowController()
@@ -554,6 +557,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog("Perch failed to load stored items: \(error)")
         }
         smartPerch.loadExistingState()
+        clipboard.bootstrap()
 
         // Panel geometry is app-computed (a floating card), not user-movable, so we
         // always use the freshly computed frame rather than a stale persisted one.
@@ -786,6 +790,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     func shutDown() {
+        clipboard.shutDown()
         transformPlaceholderResizeTask?.cancel()
         transformCoordinator.shutDown()
     }

@@ -19,7 +19,7 @@ enum LegacySmartPerchMigration {
         }
 
         if defaults.object(forKey: PerchSettings.smartPerchEnabled) as? Bool == true {
-            defaults.set(true, forKey: PerchSettings.smartPerchUnlocked)
+            defaults.set(true, forKey: PerchSettings.labsUnlocked)
         }
 
         defaults.removeObject(forKey: selectionKey)

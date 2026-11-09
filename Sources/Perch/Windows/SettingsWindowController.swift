@@ -7,13 +7,15 @@ import SwiftUI
 @MainActor
 final class SettingsWindowController {
     private static let shelfPaneLabel = "Shelf"
-    private static let smartPerchPaneLabel = "Smart Perch"
+    private static let labsPaneLabel = "Labs"
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
     private let smartPerch: SmartPerchCoordinator
+    private let clipboard: ClipboardCoordinator
     private var window: NSWindow?
-    private var smartPerchObserver: NSObjectProtocol?
+    private let collectedData = CollectedDataWindowController()
+    private var labsObserver: NSObjectProtocol?
     /// Which tab is up. Only Shelf summons the live appearance preview.
     private var selectedPaneLabel: String?
 
@@ -34,11 +36,13 @@ final class SettingsWindowController {
     init(
         themeStore: ThemeStore,
         edgeSettings: EdgeSettings,
-        smartPerch: SmartPerchCoordinator
+        smartPerch: SmartPerchCoordinator,
+        clipboard: ClipboardCoordinator
     ) {
         self.themeStore = themeStore
         self.edgeSettings = edgeSettings
         self.smartPerch = smartPerch
+        self.clipboard = clipboard
     }
 
     func show() {
@@ -60,7 +64,9 @@ final class SettingsWindowController {
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
             size: NSSize(width: 560, height: 260),
-            view: GeneralSettingsPane(smartPerch: smartPerch)
+            view: GeneralSettingsPane(smartPerch: smartPerch) { [weak self] in
+                self?.revealLabs()
+            }
         )
         addPane(
             to: tabs, label: Self.shelfPaneLabel, symbol: "rectangle.3.group",
@@ -77,7 +83,15 @@ final class SettingsWindowController {
             size: NSSize(width: 760, height: 350),
             view: FileSettingsPane()
         )
-        syncSmartPerchPane(in: tabs)
+        addPane(
+            to: tabs, label: "Magpie", symbol: "doc.on.clipboard",
+            size: NSSize(width: 560, height: 290),
+            view: MagpieSettingsPane(clipboard: clipboard) { [weak self] in
+                guard let self else { return }
+                self.collectedData.show(title: "Magpie", databaseURL: self.clipboard.databaseURL)
+            }
+        )
+        syncLabsPane(in: tabs)
 
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
@@ -95,14 +109,14 @@ final class SettingsWindowController {
             }
         }
 
-        // The activation prompt and removal action cannot reach the tab controller.
-        // Watch the persisted access flag so its pane appears and disappears immediately.
-        smartPerchObserver = NotificationCenter.default.addObserver(
+        // Settings written elsewhere (Smart Perch's own enable path) cannot reach the tab
+        // controller. Watch the persisted access flag so the pane appears immediately.
+        labsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: nil, queue: .main
         ) { [weak self, weak tabs] _ in
             MainActor.assumeIsolated {
                 guard let self, let tabs else { return }
-                self.syncSmartPerchPane(in: tabs)
+                self.syncLabsPane(in: tabs)
             }
         }
 
@@ -110,13 +124,23 @@ final class SettingsWindowController {
         window.makeKeyAndOrderFront(nil)
     }
 
-    /// Adds or removes the Smart Perch tab to match its access flag.
-    private func syncSmartPerchPane(in tabs: NSTabViewController) {
+    /// Unlocks Labs and brings its tab forward. Every feature inside stays off.
+    private func revealLabs() {
+        LabsAccess.unlock()
+        guard let tabs = window?.contentViewController as? NSTabViewController else { return }
+        syncLabsPane(in: tabs)
+        if let index = tabs.tabViewItems.firstIndex(where: { $0.label == Self.labsPaneLabel }) {
+            tabs.selectedTabViewItemIndex = index
+        }
+    }
+
+    /// Adds or removes the Labs tab to match its access flag.
+    private func syncLabsPane(in tabs: NSTabViewController) {
         let existing = tabs.tabViewItems.firstIndex {
-            $0.label == Self.smartPerchPaneLabel
+            $0.label == Self.labsPaneLabel
         }
 
-        guard SmartPerchAccess.isUnlocked else {
+        guard LabsAccess.isUnlocked else {
             guard let existing else { return }
             // Removing the selected tab would leave the tab view with no selection and a
             // stale window title, so step back to General first.
@@ -129,9 +153,12 @@ final class SettingsWindowController {
 
         guard existing == nil else { return }
         addPane(
-            to: tabs, label: Self.smartPerchPaneLabel, symbol: "sparkles",
-            size: NSSize(width: 560, height: 330),
-            view: SmartPerchSettingsPane(smartPerch: smartPerch)
+            to: tabs, label: Self.labsPaneLabel, symbol: "flask",
+            size: NSSize(width: 560, height: 380),
+            view: LabsSettingsPane(smartPerch: smartPerch) { [weak self] in
+                guard let self else { return }
+                self.collectedData.show(title: "Smart Perch", databaseURL: self.smartPerch.databaseURL)
+            }
         )
     }
 

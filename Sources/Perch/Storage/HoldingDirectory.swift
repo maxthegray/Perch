@@ -41,6 +41,10 @@ struct HoldingDirectory {
         root.appendingPathComponent("smart-perch.sqlite", isDirectory: false)
     }
 
+    var clipboardHistoryFile: URL {
+        root.appendingPathComponent("clipboard.sqlite", isDirectory: false)
+    }
+
     func itemDir(_ id: UUID) -> URL {
         itemsDir.appendingPathComponent(id.uuidString, isDirectory: true)
     }

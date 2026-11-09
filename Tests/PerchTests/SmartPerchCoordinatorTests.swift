@@ -11,7 +11,7 @@ final class SmartPerchCoordinatorTests: XCTestCase {
 
             XCTAssertFalse(context.coordinator.isEnabled)
             XCTAssertFalse(FileManager.default.fileExists(atPath: context.databaseURL.path))
-            XCTAssertFalse(SmartPerchAccess.isUnlocked)
+            XCTAssertFalse(LabsAccess.isUnlocked)
         }
     }
 
@@ -24,11 +24,11 @@ final class SmartPerchCoordinatorTests: XCTestCase {
 
             XCTAssertTrue(context.coordinator.isEnabled)
             XCTAssertTrue(FileManager.default.fileExists(atPath: context.databaseURL.path))
-            XCTAssertTrue(SmartPerchAccess.isUnlocked)
+            XCTAssertTrue(LabsAccess.isUnlocked)
         }
     }
 
-    func testDisableKeepsDataAndRemoveDeletesOnlySmartData() async throws {
+    func testDisableKeepsDataAndRemoveDeletesOnlySmartDataAndKeepsLabs() async throws {
         try await withCleanPreferences {
             UserDefaults.standard.set(false, forKey: PerchSettings.showsLabels)
             let context = try makeContext()
@@ -45,7 +45,7 @@ final class SmartPerchCoordinatorTests: XCTestCase {
 
             XCTAssertTrue(context.coordinator.isEnabled)
             XCTAssertTrue(FileManager.default.fileExists(atPath: context.databaseURL.path))
-            XCTAssertTrue(SmartPerchAccess.isUnlocked)
+            XCTAssertTrue(LabsAccess.isUnlocked)
             XCTAssertTrue(context.themeStore.showsLabels)
 
             context.coordinator.setEnabled(false)
@@ -58,7 +58,7 @@ final class SmartPerchCoordinatorTests: XCTestCase {
             XCTAssertTrue(removed)
             XCTAssertFalse(FileManager.default.fileExists(atPath: context.databaseURL.path))
             XCTAssertTrue(FileManager.default.fileExists(atPath: shelfMarker.path))
-            XCTAssertFalse(SmartPerchAccess.isUnlocked)
+            XCTAssertTrue(LabsAccess.isUnlocked)
             XCTAssertNil(
                 UserDefaults.standard.object(forKey: SmartPerchDataRemoval.pendingKey)
             )
@@ -89,7 +89,7 @@ final class SmartPerchCoordinatorTests: XCTestCase {
             XCTAssertNotNil(coordinator.errorMessage)
             XCTAssertFalse(themeStore.showsLabels)
             XCTAssertFalse(SmartPerchSettings.isEnabled)
-            XCTAssertTrue(SmartPerchAccess.isUnlocked)
+            XCTAssertTrue(LabsAccess.isUnlocked)
         }
     }
 
@@ -143,7 +143,7 @@ final class SmartPerchCoordinatorTests: XCTestCase {
         let defaults = UserDefaults.standard
         let keys = [
             PerchSettings.smartPerchEnabled,
-            PerchSettings.smartPerchUnlocked,
+            PerchSettings.labsUnlocked,
             PerchSettings.smartPerchAutoEnabledNames,
             PerchSettings.showsLabels,
             PerchSettings.sizePreset,

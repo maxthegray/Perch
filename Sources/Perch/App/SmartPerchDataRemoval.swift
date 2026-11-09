@@ -28,7 +28,6 @@ enum SmartPerchDataRemoval {
 
     static func finishPreferences(defaults: UserDefaults = .standard) {
         defaults.set(false, forKey: PerchSettings.smartPerchEnabled)
-        defaults.set(false, forKey: PerchSettings.smartPerchUnlocked)
         defaults.removeObject(forKey: PerchSettings.smartPerchAutoEnabledNames)
         defaults.removeObject(forKey: "Perch.SmartPerchShowsSuggestions")
         defaults.removeObject(forKey: LegacySmartPerchMigration.selectionKey)

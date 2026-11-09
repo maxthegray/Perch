@@ -1,13 +1,42 @@
 import SwiftUI
 
-/// Settings for the optional, local Smart Perch features.
-struct SmartPerchSettingsPane: View {
+/// Experimental features, each behind its own switch and off until turned on. Hidden
+/// until unlocked from the General pane.
+struct LabsSettingsPane: View {
     @ObservedObject var smartPerch: SmartPerchCoordinator
+    /// Opens the read-only viewer for the database.
+    let onShowData: () -> Void
+
+    var body: some View {
+        Form {
+            SmartPerchSettingsSections(smartPerch: smartPerch, onShowData: onShowData)
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Magpie, the clipboard history.
+struct MagpieSettingsPane: View {
+    @ObservedObject var clipboard: ClipboardCoordinator
+    let onShowData: () -> Void
+
+    var body: some View {
+        Form {
+            ClipboardSettingsSections(clipboard: clipboard, onShowData: onShowData)
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Settings for the optional, local Smart Perch features.
+struct SmartPerchSettingsSections: View {
+    @ObservedObject var smartPerch: SmartPerchCoordinator
+    let onShowData: () -> Void
 
     @State private var showsUninstallConfirmation = false
 
     var body: some View {
-        Form {
+        Group {
             Section("Smart Perch") {
                 HStack(alignment: .center, spacing: 12) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -32,6 +61,7 @@ struct SmartPerchSettingsPane: View {
             }
 
             Section {
+                Button("See Collected Data…", action: onShowData)
                 VStack(alignment: .leading, spacing: 4) {
                     Button("Remove Smart Perch and Delete Data", role: .destructive) {
                         showsUninstallConfirmation = true
@@ -51,7 +81,6 @@ struct SmartPerchSettingsPane: View {
                 }
             }
         }
-        .formStyle(.grouped)
         .alert("Remove Smart Perch?", isPresented: $showsUninstallConfirmation) {
             Button("Remove and Delete Data", role: .destructive) {
                 Task {

@@ -15,7 +15,7 @@ final class SmartPerchCoordinator: ObservableObject {
     var onPresentationChanged: (() -> Void)?
     var onActivityChanged: ((Bool) -> Void)?
 
-    private let databaseURL: URL
+    let databaseURL: URL
     private let arrivals: RecentArrivals
     private let store: ItemStore
     private let themeStore: ThemeStore
@@ -39,7 +39,7 @@ final class SmartPerchCoordinator: ObservableObject {
             setPresentationEnabled(false)
             return
         }
-        SmartPerchAccess.unlock()
+        LabsAccess.unlock()
         activate(loadExistingState: false)
     }
 
@@ -62,7 +62,7 @@ final class SmartPerchCoordinator: ObservableObject {
         UserDefaults.standard.set(enabled, forKey: PerchSettings.smartPerchEnabled)
 
         if enabled {
-            SmartPerchAccess.unlock()
+            LabsAccess.unlock()
             activate(loadExistingState: true)
         } else {
             beginDeactivation()

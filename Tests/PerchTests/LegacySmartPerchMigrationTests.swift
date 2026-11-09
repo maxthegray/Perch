@@ -8,7 +8,7 @@ final class LegacySmartPerchMigrationTests: XCTestCase {
         LegacySmartPerchMigration.run(defaults: defaults)
 
         XCTAssertNil(defaults.object(forKey: PerchSettings.smartPerchEnabled))
-        XCTAssertNil(defaults.object(forKey: PerchSettings.smartPerchUnlocked))
+        XCTAssertNil(defaults.object(forKey: PerchSettings.labsUnlocked))
     }
 
     func testPendingEnrollmentEnablesSmartPerchAndNames() {
@@ -19,7 +19,7 @@ final class LegacySmartPerchMigrationTests: XCTestCase {
         LegacySmartPerchMigration.run(defaults: defaults)
 
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchEnabled))
-        XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchUnlocked))
+        XCTAssertTrue(defaults.bool(forKey: PerchSettings.labsUnlocked))
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.showsLabels))
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchAutoEnabledNames))
     }
@@ -31,7 +31,7 @@ final class LegacySmartPerchMigrationTests: XCTestCase {
         LegacySmartPerchMigration.run(defaults: defaults)
 
         XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchEnabled))
-        XCTAssertTrue(defaults.bool(forKey: PerchSettings.smartPerchUnlocked))
+        XCTAssertTrue(defaults.bool(forKey: PerchSettings.labsUnlocked))
     }
 
     func testObsoleteTrackKeysAreRemovedWithoutEnablingSmartPerch() {
@@ -42,7 +42,7 @@ final class LegacySmartPerchMigrationTests: XCTestCase {
 
         XCTAssertNil(defaults.object(forKey: LegacySmartPerchMigration.selectionKey))
         XCTAssertNil(defaults.object(forKey: PerchSettings.smartPerchEnabled))
-        XCTAssertNil(defaults.object(forKey: PerchSettings.smartPerchUnlocked))
+        XCTAssertNil(defaults.object(forKey: PerchSettings.labsUnlocked))
     }
 
     private func makeDefaults() -> UserDefaults {

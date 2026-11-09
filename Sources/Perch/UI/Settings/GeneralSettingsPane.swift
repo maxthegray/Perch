@@ -5,8 +5,9 @@ import SwiftUI
 struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
     @ObservedObject var smartPerch: SmartPerchCoordinator
+    /// Unlocks Labs and brings its tab forward.
+    let onRevealLabs: () -> Void
     @State private var launchAtLogin = false
-    @State private var showsSmartPerchPrompt = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
 
     var body: some View {
@@ -28,28 +29,15 @@ struct GeneralSettingsPane: View {
             Section("About") {
                 LabeledContent("Version", value: "\(productName) \(appVersion)")
                 LabeledContent("Made by", value: "Max")
-                    // The way into Smart Perch. Nothing about the row suggests it.
+                    // The way into Labs: a triple click. Nothing about the row suggests it.
                     .contentShape(Rectangle())
-                    .onTapGesture {
-                        if !SmartPerchAccess.isUnlocked { showsSmartPerchPrompt = true }
-                    }
+                    .onTapGesture(count: 3, perform: onRevealLabs)
                 Button("Check for Updates…") {
                     Updater.shared.checkForUpdates()
                 }
             }
         }
         .formStyle(.grouped)
-        .alert("Enable Smart Perch?", isPresented: $showsSmartPerchPrompt) {
-            Button("Enable Smart Perch") {
-                smartPerch.setEnabled(true)
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text(
-                "Smart Perch reads screenshots to suggest names and remembers where "
-                    + "you put things. Everything stays on this Mac."
-            )
-        }
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.
@@ -67,6 +55,6 @@ struct GeneralSettingsPane: View {
     }
 
     private var productName: String {
-        smartPerch.isEnabled ? "Smart Perch" : "Perch"
+        PerchProductIdentity.displayName(labsFeatureOn: smartPerch.isEnabled)
     }
 }
