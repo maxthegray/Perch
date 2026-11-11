@@ -2,23 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.9.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.9.1/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.9.0</title>
+      <title>Version 1.9.1</title>
       <description><![CDATA[
 <ul>
-  <li><b>Magpie: clipboard history</b><br>Press ⌥⌘C to see what you’ve copied and copy it again. Type to search.</li>
-  <li><b>Stays on your Mac</b><br>Keeps your last 200 copies and skips passwords. Turn it off or clear it in Settings › Magpie.</li>
+  <li><b>Small fixes</b><br>Quitting after dragging something off the shelf no longer freezes Perch.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Mon, 09 Nov 2026 04:47:46 +0000</pubDate>
-      <sparkle:version>1090000</sparkle:version>
-      <sparkle:shortVersionString>1.9.0</sparkle:shortVersionString>
+      <pubDate>Wed, 11 Nov 2026 23:43:00 +0000</pubDate>
+      <sparkle:version>1090010</sparkle:version>
+      <sparkle:shortVersionString>1.9.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.9.0/Perch.zip" sparkle:edSignature="032Y9ApRD9YF2aUHKnIBTjxRJXuM5kf8KRNruMSXi4Suj2eSSBZCGvU/bn0cAB2yZhBDL1XqkJ/2zCoa1rkoBQ==" length="4517127" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.9.1/Perch.zip" sparkle:edSignature="4CyilFeJHaF/0djzE3ox2A9Ke63968qOQ2ddLcgvrqfyjvfTI+hgYt6UnNQPpvNlxtOxXV21A87je2KchtRrDA==" length="4517733" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
