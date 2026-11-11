@@ -1705,15 +1705,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         menu.addItem(updates)
 
         menu.addItem(.separator())
-        let quit = NSMenuItem(
-            title: "Quit",
-            action: #selector(quitAction(_:)),
-            keyEquivalent: ""
-        )
-        quit.target = self
-        menu.addItem(quit)
-
-        menu.addItem(.separator())
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
         let about = NSMenuItem(
             title: "\(PerchProductIdentity.displayName) \(version)",
@@ -1859,10 +1850,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         isContextMenuOpen = false
         onContextMenuClosed?()
-    }
-
-    @objc private func quitAction(_ sender: NSMenuItem) {
-        NSApp.terminate(nil)
     }
 
     @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {

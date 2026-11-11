@@ -56,7 +56,20 @@ final class ItemDragSource: NSObject, NSDraggingSource {
             )
         }
 
-        return view.beginDraggingSession(with: draggingItems, event: event, source: self)
+        let session = view.beginDraggingSession(with: draggingItems, event: event, source: self)
+        Self.ownedDragPasteboardChangeCount = session.draggingPasteboard.changeCount
+        return session
+    }
+
+    private static var ownedDragPasteboardChangeCount: Int?
+
+    /// AppKit resolves every file promise an app still owns when it terminates, and an
+    /// unclaimed `NSFilePromiseProvider` on the drag pasteboard blocks that forever.
+    static func relinquishDragPasteboard() {
+        let pasteboard = NSPasteboard(name: .drag)
+        guard pasteboard.changeCount == ownedDragPasteboardChangeCount else { return }
+        pasteboard.clearContents()
+        ownedDragPasteboardChangeCount = nil
     }
 
     /// One pasteboard writer per stored item lets Finder and other destinations receive

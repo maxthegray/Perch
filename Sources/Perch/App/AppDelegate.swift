@@ -28,6 +28,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ItemDragSource.relinquishDragPasteboard()
+        return .terminateNow
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         controller?.shutDown()
     }
