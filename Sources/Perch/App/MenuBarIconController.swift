@@ -95,6 +95,8 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Menu Bar Icon", action: #selector(hideIcon), keyEquivalent: "")
             .target = self
+        menu.addItem(withTitle: "Restart Perch", action: #selector(restart), keyEquivalent: "")
+            .target = self
         menu.addItem(withTitle: "Quit Perch", action: #selector(quit), keyEquivalent: "")
             .target = self
         return menu
@@ -112,6 +114,7 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     @objc private func showSettings() { onShowSettings?() }
     @objc private func showWelcome() { onShowWelcome?() }
     @objc private func quit() { NSApp.terminate(nil) }
+    @objc private func restart() { Relauncher.restart() }
 
     @objc private func hideIcon() {
         UserDefaults.standard.set(false, forKey: PerchSettings.showsMenuBarIcon)

@@ -36,7 +36,10 @@ struct GeneralSettingsPane: View {
                     // The way into Labs: a triple click. Nothing about the row suggests it.
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
-                Button("Show Welcome Screen…", action: onShowWelcome)
+                HStack {
+                    Button("Show Welcome Screen…", action: onShowWelcome)
+                    Button("Restart Perch", action: Relauncher.restart)
+                }
             }
         }
         .formStyle(.grouped)
