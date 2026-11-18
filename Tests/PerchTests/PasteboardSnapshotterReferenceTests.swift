@@ -108,12 +108,15 @@ final class PasteboardSnapshotterReferenceTests: XCTestCase {
         let defaults = UserDefaults.standard
         let key = PerchSettings.referenceDroppedFiles
         let previousValue = defaults.object(forKey: key)
+        let previousLabs = defaults.object(forKey: PerchSettings.labsUnlocked)
+        defaults.set(true, forKey: PerchSettings.labsUnlocked)
         if let value {
             defaults.set(value, forKey: key)
         } else {
             defaults.removeObject(forKey: key)
         }
         defer {
+            defaults.set(previousLabs, forKey: PerchSettings.labsUnlocked)
             if let previousValue {
                 defaults.set(previousValue, forKey: key)
             } else {
