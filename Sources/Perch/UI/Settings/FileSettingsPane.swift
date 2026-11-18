@@ -16,21 +16,25 @@ struct FileSettingsPane: View {
                     Text("Show recent arrivals")
                     Text("Offer new files from Downloads and the Desktop.")
                 }
-                Picker("After transforming a file", selection: $transformOutputMode) {
-                    Text("Keep the original").tag(ShelfTransformOutputMode.duplicate)
-                    Text("Replace the original").tag(ShelfTransformOutputMode.replace)
+                Toggle(isOn: replacesOriginalBinding) {
+                    Text("Replace the original after transforming")
+                    Text("When off, the result appears beside the original.")
                 }
-                Picker(selection: $vendCopies) {
-                    Text("Remove from Perch").tag(false)
-                    Text("Keep in Perch").tag(true)
-                } label: {
-                    Text("After dragging a file out")
+                Toggle(isOn: $vendCopies) {
+                    Text("Keep files in Perch after dragging them out")
                     if !vendCopies {
-                        Text("Hold ⌥ Option to keep it once.")
+                        Text("When off, hold ⌥ Option to keep one.")
                     }
                 }
             }
         }
         .formStyle(.grouped)
+    }
+
+    private var replacesOriginalBinding: Binding<Bool> {
+        Binding(
+            get: { transformOutputMode == .replace },
+            set: { transformOutputMode = $0 ? .replace : .duplicate }
+        )
     }
 }

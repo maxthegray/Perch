@@ -20,9 +20,9 @@ struct BehaviorSettingsPane: View {
             }
 
             Section {
-                Picker("Move the shelf with", selection: $themeStore.showsGrabHandle) {
-                    Text("Handle").tag(true)
-                    Text("⌃ Control-drag").tag(false)
+                Toggle(isOn: $themeStore.showsGrabHandle) {
+                    Text("Show a handle for moving the shelf")
+                    Text("When off, hold ⌃ Control and drag the shelf.")
                 }
                 Toggle(isOn: $shelveOnEdgeTouch) {
                     Text("Hold at the edge to tuck away")

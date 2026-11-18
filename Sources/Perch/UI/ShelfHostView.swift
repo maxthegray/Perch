@@ -609,6 +609,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             if event.clickCount == 2 {
                 onSecondClick?()
             }
+        } else if event.clickCount == 2, quickLookOnPress(at: point, event: event) {
+            return
         }
         hasActiveLeftPress = true
         onCardInteraction?()
@@ -1073,6 +1075,27 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         } else if event.clickCount == 2 {
             onSecondClick?()
         }
+    }
+
+    /// Like Finder, Quick Look opens on the second press rather than its release, so a
+    /// double-click answers the moment the finger lands. Only possible when no third
+    /// click can follow; with triple-click-to-hide on, `mouseUp` still waits it out.
+    private func quickLookOnPress(at point: NSPoint, event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .shift, .control, .option]).isEmpty,
+              !(themeStore.showsGrabHandle && grabberZoneContains(point)),
+              let item = item(at: point)
+        else { return false }
+        if !usesStackedRows, let index = rowIndex(at: point),
+           deleteHitRect(forRow: index).contains(point)
+            || routeActionHitRect(forRow: index).contains(point) {
+            return false
+        }
+        let targets = actionItems(for: item).filter(quickLook.canPreview)
+        guard !targets.isEmpty else { return false }
+        pendingQuickLook?.cancel()
+        pendingQuickLook = nil
+        showQuickLook(targets)
+        return true
     }
 
     private var tripleClickHides: Bool {
