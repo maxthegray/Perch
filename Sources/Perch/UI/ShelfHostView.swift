@@ -1701,6 +1701,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        let restart = NSMenuItem(
+            title: "Restart Perch",
+            action: #selector(restartAction(_:)),
+            keyEquivalent: ""
+        )
+        restart.target = self
+        menu.addItem(restart)
+
         return menu
     }
 
@@ -1837,6 +1845,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         isContextMenuOpen = false
         onContextMenuClosed?()
+    }
+
+    @objc private func restartAction(_ sender: NSMenuItem) {
+        Relauncher.restart()
     }
 
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
