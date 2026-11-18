@@ -39,7 +39,7 @@ enum DockGeometryReader {
         useCache: Bool = true,
         requireFeatureEnabled: Bool = true
     ) -> Geometry? {
-        guard (!requireFeatureEnabled || UserDefaults.standard.bool(forKey: enabledKey)),
+        guard (!requireFeatureEnabled || PerchSettings.labsFlag(enabledKey)),
               isTrusted
         else { return nil }
         if useCache, Date().timeIntervalSince(cacheDate) < 0.5 {

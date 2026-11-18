@@ -25,7 +25,7 @@ final class ClipboardPanel: NSPanel {
 
     init() {
         super.init(
-            contentRect: NSRect(origin: .zero, size: MagpieStyle.defaultStyle.size(forRows: 0)),
+            contentRect: NSRect(origin: .zero, size: ClipboardStyle.defaultStyle.size(forRows: 0)),
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,
             defer: true
@@ -69,7 +69,7 @@ final class ClipboardPanelController {
     init(model: ClipboardPanelModel) {
         self.model = model
 
-        effect.frame = NSRect(origin: .zero, size: MagpieStyle.defaultStyle.size(forRows: 0))
+        effect.frame = NSRect(origin: .zero, size: ClipboardStyle.defaultStyle.size(forRows: 0))
         effect.blendingMode = .behindWindow
         effect.state = .active
         effect.wantsLayer = true
@@ -110,7 +110,7 @@ final class ClipboardPanelController {
     }
 
     func show() {
-        let style = MagpieStyle.current
+        let style = ClipboardStyle.current
         model.prepareForShowing(style: style)
         effect.material = style.material
         effect.layer?.cornerRadius = style.cornerRadius

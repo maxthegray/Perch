@@ -125,7 +125,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults off.
     private var shakeToSummonEnabled: Bool {
-        PerchSettings.flag(PerchSettings.shakeToSummon, default: false)
+        PerchSettings.labsFlag(PerchSettings.shakeToSummon)
     }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
@@ -135,7 +135,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Whether a populated docked shelf can be deliberately summoned to another enabled
     /// wall. Opt-in so existing shelves remain completely stationary by default.
     private var movesOpenShelfBetweenEdges: Bool {
-        PerchSettings.flag(PerchSettings.moveOpenShelfBetweenEdges, default: false)
+        PerchSettings.labsFlag(PerchSettings.moveOpenShelfBetweenEdges)
     }
     /// Polls the cursor while the shelf is open so an empty shelf reliably retracts once
     /// the pointer leaves — see `startRetractWatcher`.
@@ -2297,7 +2297,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             var coastingTicks = 0
             while !Task.isCancelled {
                 guard let self, self.dockAttachment == attachment else { return }
-                if !UserDefaults.standard.bool(forKey: PerchSettings.snapBesideDock) {
+                if !PerchSettings.labsFlag(PerchSettings.snapBesideDock) {
                     self.detachFromSystemDock(makeVisible: true)
                     return
                 }

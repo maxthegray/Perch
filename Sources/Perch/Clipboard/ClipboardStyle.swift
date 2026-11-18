@@ -1,11 +1,11 @@
 import AppKit
 
-/// How the Magpie popup looks. Classic is Maccy-like: a compact menu of just the clips.
-enum MagpieStyle: String, CaseIterable, Identifiable {
+/// How the Perch Clipboard popup looks. Classic is Maccy-like: a compact menu of just the clips.
+enum ClipboardStyle: String, CaseIterable, Identifiable {
     case classic
     case detailed
 
-    static let defaultStyle = MagpieStyle.classic
+    static let defaultStyle = ClipboardStyle.classic
 
     var id: String { rawValue }
 
@@ -16,9 +16,9 @@ enum MagpieStyle: String, CaseIterable, Identifiable {
         }
     }
 
-    static var current: MagpieStyle {
+    static var current: ClipboardStyle {
         UserDefaults.standard.string(forKey: PerchSettings.clipboardStyle)
-            .flatMap(MagpieStyle.init(rawValue:)) ?? defaultStyle
+            .flatMap(ClipboardStyle.init(rawValue:)) ?? defaultStyle
     }
 
     var width: CGFloat {

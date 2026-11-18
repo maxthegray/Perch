@@ -1,7 +1,7 @@
 import ClipboardCore
 import Foundation
 
-/// The dim second line under a clip in Magpie: where it came from and when.
+/// The dim second line under a clip in Perch Clipboard: where it came from and when.
 enum ClipRowDetail {
     static func subtitle(for clip: ClipSummary, appName: String?, now: Date, calendar: Calendar = .current) -> String {
         var parts: [String] = []

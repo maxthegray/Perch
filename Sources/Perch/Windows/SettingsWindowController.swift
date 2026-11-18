@@ -63,32 +63,32 @@ final class SettingsWindowController {
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 560, height: 260),
+            size: NSSize(width: 540, height: 210),
             view: GeneralSettingsPane(smartPerch: smartPerch) { [weak self] in
                 self?.revealLabs()
             }
         )
         addPane(
             to: tabs, label: Self.shelfPaneLabel, symbol: "rectangle.3.group",
-            size: NSSize(width: 580, height: 530),
+            size: NSSize(width: 540, height: 340),
             view: ShelfSettingsPane(themeStore: themeStore, edgeSettings: edgeSettings)
         )
         addPane(
             to: tabs, label: "Behavior", symbol: "cursorarrow.motionlines",
-            size: NSSize(width: 580, height: 570),
+            size: NSSize(width: 540, height: 345),
             view: BehaviorSettingsPane(themeStore: themeStore)
         )
         addPane(
             to: tabs, label: "Files", symbol: "arrow.right",
-            size: NSSize(width: 760, height: 350),
+            size: NSSize(width: 540, height: 245),
             view: FileSettingsPane()
         )
         addPane(
-            to: tabs, label: "Magpie", symbol: "doc.on.clipboard",
-            size: NSSize(width: 560, height: 290),
-            view: MagpieSettingsPane(clipboard: clipboard) { [weak self] in
+            to: tabs, label: "Clipboard", symbol: "doc.on.clipboard",
+            size: NSSize(width: 540, height: 270),
+            view: ClipboardSettingsPane(clipboard: clipboard) { [weak self] in
                 guard let self else { return }
-                self.collectedData.show(title: "Magpie", databaseURL: self.clipboard.databaseURL)
+                self.collectedData.show(title: "Perch Clipboard", databaseURL: self.clipboard.databaseURL)
             }
         )
         syncLabsPane(in: tabs)
@@ -96,7 +96,7 @@ final class SettingsWindowController {
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = tabs.tabViewItems.first?.label ?? "Settings"
-        window.setContentSize(NSSize(width: 560, height: 260))
+        window.setContentSize(NSSize(width: 540, height: 210))
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
@@ -154,7 +154,7 @@ final class SettingsWindowController {
         guard existing == nil else { return }
         addPane(
             to: tabs, label: Self.labsPaneLabel, symbol: "flask",
-            size: NSSize(width: 560, height: 380),
+            size: NSSize(width: 540, height: 530),
             view: LabsSettingsPane(smartPerch: smartPerch) { [weak self] in
                 guard let self else { return }
                 self.collectedData.show(title: "Smart Perch", databaseURL: self.smartPerch.databaseURL)

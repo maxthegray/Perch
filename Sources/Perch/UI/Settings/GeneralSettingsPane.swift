@@ -12,29 +12,27 @@ struct GeneralSettingsPane: View {
 
     var body: some View {
         Form {
-            if loginItem.isAvailable {
-                Section("Startup") {
+            Section {
+                if loginItem.isAvailable {
                     Toggle("Launch at login", isOn: launchAtLoginBinding)
                         .onAppear { launchAtLogin = loginItem.isEnabled }
                 }
+                Toggle("Show in menu bar", isOn: $showsMenuBarIcon)
             }
 
             Section {
-                Toggle(isOn: $showsMenuBarIcon) {
-                    Text("Show in menu bar")
-                    Text("Click to bring out the shelf, or drop files on it.")
+                LabeledContent("Version") {
+                    HStack(spacing: 10) {
+                        Text("\(productName) \(appVersion)")
+                        Button("Check for Updates…") {
+                            Updater.shared.checkForUpdates()
+                        }
+                    }
                 }
-            }
-
-            Section("About") {
-                LabeledContent("Version", value: "\(productName) \(appVersion)")
                 LabeledContent("Made by", value: "Max")
                     // The way into Labs: a triple click. Nothing about the row suggests it.
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
-                Button("Check for Updates…") {
-                    Updater.shared.checkForUpdates()
-                }
             }
         }
         .formStyle(.grouped)

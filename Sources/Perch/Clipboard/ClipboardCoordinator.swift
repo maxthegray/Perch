@@ -1,7 +1,7 @@
 import AppKit
 import ClipboardCore
 
-/// The switch for Magpie, Perch's clipboard history. On by default; off holds no feature at all.
+/// The switch for Perch Clipboard, the clipboard history. On by default; off holds no feature at all.
 @MainActor
 final class ClipboardCoordinator: ObservableObject {
     @Published private(set) var isEnabled = false
@@ -56,7 +56,7 @@ final class ClipboardCoordinator: ObservableObject {
             }
             errorMessage = nil
         } catch {
-            errorMessage = "Magpie’s history could not be cleared."
+            errorMessage = "Perch Clipboard’s history could not be cleared."
         }
     }
 
@@ -68,7 +68,7 @@ final class ClipboardCoordinator: ObservableObject {
         guard feature == nil else { return }
         guard let feature = ClipboardFeature(databaseURL: databaseURL, pasteboard: pasteboard) else {
             UserDefaults.standard.set(false, forKey: PerchSettings.clipboardEnabled)
-            errorMessage = "Magpie could not open its local database."
+            errorMessage = "Perch Clipboard could not open its local database."
             return
         }
         self.feature = feature

@@ -56,7 +56,7 @@ struct ShortcutsView: View {
             showsGrabHandle: showsGrabHandle,
             copiesByDefault: vendCopies,
             revealOnHover: revealOnHover,
-            shakeToSummon: shakeToSummon,
+            shakeToSummon: shakeToSummon && LabsAccess.isUnlocked,
             shelvesOnEdgeTouch: shelveOnEdgeTouch
         )
     }

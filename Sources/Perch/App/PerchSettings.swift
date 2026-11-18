@@ -82,13 +82,13 @@ enum PerchSettings {
     /// Whether the Labs pane is visible. Off until the user asks for it.
     static let labsUnlocked = "Perch.LabsUnlocked"
 
-    // MARK: - Magpie
+    // MARK: - Clipboard
 
-    /// Master switch for Magpie, the clipboard history. Defaults on. Off means nothing
+    /// Master switch for Perch Clipboard, the clipboard history. Defaults on. Off means nothing
     /// runs: no polling, no database, no hotkey.
     static let clipboardEnabled = "Perch.ClipboardEnabled"
     static let clipboardHotKey = "Perch.ClipboardHotKey"
-    /// Raw value of `MagpieStyle`, the popup's look.
+    /// Raw value of `ClipboardStyle`, the popup's look.
     static let clipboardStyle = "Perch.ClipboardStyle"
 
     // MARK: - Internal state (not user-facing)
@@ -122,5 +122,11 @@ enum PerchSettings {
     /// disable the feature for every install that had never opened Settings.
     static func flag(_ key: String, default defaultValue: Bool) -> Bool {
         UserDefaults.standard.object(forKey: key) as? Bool ?? defaultValue
+    }
+
+    /// A Labs feature runs only while Labs is unlocked and its own switch is on, so a
+    /// switch left on from before it moved to Labs can't keep running out of sight.
+    static func labsFlag(_ key: String) -> Bool {
+        LabsAccess.isUnlocked && flag(key, default: false)
     }
 }

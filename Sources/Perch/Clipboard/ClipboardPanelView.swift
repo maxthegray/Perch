@@ -14,7 +14,7 @@ final class ClipboardPanelModel: ObservableObject {
     @Published private(set) var showCount = 0
     /// When the popup last opened; row ages are measured from it.
     @Published private(set) var shownAt = Date()
-    @Published private(set) var style = MagpieStyle.defaultStyle
+    @Published private(set) var style = ClipboardStyle.defaultStyle
 
     var onChoose: ((ClipSummary) -> Void)?
     var onDelete: ((ClipSummary) -> Void)?
@@ -31,7 +31,7 @@ final class ClipboardPanelModel: ObservableObject {
         refilter()
     }
 
-    func prepareForShowing(style: MagpieStyle) {
+    func prepareForShowing(style: ClipboardStyle) {
         self.style = style
         query = ""
         selectedIndex = 0
@@ -152,7 +152,7 @@ struct ClipboardPanelView: View {
                     .font(.system(size: 13))
                     .foregroundStyle(Self.dim)
                     .frame(maxWidth: .infinity)
-                    .frame(height: MagpieStyle.classicRowHeight * 1.5)
+                    .frame(height: ClipboardStyle.classicRowHeight * 1.5)
             } else {
                 scrollingList(spacing: 0, padding: 5) { clip, index in
                     classicRow(clip, index: index)
@@ -184,7 +184,7 @@ struct ClipboardPanelView: View {
         }
         .foregroundStyle(selected ? Color.white : Color.primary)
         .padding(.horizontal, 8)
-        .frame(height: MagpieStyle.classicRowHeight)
+        .frame(height: ClipboardStyle.classicRowHeight)
         .background(
             RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(selected ? Color.accentColor : .clear)

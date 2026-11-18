@@ -6,27 +6,18 @@ struct ClipboardSettingsSections: View {
     let onShowData: () -> Void
 
     @State private var showsClearConfirmation = false
-    @AppStorage(PerchSettings.clipboardStyle) private var style = MagpieStyle.defaultStyle
+    @AppStorage(PerchSettings.clipboardStyle) private var style = ClipboardStyle.defaultStyle
 
     var body: some View {
         Group {
             Section {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Magpie")
-                        Text(caption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("Magpie", isOn: enabledBinding)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
+                Toggle(isOn: enabledBinding) {
+                    Text("Perch Clipboard")
+                    Text(caption)
                 }
-                .padding(.vertical, 2)
 
                 Picker("Look", selection: $style) {
-                    ForEach(MagpieStyle.allCases) { style in
+                    ForEach(ClipboardStyle.allCases) { style in
                         Text(style.displayName).tag(style)
                     }
                 }
@@ -37,15 +28,16 @@ struct ClipboardSettingsSections: View {
                     HotKeyRecorder(clipboard: clipboard)
                 }
                 .disabled(!clipboard.isEnabled)
+            } footer: {
+                Text("↩ copy   ⌘1–9 pick   ⌥⌫ delete   esc close")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
-                        Button("See Collected Data…", action: onShowData)
-                        Button("Clear History…") { showsClearConfirmation = true }
-                    }
-                    Text("↩ copy   ⌘1–9 pick   ⌥⌫ delete   esc close")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+            Section {
+                HStack {
+                    Button("See Collected Data…", action: onShowData)
+                    Button("Clear History…") { showsClearConfirmation = true }
                 }
             }
 
@@ -57,7 +49,7 @@ struct ClipboardSettingsSections: View {
                 }
             }
         }
-        .alert("Clear Magpie’s history?", isPresented: $showsClearConfirmation) {
+        .alert("Clear Perch Clipboard’s history?", isPresented: $showsClearConfirmation) {
             Button("Clear History", role: .destructive) { clipboard.clearHistory() }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -88,7 +80,7 @@ struct HotKeyRecorder: View {
             Button(isRecording ? "Type shortcut…" : clipboard.hotKey.displayString) {
                 isRecording ? stopRecording() : startRecording()
             }
-            .frame(minWidth: 110)
+            .frame(minWidth: 110, alignment: .trailing)
             if clipboard.hotKey != .clipboardDefault, !isRecording {
                 Button("Reset") { clipboard.setHotKey(.clipboardDefault) }
             }

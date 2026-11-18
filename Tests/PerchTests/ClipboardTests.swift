@@ -151,30 +151,30 @@ final class ClipboardCoordinatorTests: XCTestCase {
     }
 }
 
-final class MagpieStyleTests: XCTestCase {
+final class ClipboardStyleTests: XCTestCase {
     func testDefaultsToTheMaccyLikeClassicLook() {
         let saved = UserDefaults.standard.object(forKey: PerchSettings.clipboardStyle)
         defer { UserDefaults.standard.set(saved, forKey: PerchSettings.clipboardStyle) }
         UserDefaults.standard.removeObject(forKey: PerchSettings.clipboardStyle)
 
-        XCTAssertEqual(MagpieStyle.current, .classic)
+        XCTAssertEqual(ClipboardStyle.current, .classic)
         UserDefaults.standard.set("detailed", forKey: PerchSettings.clipboardStyle)
-        XCTAssertEqual(MagpieStyle.current, .detailed)
+        XCTAssertEqual(ClipboardStyle.current, .detailed)
         UserDefaults.standard.set("bogus", forKey: PerchSettings.clipboardStyle)
-        XCTAssertEqual(MagpieStyle.current, .classic)
+        XCTAssertEqual(ClipboardStyle.current, .classic)
     }
 
     func testClassicHugsItsRowsUpToALimit() {
-        let row = MagpieStyle.classicRowHeight
-        XCTAssertEqual(MagpieStyle.classic.height(forRows: 3) - MagpieStyle.classic.height(forRows: 2), row)
+        let row = ClipboardStyle.classicRowHeight
+        XCTAssertEqual(ClipboardStyle.classic.height(forRows: 3) - ClipboardStyle.classic.height(forRows: 2), row)
         XCTAssertEqual(
-            MagpieStyle.classic.height(forRows: 100),
-            MagpieStyle.classic.height(forRows: MagpieStyle.classicMaxVisibleRows)
+            ClipboardStyle.classic.height(forRows: 100),
+            ClipboardStyle.classic.height(forRows: ClipboardStyle.classicMaxVisibleRows)
         )
-        XCTAssertGreaterThan(MagpieStyle.classic.height(forRows: 0), MagpieStyle.classicSearchHeight)
+        XCTAssertGreaterThan(ClipboardStyle.classic.height(forRows: 0), ClipboardStyle.classicSearchHeight)
     }
 
     func testDetailedIsAFixedCard() {
-        XCTAssertEqual(MagpieStyle.detailed.height(forRows: 0), MagpieStyle.detailed.height(forRows: 50))
+        XCTAssertEqual(ClipboardStyle.detailed.height(forRows: 0), ClipboardStyle.detailed.height(forRows: 50))
     }
 }

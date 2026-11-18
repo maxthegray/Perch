@@ -6,38 +6,34 @@ struct ShelfSettingsPane: View {
     @ObservedObject var themeStore: ThemeStore
     @ObservedObject var edgeSettings: EdgeSettings
 
-    @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
-
     var body: some View {
         Form {
-            Section("Layout") {
-                Picker("Shelf style", selection: $themeStore.style) {
+            Section {
+                Picker("Style", selection: $themeStore.style) {
                     ForEach(ShelfStyle.allCases, id: \.self) { style in
                         Text(style.displayName).tag(style)
                     }
                 }
                 .pickerStyle(.segmented)
 
-                Picker("Item layout", selection: $themeStore.stacksItems) {
+                Picker("Items", selection: $themeStore.stacksItems) {
                     Text("List").tag(false)
                     Text("Stack").tag(true)
                 }
                 .pickerStyle(.segmented)
 
-                Picker("Shelf size", selection: $themeStore.sizePreset) {
+                Picker("Size", selection: $themeStore.sizePreset) {
                     ForEach(ShelfSizePreset.allCases, id: \.self) { preset in
                         Text(preset.displayName).tag(preset)
                     }
                 }
                 .pickerStyle(.segmented)
-            }
 
-            Section("Appearance") {
                 Toggle("Show item names", isOn: showsLabelsBinding)
-                Toggle("Show shelf shadow", isOn: $themeStore.showsShadow)
+                Toggle("Show shadow", isOn: $themeStore.showsShadow)
             }
 
-            Section("Available shelf edges") {
+            Section("Edges") {
                 HStack(spacing: 8) {
                     locationToggle(
                         title: "Left",
@@ -59,17 +55,6 @@ struct ShelfSettingsPane: View {
                         isOn: edgeBinding(.right),
                         disabled: edgeIsLastEnabled(.right)
                     )
-                }
-            }
-
-            Section("Dock") {
-                settingToggle(
-                    title: "Snap beside the Dock",
-                    caption: dockCaption,
-                    isOn: $snapBesideDock
-                )
-                .onChange(of: snapBesideDock) { _, enabled in
-                    if enabled { DockGeometryReader.requestPermissionIfNeeded() }
                 }
             }
         }
@@ -104,30 +89,6 @@ struct ShelfSettingsPane: View {
         .controlSize(.regular)
         .disabled(disabled)
         .frame(maxWidth: .infinity)
-    }
-
-    private func settingToggle(
-        title: String,
-        caption: String,
-        isOn: Binding<Bool>
-    ) -> some View {
-        Toggle(isOn: isOn) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title)
-                Text(caption)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .toggleStyle(.switch)
-        .padding(.vertical, 2)
-    }
-
-    private var dockCaption: String {
-        if snapBesideDock, !DockGeometryReader.isTrusted {
-            return "Accessibility access is required; enable Perch in System Settings."
-        }
-        return "Adds both ends as shelf locations and follows the Dock when it hides."
     }
 
     private var showsLabelsBinding: Binding<Bool> {

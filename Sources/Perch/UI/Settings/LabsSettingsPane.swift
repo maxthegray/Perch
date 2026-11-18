@@ -9,14 +9,50 @@ struct LabsSettingsPane: View {
 
     var body: some View {
         Form {
+            ShelfExperimentsSection()
             SmartPerchSettingsSections(smartPerch: smartPerch, onShowData: onShowData)
         }
         .formStyle(.grouped)
     }
 }
 
-/// Magpie, the clipboard history.
-struct MagpieSettingsPane: View {
+/// Shelf gestures and placements that are still experiments.
+struct ShelfExperimentsSection: View {
+    @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
+    @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)
+    private var moveOpenShelfBetweenEdges = false
+    @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
+
+    var body: some View {
+        Section("Shelf") {
+            Toggle(isOn: $shakeToSummon) {
+                Text("Shake pointer to show")
+                Text("Opens a floating shelf where the pointer is.")
+            }
+            Toggle(isOn: $moveOpenShelfBetweenEdges) {
+                Text("Move an open shelf to the edge I touch")
+                Text("Rest the pointer against another enabled edge.")
+            }
+            Toggle(isOn: $snapBesideDock) {
+                Text("Snap beside the Dock")
+                Text(dockCaption)
+            }
+            .onChange(of: snapBesideDock) { _, enabled in
+                if enabled { DockGeometryReader.requestPermissionIfNeeded() }
+            }
+        }
+    }
+
+    private var dockCaption: String {
+        if snapBesideDock, !DockGeometryReader.isTrusted {
+            return "Needs Accessibility access in System Settings."
+        }
+        return "Adds both ends of the Dock as shelf locations."
+    }
+}
+
+/// Perch Clipboard, the clipboard history.
+struct ClipboardSettingsPane: View {
     @ObservedObject var clipboard: ClipboardCoordinator
     let onShowData: () -> Void
 
@@ -37,25 +73,16 @@ struct SmartPerchSettingsSections: View {
 
     var body: some View {
         Group {
-            Section("Smart Perch") {
-                HStack(alignment: .center, spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Smart Perch")
-                        Text(smartPerchCaption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 12)
-                    Toggle("Smart Perch", isOn: smartPerchBinding)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
-                }
-                .padding(.vertical, 2)
-            }
-
             Section {
-                Text("Smart Perch reads screenshots to name them and remembers where you usually put things. Everything stays in a local database on this Mac and is never sent anywhere.")
+                Toggle(isOn: smartPerchBinding) {
+                    Text("Smart Perch")
+                    Text(smartPerchCaption)
+                }
+                .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
+            } header: {
+                Text("Smart Perch")
+            } footer: {
+                Text("Everything stays in a local database on this Mac and is never sent anywhere.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
