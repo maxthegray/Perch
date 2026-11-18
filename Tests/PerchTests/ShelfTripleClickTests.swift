@@ -2,12 +2,49 @@ import AppKit
 import XCTest
 @testable import Perch
 
-/// Triple-click puts the shelf away from anywhere on the card, including the inert
-/// background of an empty shelf, which the host view declines and the drop view
-/// beneath it receives.
+/// Triple-click (a Labs feature) puts the shelf away from anywhere on the card,
+/// including the inert background of an empty shelf, which the host view declines and
+/// the drop view beneath it receives.
 @MainActor
 final class ShelfTripleClickTests: XCTestCase {
+    private var savedDefaults: [String: Any?] = [:]
+    private let keys = [PerchSettings.labsUnlocked, PerchSettings.tripleClickToHide]
+
+    override func setUp() {
+        super.setUp()
+        savedDefaults = Dictionary(uniqueKeysWithValues: keys.map {
+            ($0, UserDefaults.standard.object(forKey: $0))
+        })
+    }
+
+    override func tearDown() {
+        for (key, value) in savedDefaults {
+            if let value { UserDefaults.standard.set(value, forKey: key) }
+            else { UserDefaults.standard.removeObject(forKey: key) }
+        }
+        super.tearDown()
+    }
+
     func testTripleClickOnAnEmptyShelfPutsItAway() {
+        UserDefaults.standard.set(true, forKey: PerchSettings.labsUnlocked)
+        UserDefaults.standard.set(true, forKey: PerchSettings.tripleClickToHide)
+        XCTAssertEqual(tripleClicks(), 1)
+    }
+
+    func testTripleClickDoesNothingWhileOff() {
+        UserDefaults.standard.set(true, forKey: PerchSettings.labsUnlocked)
+        UserDefaults.standard.removeObject(forKey: PerchSettings.tripleClickToHide)
+        XCTAssertEqual(tripleClicks(), 0)
+    }
+
+    func testTripleClickDoesNothingWhileLabsIsLocked() {
+        UserDefaults.standard.set(false, forKey: PerchSettings.labsUnlocked)
+        UserDefaults.standard.set(true, forKey: PerchSettings.tripleClickToHide)
+        XCTAssertEqual(tripleClicks(), 0)
+    }
+
+    /// Clicks once, twice, then three times, and counts put-away requests.
+    private func tripleClicks() -> Int {
         let holding = HoldingDirectory(
             root: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ShelfTripleClickTests-\(UUID().uuidString)", isDirectory: true)
@@ -61,6 +98,6 @@ final class ShelfTripleClickTests: XCTestCase {
         press(clickCount: 2)
         XCTAssertEqual(tripleClicks, 0)
         press(clickCount: 3)
-        XCTAssertEqual(tripleClicks, 1)
+        return tripleClicks
     }
 }

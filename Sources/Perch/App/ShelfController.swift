@@ -462,9 +462,6 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
         }
-        settingsWindow.onShowShortcuts = { [weak self] in
-            self?.shortcutsWindow.show()
-        }
         settingsWindow.onShowWelcome = { [weak self] in
             self?.onShowWelcome?()
         }

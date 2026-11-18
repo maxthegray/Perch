@@ -25,9 +25,14 @@ struct ShelfExperimentsSection: View {
     private var moveOpenShelfBetweenEdges = false
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
     @AppStorage(PerchSettings.referenceDroppedFiles) private var referenceDroppedFiles = false
+    @AppStorage(PerchSettings.tripleClickToHide) private var tripleClickToHide = false
 
     var body: some View {
         Section("Shelf") {
+            Toggle(isOn: $tripleClickToHide) {
+                Text("Triple-click to hide the shelf")
+                Text("Double-click Quick Look waits a moment in case a third click follows.")
+            }
             Toggle(isOn: $shakeToSummon) {
                 Text("Shake pointer to show")
                 Text("Opens a floating shelf where the pointer is.")

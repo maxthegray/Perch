@@ -122,8 +122,7 @@ struct WelcomeView: View {
                 symbol: "rectangle.righthalf.inset.filled",
                 title: "Hide it, bring it back",
                 detail: "Once it's holding your stuff it stays out. Push your mouse into "
-                    + "that edge to tuck it away, and again to bring it back. "
-                    + "Triple-clicking it tucks it away too."
+                    + "that edge to tuck it away, and again to bring it back."
             )
             Lesson(
                 symbol: "arrow.down.circle.dotted",

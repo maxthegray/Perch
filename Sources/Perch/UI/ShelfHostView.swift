@@ -601,12 +601,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         resetDragState()
         endHoverRest()
         guard !isContextMenuOpen else { return }
-        if event.clickCount >= 3 {
-            handleTripleClick()
-            return
-        }
-        if event.clickCount == 2 {
-            onSecondClick?()
+        if tripleClickHides {
+            if event.clickCount >= 3 {
+                handleTripleClick()
+                return
+            }
+            if event.clickCount == 2 {
+                onSecondClick?()
+            }
         }
         hasActiveLeftPress = true
         onCardInteraction?()
@@ -834,6 +836,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     }
 
     private func showQuickLook(_ items: [StoredItem]) {
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
         quickLook.show(items) { [weak self] item in
             guard let self, let window = self.window, let frame = self.rowFrame(of: item) else { return nil }
             return window.convertToScreen(self.convert(frame, to: nil))
@@ -1064,11 +1067,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// underneath, which hands it back here so a triple-click there still counts.
     func unclaimedPressBegan(_ event: NSEvent) {
         endHoverRest()
+        guard tripleClickHides else { return }
         if event.clickCount >= 3 {
             handleTripleClick()
         } else if event.clickCount == 2 {
             onSecondClick?()
         }
+    }
+
+    private var tripleClickHides: Bool {
+        PerchSettings.labsFlag(PerchSettings.tripleClickToHide)
     }
 
     /// The double-click that preceded it may have opened Quick Look; that goes too.
@@ -1081,11 +1089,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     private var pendingQuickLook: Task<Void, Never>?
 
-    /// A double-click may be the first two clicks of a triple-click, which puts the shelf
-    /// away; Quick Look waits out the system's multi-click interval so it never flashes
-    /// open just to be closed again.
+    /// With triple-click-to-hide on, a double-click may be the first two clicks of a
+    /// triple-click; Quick Look then waits out the multi-click interval so it never
+    /// flashes open just to be closed again. Otherwise it opens at once.
     private func scheduleQuickLook(_ targets: [StoredItem]) {
         pendingQuickLook?.cancel()
+        guard tripleClickHides else {
+            pendingQuickLook = nil
+            showQuickLook(targets)
+            return
+        }
         pendingQuickLook = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(NSEvent.doubleClickInterval))
             guard !Task.isCancelled, let self else { return }
@@ -1593,16 +1606,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 menu.addItem(.separator())
             }
 
-            let previewable = targets.filter(quickLook.canPreview)
-            if !previewable.isEmpty {
-                let quickLookItem = NSMenuItem(
-                    title: previewable.count > 1 ? "Quick Look \(previewable.count) Items" : "Quick Look",
-                    action: #selector(quickLookMenuAction(_:)),
-                    keyEquivalent: ""
-                )
-                quickLookItem.target = self
-                menu.addItem(quickLookItem)
-            }
             let shareable = targets.filter(sharing.canShare)
             if !shareable.isEmpty {
                 let shareItem = NSMenuItem(
@@ -1831,11 +1834,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         menuTargetItem = nil
     }
 
-    @objc private func quickLookMenuAction(_ sender: NSMenuItem) {
-        guard let item = menuTargetItem else { return }
-        showQuickLook(actionItems(for: item).filter(quickLook.canPreview))
-        menuTargetItem = nil
-    }
 
     @objc private func shareMenuAction(_ sender: NSMenuItem) {
         guard let item = menuTargetItem else { return }

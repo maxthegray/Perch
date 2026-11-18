@@ -15,7 +15,8 @@ enum GestureShortcuts {
         copiesByDefault: Bool,
         revealOnHover: Bool,
         shakeToSummon: Bool,
-        shelvesOnEdgeTouch: Bool
+        shelvesOnEdgeTouch: Bool,
+        tripleClickHides: Bool
     ) -> [GestureShortcut] {
         var rows: [GestureShortcut] = []
         if !copiesByDefault {
@@ -28,9 +29,11 @@ enum GestureShortcuts {
             GestureShortcut(key: "⌘", gesture: "Click", action: "Add to selection"),
             GestureShortcut(key: "⇧", gesture: "Click", action: "Select range"),
             GestureShortcut(gesture: "Double-click", action: "Quick Look"),
-            GestureShortcut(gesture: "Right-click", action: "Menu"),
-            GestureShortcut(gesture: "Triple-click", action: "Hide shelf")
+            GestureShortcut(gesture: "Right-click", action: "Menu")
         ]
+        if tripleClickHides {
+            rows.append(GestureShortcut(gesture: "Triple-click", action: "Hide shelf"))
+        }
         if !revealOnHover {
             rows.append(GestureShortcut(key: "⌃", gesture: "At edge", action: "Show shelf"))
         }
@@ -44,22 +47,51 @@ enum GestureShortcuts {
     }
 }
 
-struct ShortcutsView: View {
+/// The settings that decide which gestures exist, read live from defaults.
+struct CurrentShortcuts: DynamicProperty {
     @AppStorage(PerchSettings.showsGrabHandle) private var showsGrabHandle = false
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
     @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = false
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
+    @AppStorage(PerchSettings.tripleClickToHide) private var tripleClickToHide = false
 
-    private var rows: [GestureShortcut] {
+    var rows: [GestureShortcut] {
         GestureShortcuts.rows(
             showsGrabHandle: showsGrabHandle,
             copiesByDefault: vendCopies,
             revealOnHover: revealOnHover,
             shakeToSummon: shakeToSummon && LabsAccess.isUnlocked,
-            shelvesOnEdgeTouch: shelveOnEdgeTouch
+            shelvesOnEdgeTouch: shelveOnEdgeTouch,
+            tripleClickHides: tripleClickToHide && LabsAccess.isUnlocked
         )
     }
+}
+
+/// The cheat sheet as form rows, for the General settings pane.
+struct ShortcutsSection: View {
+    private let shortcuts = CurrentShortcuts()
+
+    var body: some View {
+        Section("Shortcuts") {
+            ForEach(Array(shortcuts.rows.enumerated()), id: \.offset) { _, row in
+                LabeledContent {
+                    Text(row.action)
+                } label: {
+                    HStack(spacing: 6) {
+                        if let key = row.key { Keycap(glyph: key) }
+                        Text(row.gesture)
+                    }
+                }
+            }
+        }
+    }
+}
+
+struct ShortcutsView: View {
+    private let shortcuts = CurrentShortcuts()
+
+    private var rows: [GestureShortcut] { shortcuts.rows }
 
     var body: some View {
         Grid(alignment: .leading, horizontalSpacing: 6, verticalSpacing: 7) {

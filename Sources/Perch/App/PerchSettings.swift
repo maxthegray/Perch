@@ -57,6 +57,8 @@ enum PerchSettings {
     /// Touching another enabled screen edge moves a populated docked shelf there after
     /// a short confirmation dwell. Defaults off.
     static let moveOpenShelfBetweenEdges = "Perch.MoveOpenShelfBetweenEdges"
+    /// Triple-clicking the card puts the shelf away. A Labs feature, off by default.
+    static let tripleClickToHide = "Perch.TripleClickToHide"
 
     // MARK: - Files
 

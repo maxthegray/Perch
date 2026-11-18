@@ -7,7 +7,6 @@ struct GeneralSettingsPane: View {
     @ObservedObject var smartPerch: SmartPerchCoordinator
     /// Unlocks Labs and brings its tab forward.
     let onRevealLabs: () -> Void
-    let onShowShortcuts: () -> Void
     let onShowWelcome: () -> Void
     @State private var launchAtLogin = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
@@ -20,13 +19,9 @@ struct GeneralSettingsPane: View {
                         .onAppear { launchAtLogin = loginItem.isEnabled }
                 }
                 Toggle("Show in menu bar", isOn: $showsMenuBarIcon)
-                LabeledContent("Help") {
-                    HStack(spacing: 8) {
-                        Button("Shortcuts…", action: onShowShortcuts)
-                        Button("Welcome Screen…", action: onShowWelcome)
-                    }
-                }
             }
+
+            ShortcutsSection()
 
             Section {
                 LabeledContent("Version") {
@@ -41,6 +36,7 @@ struct GeneralSettingsPane: View {
                     // The way into Labs: a triple click. Nothing about the row suggests it.
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
+                Button("Show Welcome Screen…", action: onShowWelcome)
             }
         }
         .formStyle(.grouped)

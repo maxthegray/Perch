@@ -32,7 +32,6 @@ final class SettingsWindowController {
     /// Fires when the settings window closes, so a shelf that exists only as the
     /// Shelf preview can be cleared away with it.
     var onWindowClosed: (() -> Void)?
-    var onShowShortcuts: (() -> Void)?
     var onShowWelcome: (() -> Void)?
     private var closeObserver: NSObjectProtocol?
 
@@ -69,7 +68,6 @@ final class SettingsWindowController {
             view: GeneralSettingsPane(
                 smartPerch: smartPerch,
                 onRevealLabs: { [weak self] in self?.revealLabs() },
-                onShowShortcuts: { [weak self] in self?.onShowShortcuts?() },
                 onShowWelcome: { [weak self] in self?.onShowWelcome?() }
             )
         )
