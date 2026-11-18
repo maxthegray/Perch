@@ -3,13 +3,14 @@ import SwiftUI
 /// Experimental features, each behind its own switch and off until turned on. Hidden
 /// until unlocked from the General pane.
 struct LabsSettingsPane: View {
+    @ObservedObject var themeStore: ThemeStore
     @ObservedObject var smartPerch: SmartPerchCoordinator
     /// Opens the read-only viewer for the database.
     let onShowData: () -> Void
 
     var body: some View {
         Form {
-            ShelfExperimentsSection()
+            ShelfExperimentsSection(themeStore: themeStore)
             SmartPerchSettingsSections(smartPerch: smartPerch, onShowData: onShowData)
         }
         .formStyle(.grouped)
@@ -18,10 +19,12 @@ struct LabsSettingsPane: View {
 
 /// Shelf gestures and placements that are still experiments.
 struct ShelfExperimentsSection: View {
+    @ObservedObject var themeStore: ThemeStore
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.moveOpenShelfBetweenEdges)
     private var moveOpenShelfBetweenEdges = false
     @AppStorage(PerchSettings.snapBesideDock) private var snapBesideDock = false
+    @AppStorage(PerchSettings.referenceDroppedFiles) private var referenceDroppedFiles = false
 
     var body: some View {
         Section("Shelf") {
@@ -39,6 +42,14 @@ struct ShelfExperimentsSection: View {
             }
             .onChange(of: snapBesideDock) { _, enabled in
                 if enabled { DockGeometryReader.requestPermissionIfNeeded() }
+            }
+            Toggle(isOn: $themeStore.showsEdgeTab) {
+                Text("Edge reminder during long drags")
+                Text("Appears after five seconds of dragging.")
+            }
+            Toggle(isOn: $referenceDroppedFiles) {
+                Text("Leave dropped files where they are")
+                Text("Perch links to them instead of moving them into its storage.")
             }
         }
     }

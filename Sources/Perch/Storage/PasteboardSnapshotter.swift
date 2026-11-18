@@ -170,9 +170,8 @@ struct PasteboardSnapshotter {
         var stringTitle: String?
         var repIndex = 0
         var reservedBackingFileNames = Set<String>()
-        let referencesDroppedFiles = referenceOverride ?? UserDefaults.standard.bool(
-            forKey: PerchSettings.referenceDroppedFiles
-        )
+        let referencesDroppedFiles = referenceOverride
+            ?? PerchSettings.labsFlag(PerchSettings.referenceDroppedFiles)
 
         for capturedItem in capturedItems {
             if stringTitle == nil { stringTitle = capturedItem.stringTitle }

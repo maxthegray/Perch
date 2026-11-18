@@ -151,8 +151,6 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Called when the user picks "Settings"; the controller opens the window.
     var onShowSettings: (() -> Void)?
-    var onShowShortcuts: (() -> Void)?
-    var onShowWelcome: (() -> Void)?
     /// Triple-click anywhere on the card: put the shelf away.
     var onTripleClick: (() -> Void)?
     /// The second click of what may become a triple-click.
@@ -1615,19 +1613,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 shareItem.target = self
                 menu.addItem(shareItem)
             }
+            addTransformMenu(to: menu, for: targets)
             if menu.items.last?.isSeparatorItem == false {
                 menu.addItem(.separator())
             }
-
-            addTransformMenu(to: menu, for: targets)
-
-            let delete = NSMenuItem(
-                title: targets.count > 1 ? "Delete \(targets.count) Items" : "Delete",
-                action: #selector(deleteMenuAction(_:)),
-                keyEquivalent: ""
-            )
-            delete.target = self
-            menu.addItem(delete)
 
             let returnItems = NSMenuItem(
                 title: targets.count > 1 ? "Return \(targets.count) Items" : "Return",
@@ -1636,6 +1625,14 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             )
             returnItems.target = self
             menu.addItem(returnItems)
+
+            let delete = NSMenuItem(
+                title: targets.count > 1 ? "Delete \(targets.count) Items" : "Delete",
+                action: #selector(deleteMenuAction(_:)),
+                keyEquivalent: ""
+            )
+            delete.target = self
+            menu.addItem(delete)
 
             menu.addItem(.separator())
         } else {
@@ -1667,52 +1664,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             menu.addItem(closeShelf)
         }
 
-        // Keep the full preference surface in Settings.
         if isFreeMode {
             menu.addItem(.separator())
         }
         let settings = NSMenuItem(
-            title: "Settings",
+            title: "Settings…",
             action: #selector(showSettingsAction(_:)),
             keyEquivalent: ""
         )
         settings.target = self
         menu.addItem(settings)
-
-        let shortcuts = NSMenuItem(
-            title: "Shortcuts…",
-            action: #selector(showShortcutsAction(_:)),
-            keyEquivalent: ""
-        )
-        shortcuts.target = self
-        menu.addItem(shortcuts)
-
-        let welcome = NSMenuItem(
-            title: "Welcome Screen…",
-            action: #selector(showWelcomeAction(_:)),
-            keyEquivalent: ""
-        )
-        welcome.target = self
-        menu.addItem(welcome)
-
-        // Short on purpose: no wider than the version line, so it never widens the menu.
-        let updates = NSMenuItem(
-            title: "Updates…",
-            action: #selector(checkForUpdatesAction(_:)),
-            keyEquivalent: ""
-        )
-        updates.target = self
-        menu.addItem(updates)
-
-        menu.addItem(.separator())
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "Development"
-        let about = NSMenuItem(
-            title: "\(PerchProductIdentity.displayName) \(version)",
-            action: nil,
-            keyEquivalent: ""
-        )
-        about.isEnabled = false
-        menu.addItem(about)
 
         return menu
     }
@@ -1852,20 +1813,8 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         onContextMenuClosed?()
     }
 
-    @objc private func checkForUpdatesAction(_ sender: NSMenuItem) {
-        Updater.shared.checkForUpdates()
-    }
-
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
         onShowSettings?()
-    }
-
-    @objc private func showShortcutsAction(_ sender: NSMenuItem) {
-        onShowShortcuts?()
-    }
-
-    @objc private func showWelcomeAction(_ sender: NSMenuItem) {
-        onShowWelcome?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {

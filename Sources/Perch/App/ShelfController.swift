@@ -127,6 +127,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shakeToSummonEnabled: Bool {
         PerchSettings.labsFlag(PerchSettings.shakeToSummon)
     }
+    /// The long-drag edge reminder, a Labs feature.
+    private var showsEdgeReminder: Bool {
+        LabsAccess.isUnlocked && themeStore.showsEdgeTab
+    }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.
     private var keepsEmptyFreeShelf: Bool {
@@ -458,10 +462,10 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
         }
-        hostView.onShowShortcuts = { [weak self] in
+        settingsWindow.onShowShortcuts = { [weak self] in
             self?.shortcutsWindow.show()
         }
-        hostView.onShowWelcome = { [weak self] in
+        settingsWindow.onShowWelcome = { [weak self] in
             self?.onShowWelcome?()
         }
         menuBarIcon.onShowWelcome = { [weak self] in
@@ -1400,7 +1404,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     private func setTabsShown(_ shown: Bool) {
-        let shown = shown && themeStore.showsEdgeTab
+        let shown = shown && showsEdgeReminder
         for strip in edgeStrips {
             strip.showsTab = shown
         }
@@ -1410,7 +1414,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         edgeTabReminderTask?.cancel()
         edgeTabReminderVisible = false
         setTabsShown(false)
-        guard usesEdgeDock, themeStore.showsEdgeTab else { return }
+        guard usesEdgeDock, showsEdgeReminder else { return }
 
         edgeTabReminderTask = Task { @MainActor [weak self] in
             do {
@@ -1476,7 +1480,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// Show only the enabled tab nearest the live drag.
     private func showNearestTab(to point: NSPoint) {
-        guard usesEdgeDock, themeStore.showsEdgeTab else {
+        guard usesEdgeDock, showsEdgeReminder else {
             setTabsShown(false)
             return
         }

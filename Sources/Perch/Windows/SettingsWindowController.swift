@@ -32,6 +32,8 @@ final class SettingsWindowController {
     /// Fires when the settings window closes, so a shelf that exists only as the
     /// Shelf preview can be cleared away with it.
     var onWindowClosed: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
+    var onShowWelcome: (() -> Void)?
     private var closeObserver: NSObjectProtocol?
 
     init(
@@ -64,9 +66,12 @@ final class SettingsWindowController {
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            view: GeneralSettingsPane(smartPerch: smartPerch) { [weak self] in
-                self?.revealLabs()
-            }
+            view: GeneralSettingsPane(
+                smartPerch: smartPerch,
+                onRevealLabs: { [weak self] in self?.revealLabs() },
+                onShowShortcuts: { [weak self] in self?.onShowShortcuts?() },
+                onShowWelcome: { [weak self] in self?.onShowWelcome?() }
+            )
         )
         addPane(
             to: tabs, label: Self.shelfPaneLabel, symbol: "rectangle.3.group",
@@ -149,7 +154,7 @@ final class SettingsWindowController {
         guard existing == nil else { return }
         addPane(
             to: tabs, label: Self.labsPaneLabel, symbol: "flask",
-            view: LabsSettingsPane(smartPerch: smartPerch) { [weak self] in
+            view: LabsSettingsPane(themeStore: themeStore, smartPerch: smartPerch) { [weak self] in
                 guard let self else { return }
                 self.collectedData.show(title: "Smart Perch", databaseURL: self.smartPerch.databaseURL)
             }
