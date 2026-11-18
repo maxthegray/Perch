@@ -8,6 +8,7 @@ import SwiftUI
 final class SettingsWindowController {
     private static let shelfPaneLabel = "Shelf"
     private static let labsPaneLabel = "Labs"
+    private static let paneWidth: CGFloat = 540
 
     private let themeStore: ThemeStore
     private let edgeSettings: EdgeSettings
@@ -63,29 +64,24 @@ final class SettingsWindowController {
 
         addPane(
             to: tabs, label: "General", symbol: "gearshape",
-            size: NSSize(width: 540, height: 210),
             view: GeneralSettingsPane(smartPerch: smartPerch) { [weak self] in
                 self?.revealLabs()
             }
         )
         addPane(
             to: tabs, label: Self.shelfPaneLabel, symbol: "rectangle.3.group",
-            size: NSSize(width: 540, height: 340),
             view: ShelfSettingsPane(themeStore: themeStore, edgeSettings: edgeSettings)
         )
         addPane(
             to: tabs, label: "Behavior", symbol: "cursorarrow.motionlines",
-            size: NSSize(width: 540, height: 345),
             view: BehaviorSettingsPane(themeStore: themeStore)
         )
         addPane(
             to: tabs, label: "Files", symbol: "arrow.right",
-            size: NSSize(width: 540, height: 245),
             view: FileSettingsPane()
         )
         addPane(
             to: tabs, label: "Clipboard", symbol: "doc.on.clipboard",
-            size: NSSize(width: 540, height: 270),
             view: ClipboardSettingsPane(clipboard: clipboard) { [weak self] in
                 guard let self else { return }
                 self.collectedData.show(title: "Perch Clipboard", databaseURL: self.clipboard.databaseURL)
@@ -96,7 +92,6 @@ final class SettingsWindowController {
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = tabs.tabViewItems.first?.label ?? "Settings"
-        window.setContentSize(NSSize(width: 540, height: 210))
         window.isReleasedWhenClosed = false
         window.center()
         self.window = window
@@ -154,7 +149,6 @@ final class SettingsWindowController {
         guard existing == nil else { return }
         addPane(
             to: tabs, label: Self.labsPaneLabel, symbol: "flask",
-            size: NSSize(width: 540, height: 530),
             view: LabsSettingsPane(smartPerch: smartPerch) { [weak self] in
                 guard let self else { return }
                 self.collectedData.show(title: "Smart Perch", databaseURL: self.smartPerch.databaseURL)
@@ -183,32 +177,22 @@ final class SettingsWindowController {
         reconcileAppearancePreview()
     }
 
-    /// Each pane keeps a fixed preferred size so the toolbar tab style can animate the
-    /// window between them; taller content scrolls inside its grouped form.
+    /// Every pane is exactly as tall as its settings, never scrolling: the hosting
+    /// controller publishes the form's ideal size, and the toolbar tab style animates
+    /// the window to it on each switch.
     private func addPane<V: View>(
         to tabs: NSTabViewController,
         label: String,
         symbol: String,
-        size: NSSize,
         view: V
     ) {
-        addPane(
-            to: tabs,
-            label: label,
-            symbol: symbol,
-            size: size,
-            controller: NSHostingController(rootView: view)
+        let hosting = NSHostingController(
+            rootView: view
+                .scrollDisabled(true)
+                .frame(width: Self.paneWidth)
+                .fixedSize(horizontal: false, vertical: true)
         )
-    }
-
-    private func addPane(
-        to tabs: NSTabViewController,
-        label: String,
-        symbol: String,
-        size: NSSize,
-        controller hosting: NSViewController
-    ) {
-        hosting.preferredContentSize = size
+        hosting.sizingOptions = [.preferredContentSize]
         // NSTabViewController propagates the selected child's title up to the window;
         // untitled children would blank it to "Untitled" on every tab switch.
         hosting.title = label
