@@ -1,0 +1,34 @@
+import XCTest
+@testable import Perch
+
+@MainActor
+final class DiagnosticsTests: XCTestCase {
+    func testLoggedFailuresReachTheReport() {
+        let marker = UUID().uuidString
+        NSLog("Perch could not reach test target \(marker)")
+        NSLog("Perch loaded 3 stored item(s) \(marker)")
+
+        let errors = Diagnostics.recentErrors(limit: 200).filter { $0.contains(marker) }
+
+        XCTAssertEqual(errors.count, 1)
+        XCTAssertTrue(errors[0].hasSuffix("Perch could not reach test target \(marker)"))
+    }
+
+    func testReportListsEveryCheckAndError() {
+        let checks = [
+            DiagnosticCheck(title: "Desktop folder", status: .problem, detail: "Blocked."),
+            DiagnosticCheck(title: "Launch at login", status: .ok, detail: "On.")
+        ]
+        let report = Diagnostics.report(checks: checks, errors: ["12:00:00  boom"])
+
+        XCTAssertTrue(report.contains("[FAIL] Desktop folder: Blocked."))
+        XCTAssertTrue(report.contains("[OK  ] Launch at login: On."))
+        XCTAssertTrue(report.contains("12:00:00  boom"))
+    }
+
+    func testLogKeepsOnlyTheNewestEntries() {
+        for index in 0..<250 { NSLog("filler \(index)") }
+        XCTAssertEqual(PerchLog.recent.count, 200)
+        XCTAssertEqual(PerchLog.recent.last?.message, "filler 249")
+    }
+}

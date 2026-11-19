@@ -14,7 +14,7 @@ struct FileSettingsPane: View {
             Section {
                 Toggle(isOn: $offerRecentArrivals) {
                     Text("Show recent arrivals")
-                    Text("Offer new files from Downloads and the Desktop.")
+                    Text("Offer new files from Downloads, the Desktop and your screenshots.")
                 }
                 Toggle(isOn: replacesOriginalBinding) {
                     Text("Replace the original after transforming")

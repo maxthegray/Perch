@@ -67,6 +67,7 @@ final class SettingsWindowController {
             to: tabs, label: "General", symbol: "gearshape",
             view: GeneralSettingsPane(
                 smartPerch: smartPerch,
+                clipboard: clipboard,
                 onRevealLabs: { [weak self] in self?.revealLabs() },
                 onShowWelcome: { [weak self] in self?.onShowWelcome?() }
             )

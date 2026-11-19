@@ -4,11 +4,14 @@ import SmartPerchCore
 enum ArrivalLocation: String, Equatable, Sendable {
     case downloads
     case desktop
+    /// The Screenshot app's save folder, when it is neither of the above.
+    case screenshots
 
     var displayName: String {
         switch self {
         case .downloads: return "Downloads"
         case .desktop: return "Desktop"
+        case .screenshots: return "Screenshots"
         }
     }
 

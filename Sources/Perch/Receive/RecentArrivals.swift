@@ -3,7 +3,8 @@ import Darwin
 import SmartPerchCore
 import UniformTypeIdentifiers
 
-/// OFFER: surfaces files that just arrived in Downloads / Desktop as ghost rows.
+/// OFFER: surfaces files that just arrived in Downloads / Desktop (and the screenshot
+/// folder, when it is elsewhere) as ghost rows.
 ///
 /// Directory changes trigger a debounced `refresh`; the controller either updates a
 /// visible shelf or briefly reveals a hidden one. Anti-annoyance rules:
@@ -59,6 +60,8 @@ final class RecentArrivals: ObservableObject {
     /// temporary `.crdownload` and then renames it, so directory-level events are the
     /// reliable signal; the controller debounces and rescans after either operation.
     private var directorySources: [DispatchSourceFileSystemObject] = []
+    /// Resolved paths of the folders actually being watched, for troubleshooting.
+    private(set) static var watchingPaths: Set<String> = []
 
     init() {
         dismissedPaths = UserDefaults.standard.dictionary(forKey: Self.dismissedKey)
@@ -95,12 +98,14 @@ final class RecentArrivals: ObservableObject {
             }
             source.resume()
             directorySources.append(source)
+            Self.watchingPaths.insert(directory.resolvingSymlinksInPath().path)
         }
     }
 
     func stopWatching() {
         directorySources.forEach { $0.cancel() }
         directorySources.removeAll()
+        Self.watchingPaths = []
     }
 
     /// Re-scan the watched folders. `markRevealed` should be true when this refresh
@@ -331,15 +336,19 @@ final class RecentArrivals: ObservableObject {
         )
     }
 
-    private static func watchedDirectories() -> [(ArrivalLocation, URL)] {
+    static func watchedDirectories() -> [(ArrivalLocation, URL)] {
         let fileManager = FileManager.default
         let kinds: [(ArrivalLocation, FileManager.SearchPathDirectory)] = [
             (.downloads, .downloadsDirectory),
             (.desktop, .desktopDirectory)
         ]
-        return kinds.compactMap { location, kind in
+        var directories = kinds.compactMap { location, kind in
             fileManager.urls(for: kind, in: .userDomainMask).first.map { (location, $0) }
         }
+        if let screenshots = ScreenshotLocation.extraFolder {
+            directories.append((.screenshots, screenshots))
+        }
+        return directories
     }
 
     private func screenshotContext(

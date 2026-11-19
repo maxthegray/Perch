@@ -5,10 +5,12 @@ import SwiftUI
 struct GeneralSettingsPane: View {
     private let loginItem = LoginItemController()
     @ObservedObject var smartPerch: SmartPerchCoordinator
+    let clipboard: ClipboardCoordinator
     /// Unlocks Labs and brings its tab forward.
     let onRevealLabs: () -> Void
     let onShowWelcome: () -> Void
     @State private var launchAtLogin = false
+    @State private var showsTroubleshooting = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
 
     var body: some View {
@@ -37,12 +39,16 @@ struct GeneralSettingsPane: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
                 HStack {
+                    Button("Troubleshoot…") { showsTroubleshooting = true }
                     Button("Show Welcome Screen…", action: onShowWelcome)
                     Button("Restart Perch", action: Relauncher.restart)
                 }
             }
         }
         .formStyle(.grouped)
+        .sheet(isPresented: $showsTroubleshooting) {
+            TroubleshootingView(clipboard: clipboard)
+        }
     }
 
     /// Registration can fail (e.g. unbundled builds); revert the toggle to reality.
