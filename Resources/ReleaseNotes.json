@@ -2,6 +2,37 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch — a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
+      "version": "1.10.0",
+      "showsWhatsNew": true,
+      "highlights": [
+        {
+          "symbol": "slider.horizontal.3",
+          "title": "Simpler Settings",
+          "detail": "Every setting fits without scrolling, two-choice options are switches, and your shortcuts are on the first page."
+        },
+        {
+          "symbol": "doc.on.clipboard",
+          "title": "Magpie is now Perch Clipboard",
+          "detail": "Same history, same ⌥⌘C."
+        },
+        {
+          "symbol": "stethoscope",
+          "title": "Troubleshoot",
+          "detail": "Settings › General › Troubleshoot… shows what’s stopping Perch and how to fix it, and copies a report you can send."
+        },
+        {
+          "symbol": "camera.viewfinder",
+          "title": "Screenshots from any folder",
+          "detail": "If your screenshots save somewhere other than the Desktop, Perch now picks them up there too."
+        },
+        {
+          "symbol": "eye",
+          "title": "Snappier Quick Look",
+          "detail": "Double-click opens it instantly. Triple-click no longer hides the shelf, and a few rarely used options moved to Smart Perch."
+        }
+      ]
+    },
+    {
       "version": "1.9.1",
       "highlights": [
         {
