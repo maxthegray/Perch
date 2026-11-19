@@ -7,44 +7,38 @@ import XCTest
 /// the drop view beneath it receives.
 @MainActor
 final class ShelfTripleClickTests: XCTestCase {
-    private var savedDefaults: [String: Any?] = [:]
-    private let keys = [PerchSettings.labsUnlocked, PerchSettings.tripleClickToHide]
-
-    override func setUp() {
-        super.setUp()
-        savedDefaults = Dictionary(uniqueKeysWithValues: keys.map {
-            ($0, UserDefaults.standard.object(forKey: $0))
-        })
-    }
-
-    override func tearDown() {
-        for (key, value) in savedDefaults {
-            if let value { UserDefaults.standard.set(value, forKey: key) }
-            else { UserDefaults.standard.removeObject(forKey: key) }
-        }
-        super.tearDown()
-    }
-
     func testTripleClickOnAnEmptyShelfPutsItAway() {
-        UserDefaults.standard.set(true, forKey: PerchSettings.labsUnlocked)
-        UserDefaults.standard.set(true, forKey: PerchSettings.tripleClickToHide)
-        XCTAssertEqual(tripleClicks(), 1)
+        XCTAssertEqual(tripleClicks(labsUnlocked: true, featureOn: true), 1)
     }
 
     func testTripleClickDoesNothingWhileOff() {
-        UserDefaults.standard.set(true, forKey: PerchSettings.labsUnlocked)
-        UserDefaults.standard.removeObject(forKey: PerchSettings.tripleClickToHide)
-        XCTAssertEqual(tripleClicks(), 0)
+        XCTAssertEqual(tripleClicks(labsUnlocked: true, featureOn: nil), 0)
     }
 
     func testTripleClickDoesNothingWhileLabsIsLocked() {
-        UserDefaults.standard.set(false, forKey: PerchSettings.labsUnlocked)
-        UserDefaults.standard.set(true, forKey: PerchSettings.tripleClickToHide)
-        XCTAssertEqual(tripleClicks(), 0)
+        XCTAssertEqual(tripleClicks(labsUnlocked: false, featureOn: true), 0)
+    }
+
+    private func tripleClicks(labsUnlocked: Bool, featureOn: Bool?) -> Int {
+        let defaults = UserDefaults.standard
+        let keys = [PerchSettings.labsUnlocked, PerchSettings.tripleClickToHide]
+        let saved = keys.map { defaults.object(forKey: $0) }
+        defer {
+            for (key, value) in zip(keys, saved) {
+                if let value { defaults.set(value, forKey: key) } else { defaults.removeObject(forKey: key) }
+            }
+        }
+        defaults.set(labsUnlocked, forKey: PerchSettings.labsUnlocked)
+        if let featureOn {
+            defaults.set(featureOn, forKey: PerchSettings.tripleClickToHide)
+        } else {
+            defaults.removeObject(forKey: PerchSettings.tripleClickToHide)
+        }
+        return countTripleClicks()
     }
 
     /// Clicks once, twice, then three times, and counts put-away requests.
-    private func tripleClicks() -> Int {
+    private func countTripleClicks() -> Int {
         let holding = HoldingDirectory(
             root: FileManager.default.temporaryDirectory
                 .appendingPathComponent("ShelfTripleClickTests-\(UUID().uuidString)", isDirectory: true)
