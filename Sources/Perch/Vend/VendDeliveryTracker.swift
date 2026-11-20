@@ -65,6 +65,14 @@ final class VendDeliveryTracker {
         }
     }
 
+    /// The drag landed on the Trash: every item leaves the shelf, even in copy mode,
+    /// because its file is gone.
+    func dragDidTrash() {
+        guard landed == nil else { return }
+        landed = true
+        items.forEach(retire)
+    }
+
     /// The drag was cancelled or came back to Perch — nothing leaves the shelf, and a
     /// late promise result can no longer change that.
     func dragDidNotLand() {

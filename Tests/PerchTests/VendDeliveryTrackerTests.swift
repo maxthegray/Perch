@@ -17,6 +17,17 @@ final class VendDeliveryTrackerTests: XCTestCase {
         XCTAssertEqual(recorder.restored, [])
     }
 
+    func testTrashRetiresEveryItemEvenInCopyMode() {
+        let items = makeItems(count: 2)
+        let recorder = Recorder()
+        let tracker = makeTracker(items: items, appliesMoveSemantics: false, recorder: recorder)
+
+        tracker.dragDidTrash()
+        tracker.dragDidLand()
+
+        XCTAssertEqual(recorder.retired, items.map(\.id))
+    }
+
     func testFailureAfterLandingRestoresOnlyTheItemThatFailed() {
         let items = makeItems(count: 3)
         let recorder = Recorder()

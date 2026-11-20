@@ -14,6 +14,7 @@ enum VendModePolicy {
 final class ItemDragSource: NSObject, NSDraggingSource {
     private let items: [StoredItem]
     private let copiesItems: Bool
+    private let allowsTrash: Bool
     private var activeWriters: [StoredItemDragWriter] = []
 
     /// Called when the drag session ends, with the operation the destination
@@ -41,6 +42,7 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         precondition(!items.isEmpty)
         self.items = items
         self.copiesItems = copiesItems
+        allowsTrash = items.allSatisfy(Self.canTrash)
         super.init()
     }
 
@@ -94,6 +96,13 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         }
     }
 
+    /// Only files Perch owns may go to the Trash. A referenced item vends the user's
+    /// original file URL, and the Trash would take that original with it.
+    static func canTrash(_ item: StoredItem) -> Bool {
+        !item.metadata.backingFileNames.isEmpty
+            && (item.metadata.referencedFiles ?? [:]).isEmpty
+    }
+
     func markReturnedToPerch() {
         returnedToPerch = true
     }
@@ -107,7 +116,8 @@ final class ItemDragSource: NSObject, NSDraggingSource {
         // `.copy` for file-backed items, in BOTH .withinApplication and
         // .outsideApplication contexts — the destination receives a fresh copy; the
         // shelf then removes its own copy (move semantics handled in `onEnded`).
-        .copy
+        // `.delete` is what the Dock's Trash asks for; nothing else picks it.
+        context == .outsideApplication && allowsTrash ? [.copy, .delete] : .copy
     }
 
     func draggingSession(

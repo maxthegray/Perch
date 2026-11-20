@@ -1011,7 +1011,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 self.interaction.vendingItemIDs.removeAll()
                 return
             }
-            let finishesEveryItem = isMove
+            let trashed = operation.contains(.delete)
+            if trashed {
+                Self.moveOwnedFilesToTrash(items)
+            }
+            let removesItems = isMove || trashed
+            let finishesEveryItem = removesItems
                 && !self.store.items.isEmpty
                 && self.store.items.allSatisfy { itemIDs.contains($0.id) }
             let hidesBeforeRetirement = finishesEveryItem
@@ -1020,8 +1025,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
             let finishVend = { [weak self] in
                 guard let self else { return }
-                delivery.dragDidLand()
-                guard isMove else { return }
+                if trashed {
+                    delivery.dragDidTrash()
+                } else {
+                    delivery.dragDidLand()
+                }
+                guard removesItems else { return }
                 self.interaction.vendingItemIDs.removeAll()
                 self.interaction.removeFromSelection(itemIDs)
                 if hidesBeforeRetirement, !self.store.items.isEmpty {
@@ -1040,6 +1049,23 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         activeDragSource = dragSource
         _ = dragSource.beginDrag(from: self, event: event)
         NSLog("Perch row drag (vend) started for \(items.count) item(s)")
+    }
+
+    /// The Dock's Trash moves the vended file URL itself, but that is only the first file
+    /// of each item. Trash whatever is still in the holding directory so a multi-file
+    /// item stays recoverable rather than being deleted with its directory.
+    private static func moveOwnedFilesToTrash(_ items: [StoredItem]) {
+        for item in items where ItemDragSource.canTrash(item) {
+            for url in item.backingFileURLs()
+            where FileManager.default.fileExists(atPath: url.path) {
+                do {
+                    try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+                } catch {
+                    NSLog("Perch could not move \(url.lastPathComponent) to the Trash: \(error)")
+                }
+            }
+        }
+        NSLog("Perch moved \(items.count) item(s) to the Trash")
     }
 
     /// Track an armed drag of the whole card: past a small slop the window follows
