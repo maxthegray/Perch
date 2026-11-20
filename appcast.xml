@@ -2,22 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.10.2/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.10.3/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.10.2</title>
+      <title>Version 1.10.3</title>
       <description><![CDATA[
 <ul>
-  <li><b>Run Setup Again</b><br>The welcome screen is now Run Setup Again, in Settings and the menu bar menu, so it's clear it can change how Perch behaves.</li>
+  <li><b>Cleaner labels</b><br>Menus and buttons drop their trailing dots, so Settings, Share and Run Setup Again read as they are.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Fri, 20 Nov 2026 02:27:27 +0000</pubDate>
-      <sparkle:version>1100020</sparkle:version>
-      <sparkle:shortVersionString>1.10.2</sparkle:shortVersionString>
+      <pubDate>Fri, 20 Nov 2026 02:35:34 +0000</pubDate>
+      <sparkle:version>1100030</sparkle:version>
+      <sparkle:shortVersionString>1.10.3</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.10.2/Perch.zip" sparkle:edSignature="kOJzRJ4rqXx8VlfYP/M+D5hAYDqbDaEGjBC6A0bGExC6k4RDWxZMNy1CRmjIYNDvpsYrQPK64sthAtpDpp73BQ==" length="4538455" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.10.3/Perch.zip" sparkle:edSignature="0nU/i7qP9raRKDY1RxQCOBaRe13lL6SOukjS2KPHsKDzGEUmFTmUmg47Ubww0Befx35Mj08LkM6juj4v65JBCw==" length="4538394" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
