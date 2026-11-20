@@ -55,9 +55,15 @@ struct CurrentShortcuts: DynamicProperty {
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
     @AppStorage(PerchSettings.tripleClickToHide) private var tripleClickToHide = false
+    @AppStorage(PerchSettings.clipboardEnabled) private var clipboardEnabled = true
+    /// Read only so a re-recorded shortcut refreshes the list; `KeyCombo.load` decodes it.
+    @AppStorage(PerchSettings.clipboardHotKey) private var clipboardHotKeyData: Data?
 
     var rows: [GestureShortcut] {
-        GestureShortcuts.rows(
+        let clipboard = clipboardEnabled
+            ? [GestureShortcut(gesture: KeyCombo.load().displayString, action: "Perch Clipboard")]
+            : []
+        return clipboard + GestureShortcuts.rows(
             showsGrabHandle: showsGrabHandle,
             copiesByDefault: vendCopies,
             revealOnHover: revealOnHover,
