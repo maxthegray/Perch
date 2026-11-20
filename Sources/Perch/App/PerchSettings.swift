@@ -112,6 +112,9 @@ enum PerchSettings {
         "Perch.EdgeTabOffByDefaultMigrationCompleted"
     /// The menu bar icon: training wheels for summoning the shelf. Defaults on.
     static let showsMenuBarIcon = "Perch.ShowsMenuBarIcon"
+    /// The newest version the updater has found, kept after the user declines it so the
+    /// shelf menu can offer it until it is installed.
+    static let availableUpdateVersion = "Perch.AvailableUpdateVersion"
     /// How many times the shelf has been dragged, capped where the move reminder retires.
     static let shelfMoveCount = "Perch.ShelfMoveCount"
 

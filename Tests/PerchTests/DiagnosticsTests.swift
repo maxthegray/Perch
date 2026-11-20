@@ -21,8 +21,9 @@ final class DiagnosticsTests: XCTestCase {
         ]
         let report = Diagnostics.report(checks: checks, errors: ["12:00:00  boom"])
 
-        XCTAssertTrue(report.contains("[FAIL] Desktop folder: Blocked."))
-        XCTAssertTrue(report.contains("[OK  ] Launch at login: On."))
+        XCTAssertTrue(report.contains("FAIL  Desktop folder"))
+        XCTAssertTrue(report.contains("Blocked."))
+        XCTAssertTrue(report.contains("ok    Launch at login"))
         XCTAssertTrue(report.contains("12:00:00  boom"))
     }
 

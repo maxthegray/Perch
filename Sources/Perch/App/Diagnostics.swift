@@ -2,7 +2,7 @@ import AppKit
 import ApplicationServices
 import ServiceManagement
 
-/// One line of the troubleshooting checklist.
+/// One line of the troubleshooting checklist: a short key and its raw value.
 struct DiagnosticCheck: Identifiable {
     enum Status { case ok, problem, note }
 
@@ -26,7 +26,7 @@ enum Diagnostics {
         var checks: [DiagnosticCheck] = []
         checks.append(recentArrivalsCheck())
         for (location, url) in RecentArrivals.watchedDirectories() {
-            checks.append(folderAccessCheck(name: location.displayName, url: url))
+            checks.append(folderAccessCheck(key: "watch.\(location.rawValue)", url: url))
         }
         checks.append(screenshotCheck())
         checks.append(loginItemCheck())
@@ -34,154 +34,126 @@ enum Diagnostics {
             checks.append(accessibilityCheck())
         }
         checks.append(clipboardCheck(clipboard))
+        checks.append(DiagnosticCheck(
+            title: "labs",
+            status: .note,
+            detail: LabsAccess.isUnlocked ? "unlocked" : "locked"
+        ))
         return checks
     }
 
     // MARK: Checks
 
     private static func recentArrivalsCheck() -> DiagnosticCheck {
-        if PerchSettings.flag(PerchSettings.offerRecentArrivals, default: true) {
-            return DiagnosticCheck(
-                title: "Recent arrivals",
-                status: .ok,
-                detail: "On. New downloads and screenshots are offered on the shelf."
-            )
-        }
+        let enabled = PerchSettings.flag(PerchSettings.offerRecentArrivals, default: true)
         return DiagnosticCheck(
-            title: "Recent arrivals",
-            status: .problem,
-            detail: "Off, so new downloads and screenshots are never offered.",
-            fix: .init(title: "Turn On") {
+            title: "arrivals.enabled",
+            status: enabled ? .ok : .problem,
+            detail: String(enabled),
+            fix: enabled ? nil : .init(title: "Enable") {
                 UserDefaults.standard.set(true, forKey: PerchSettings.offerRecentArrivals)
             }
         )
     }
 
-    private static func folderAccessCheck(name: String, url: URL) -> DiagnosticCheck {
+    private static func folderAccessCheck(key: String, url: URL) -> DiagnosticCheck {
+        let path = abbreviated(url)
+        let watching = RecentArrivals.watchingPaths.contains(url.resolvingSymlinksInPath().path)
         do {
             _ = try FileManager.default.contentsOfDirectory(atPath: url.path)
             return DiagnosticCheck(
-                title: "\(name) folder",
-                status: .ok,
-                detail: "Perch can read \(abbreviated(url))."
+                title: key,
+                status: watching ? .ok : .problem,
+                detail: "\(path)  read=ok  watch=\(watching ? "ok" : "none")",
+                fix: watching ? nil : .init(title: "Restart") { Relauncher.restart() }
             )
         } catch {
             return DiagnosticCheck(
-                title: "\(name) folder",
+                title: key,
                 status: .problem,
-                detail: "macOS is blocking Perch from reading \(abbreviated(url)), so new "
-                    + "files there never show up. Allow Perch under Files and Folders.",
-                fix: .init(title: "Open Privacy Settings") {
-                    openSettings("Privacy_FilesAndFolders")
-                }
+                detail: "\(path)  read=\(errorCode(error))  watch=\(watching ? "ok" : "none")",
+                fix: .init(title: "Files & Folders…") { openSettings("Privacy_FilesAndFolders") }
             )
         }
     }
 
     private static func screenshotCheck() -> DiagnosticCheck {
-        if ScreenshotLocation.savesToClipboard {
-            return DiagnosticCheck(
-                title: "Screenshots",
-                status: .note,
-                detail: "Screenshots are copied to the clipboard instead of saved, so they "
-                    + "never appear on the shelf. Change this in the Screenshot app’s Options."
-            )
-        }
         let folder = ScreenshotLocation.folder
+        let target = ScreenshotLocation.savesToClipboard ? "clipboard" : "file"
         var isDirectory: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory),
-              isDirectory.boolValue
-        else {
-            return DiagnosticCheck(
-                title: "Screenshots",
-                status: .problem,
-                detail: "Screenshots are set to save to \(abbreviated(folder)), which doesn’t exist."
-            )
-        }
+        let exists = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory)
+            && isDirectory.boolValue
         let watched = RecentArrivals.watchingPaths.contains(folder.resolvingSymlinksInPath().path)
-        guard watched || !PerchSettings.flag(PerchSettings.offerRecentArrivals, default: true) else {
+        let detail = "location=\(abbreviated(folder))  target=\(target)  exists=\(exists)  watched=\(watched)"
+
+        if target == "clipboard" {
+            return DiagnosticCheck(title: "screencapture", status: .note, detail: detail)
+        }
+        if !exists {
+            return DiagnosticCheck(title: "screencapture", status: .problem, detail: detail)
+        }
+        if !watched {
             return DiagnosticCheck(
-                title: "Screenshots",
+                title: "screencapture",
                 status: .problem,
-                detail: "Screenshots now save to \(abbreviated(folder)). Restart Perch to start watching it.",
-                fix: .init(title: "Restart Perch") { Relauncher.restart() }
+                detail: detail,
+                fix: .init(title: "Restart") { Relauncher.restart() }
             )
         }
-        return DiagnosticCheck(
-            title: "Screenshots",
-            status: .ok,
-            detail: "Saved to \(abbreviated(folder)), which Perch watches."
-        )
+        return DiagnosticCheck(title: "screencapture", status: .ok, detail: detail)
     }
 
     private static func loginItemCheck() -> DiagnosticCheck {
-        let title = "Launch at login"
+        let title = "login.item"
         guard Bundle.main.bundleIdentifier != nil else {
-            return DiagnosticCheck(title: title, status: .note, detail: "Not available in this build.")
+            return DiagnosticCheck(title: title, status: .note, detail: "unavailable (unbundled)")
         }
         let bundlePath = Bundle.main.bundlePath
         let inApplications = bundlePath.hasPrefix("/Applications/")
             || bundlePath.hasPrefix(NSHomeDirectory() + "/Applications/")
+        let path = "path=\(abbreviated(URL(fileURLWithPath: bundlePath)))"
         switch SMAppService.mainApp.status {
-        case .enabled where !inApplications:
+        case .enabled:
             return DiagnosticCheck(
                 title: title,
-                status: .problem,
-                detail: "On, but Perch is running from \(abbreviated(URL(fileURLWithPath: bundlePath))). "
-                    + "Move it to Applications so it keeps launching."
+                status: inApplications ? .ok : .problem,
+                detail: "status=enabled  \(path)"
             )
-        case .enabled:
-            return DiagnosticCheck(title: title, status: .ok, detail: "On.")
         case .requiresApproval:
             return DiagnosticCheck(
                 title: title,
                 status: .problem,
-                detail: "Waiting for approval in System Settings › Login Items.",
-                fix: .init(title: "Open Login Items") { SMAppService.openSystemSettingsLoginItems() }
+                detail: "status=requiresApproval  \(path)",
+                fix: .init(title: "Login Items…") { SMAppService.openSystemSettingsLoginItems() }
             )
         case .notRegistered:
-            return DiagnosticCheck(title: title, status: .note, detail: "Off.")
+            return DiagnosticCheck(title: title, status: .note, detail: "status=notRegistered  \(path)")
         case .notFound:
-            return DiagnosticCheck(
-                title: title,
-                status: .problem,
-                detail: "macOS can’t find Perch’s login item. Turn Launch at login off and on again."
-            )
+            return DiagnosticCheck(title: title, status: .problem, detail: "status=notFound  \(path)")
         @unknown default:
-            return DiagnosticCheck(title: title, status: .note, detail: "Unknown status.")
+            return DiagnosticCheck(title: title, status: .note, detail: "status=unknown  \(path)")
         }
     }
 
     private static func accessibilityCheck() -> DiagnosticCheck {
-        if DockGeometryReader.isTrusted {
-            return DiagnosticCheck(
-                title: "Accessibility",
-                status: .ok,
-                detail: "Allowed, so Snap beside the Dock can read the Dock’s size."
-            )
-        }
+        let trusted = DockGeometryReader.isTrusted
         return DiagnosticCheck(
-            title: "Accessibility",
-            status: .problem,
-            detail: "Snap beside the Dock is on but Perch isn’t allowed under Accessibility.",
-            fix: .init(title: "Open Privacy Settings") { openSettings("Privacy_Accessibility") }
+            title: "ax.trusted",
+            status: trusted ? .ok : .problem,
+            detail: String(trusted),
+            fix: trusted ? nil : .init(title: "Accessibility…") { openSettings("Privacy_Accessibility") }
         )
     }
 
     private static func clipboardCheck(_ clipboard: ClipboardCoordinator) -> DiagnosticCheck {
-        let title = "Perch Clipboard"
         guard clipboard.isEnabled else {
-            return DiagnosticCheck(title: title, status: .note, detail: "Off.")
+            return DiagnosticCheck(title: "clipboard", status: .note, detail: "enabled=false")
         }
+        let base = "enabled=true  hotkey=\(clipboard.hotKey.displayString)"
         if let error = clipboard.errorMessage {
-            return DiagnosticCheck(title: title, status: .problem, detail: error)
+            return DiagnosticCheck(title: "clipboard", status: .problem, detail: "\(base)  error=\(error)")
         }
-        return DiagnosticCheck(
-            title: title,
-            status: .ok,
-            detail: "\(clipboard.hotKey.displayString) opens it. If that does nothing, another "
-                + "app may use the same shortcut; pick a new one in Settings › Clipboard."
-        )
+        return DiagnosticCheck(title: "clipboard", status: .ok, detail: base)
     }
 
     // MARK: Recent errors
@@ -206,27 +178,55 @@ enum Diagnostics {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
+        let os = ProcessInfo.processInfo.operatingSystemVersion
         var lines = [
-            "Perch \(version) (\(build))",
-            "macOS \(ProcessInfo.processInfo.operatingSystemVersionString)",
+            "perch     \(version) (\(build))",
+            "macos     \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            "arch      \(architecture)",
+            "bundle    \(abbreviated(Bundle.main.bundleURL))",
             ""
         ]
+        let width = (checks.map(\.title.count).max() ?? 0) + 2
         for check in checks {
-            let mark: String
-            switch check.status {
-            case .ok: mark = "OK  "
-            case .problem: mark = "FAIL"
-            case .note: mark = "NOTE"
-            }
-            lines.append("[\(mark)] \(check.title): \(check.detail)")
+            lines.append(
+                "\(mark(for: check.status))  "
+                    + check.title.padding(toLength: width, withPad: " ", startingAt: 0)
+                    + check.detail
+            )
         }
         lines.append("")
-        lines.append(errors.isEmpty ? "No recent errors." : "Recent errors:")
+        lines.append("log (\(errors.count))")
         lines += errors
         return lines.joined(separator: "\n")
     }
 
+    static func mark(for status: DiagnosticCheck.Status) -> String {
+        switch status {
+        case .ok: return "ok  "
+        case .problem: return "FAIL"
+        case .note: return "--  "
+        }
+    }
+
     // MARK: Helpers
+
+    private static var architecture: String {
+        #if arch(arm64)
+        return "arm64"
+        #else
+        return "x86_64"
+        #endif
+    }
+
+    /// `NSCocoaErrorDomain 257 / NSPOSIXErrorDomain 1` — the codes, not the sentence.
+    private static func errorCode(_ error: Error) -> String {
+        let nsError = error as NSError
+        var code = "\(nsError.domain) \(nsError.code)"
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError {
+            code += " / \(underlying.domain) \(underlying.code)"
+        }
+        return code
+    }
 
     private static func abbreviated(_ url: URL) -> String {
         (url.path as NSString).abbreviatingWithTildeInPath

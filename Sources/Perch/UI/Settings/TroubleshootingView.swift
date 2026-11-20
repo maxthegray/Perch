@@ -1,8 +1,8 @@
 import AppKit
 import SwiftUI
 
-/// The troubleshooting sheet: every check with its status, a fix where one exists, and
-/// a plain-text report to send to Max.
+/// The troubleshooting sheet: raw status lines, a fix button where one exists, the
+/// recent failure log, and the same text copyable as a report.
 struct TroubleshootingView: View {
     @ObservedObject var clipboard: ClipboardCoordinator
     @Environment(\.dismiss) private var dismiss
@@ -11,85 +11,78 @@ struct TroubleshootingView: View {
     @State private var errors: [String] = []
     @State private var copied = false
 
-    var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    ForEach(checks) { check in
-                        row(check)
-                    }
-                } header: {
-                    Text(summary)
-                }
+    private let mono = Font.system(size: 11, design: .monospaced)
 
-                Section("Recent errors") {
-                    if errors.isEmpty {
-                        Text("None")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        Text(errors.joined(separator: "\n"))
-                            .font(.system(size: 11, design: .monospaced))
-                            .textSelection(.enabled)
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text(summary)
+                        .font(mono.weight(.semibold))
+
+                    Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 6) {
+                        ForEach(checks) { check in
+                            GridRow {
+                                Text(Diagnostics.mark(for: check.status))
+                                    .foregroundStyle(color(for: check.status))
+                                Text(check.title)
+                                Text(check.detail)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if let fix = check.fix {
+                                    Button(fix.title) {
+                                        fix.perform()
+                                        refresh()
+                                    }
+                                    .controlSize(.small)
+                                } else {
+                                    Color.clear.gridCellUnsizedAxes([.horizontal, .vertical])
+                                }
+                            }
+                        }
                     }
+
+                    Divider()
+
+                    Text("log (\(errors.count))")
+                        .font(mono.weight(.semibold))
+                    Text(errors.isEmpty ? "—" : errors.joined(separator: "\n"))
+                        .foregroundStyle(.secondary)
                 }
+                .font(mono)
+                .textSelection(.enabled)
+                .padding(14)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .formStyle(.grouped)
+            .background(Color(nsColor: .textBackgroundColor))
+
+            Divider()
 
             HStack {
-                Button(copied ? "Copied" : "Copy Report", action: copyReport)
+                Button(copied ? "Copied" : "Copy", action: copyReport)
+                Button("Rerun", action: refresh)
                 Spacer()
-                Button("Check Again", action: refresh)
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
             }
-            .padding(16)
+            .controlSize(.small)
+            .padding(10)
         }
-        .frame(width: 520, height: 560)
+        .frame(width: 640, height: 420)
         .task { refresh() }
     }
 
     private var summary: String {
-        let problems = checks.filter { $0.status == .problem }.count
-        switch problems {
-        case 0: return "No problems found"
-        case 1: return "1 problem found"
-        default: return "\(problems) problems found"
-        }
-    }
-
-    private func row(_ check: DiagnosticCheck) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: symbol(for: check.status))
-                .foregroundStyle(color(for: check.status))
-            VStack(alignment: .leading, spacing: 2) {
-                Text(check.title)
-                Text(check.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 8)
-            if let fix = check.fix {
-                Button(fix.title) {
-                    fix.perform()
-                    refresh()
-                }
-            }
-        }
-    }
-
-    private func symbol(for status: DiagnosticCheck.Status) -> String {
-        switch status {
-        case .ok: return "checkmark.circle.fill"
-        case .problem: return "exclamationmark.triangle.fill"
-        case .note: return "info.circle.fill"
-        }
+        let fail = checks.filter { $0.status == .problem }.count
+        let ok = checks.filter { $0.status == .ok }.count
+        return "\(fail) fail  \(ok) ok  \(checks.count - fail - ok) info"
     }
 
     private func color(for status: DiagnosticCheck.Status) -> Color {
         switch status {
         case .ok: return .green
-        case .problem: return .orange
+        case .problem: return .red
         case .note: return .secondary
         }
     }

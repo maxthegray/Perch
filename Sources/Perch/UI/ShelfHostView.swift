@@ -1693,6 +1693,15 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         if isFreeMode {
             menu.addItem(.separator())
         }
+        if let version = Updater.shared.availableUpdate {
+            let update = NSMenuItem(
+                title: "Update Perch to \(version)…",
+                action: #selector(updateAction(_:)),
+                keyEquivalent: ""
+            )
+            update.target = self
+            menu.addItem(update)
+        }
         let settings = NSMenuItem(
             title: "Settings…",
             action: #selector(showSettingsAction(_:)),
@@ -1845,6 +1854,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     func menuDidClose(_ menu: NSMenu) {
         isContextMenuOpen = false
         onContextMenuClosed?()
+    }
+
+    @objc private func updateAction(_ sender: NSMenuItem) {
+        Updater.shared.checkForUpdates()
     }
 
     @objc private func restartAction(_ sender: NSMenuItem) {

@@ -192,6 +192,9 @@ final class SettingsWindowController {
     ) {
         let hosting = NSHostingController(
             rootView: view
+                // Added to the grouped form's own 20pt inset, trimming it to 12pt.
+                .contentMargins(.horizontal, -8, for: .scrollContent)
+                .contentMargins(.vertical, -8, for: .scrollContent)
                 .scrollDisabled(true)
                 .frame(width: Self.paneWidth)
                 .fixedSize(horizontal: false, vertical: true)
