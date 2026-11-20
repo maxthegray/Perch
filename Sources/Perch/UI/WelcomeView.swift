@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 
 /// Who is looking at the welcome window. Both see the same words; a returning user's
-/// title just says "(again)", and their controls arrive seeded with what they have.
+/// title says "Set Up Perch", and their controls arrive seeded with what they have.
 enum WelcomeMode {
     case firstRun
     /// Reopened from a menu, or shown to an install updating into a release that changed
@@ -14,7 +14,7 @@ enum WelcomeMode {
     var title: String {
         switch self {
         case .firstRun: return "Welcome to \(PerchProductIdentity.displayName)"
-        case .revisit: return "Welcome to \(PerchProductIdentity.displayName) (again)"
+        case .revisit: return "Set Up \(PerchProductIdentity.displayName)"
         }
     }
 

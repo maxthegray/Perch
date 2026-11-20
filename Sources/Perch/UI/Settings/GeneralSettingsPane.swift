@@ -40,7 +40,7 @@ struct GeneralSettingsPane: View {
                     .onTapGesture(count: 3, perform: onRevealLabs)
                 HStack {
                     Button("Troubleshoot…") { showsTroubleshooting = true }
-                    Button("Show Welcome Screen…", action: onShowWelcome)
+                    Button("Run Setup Again…", action: onShowWelcome)
                     Button("Restart Perch", action: Relauncher.restart)
                 }
             }
