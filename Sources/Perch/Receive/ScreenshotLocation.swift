@@ -8,6 +8,12 @@ enum ScreenshotLocation {
         (preference("target") as? String) == "clipboard"
     }
 
+    /// The floating thumbnail delays the file until it closes, and dragging it away
+    /// means the file never lands in the folder. Unset means on.
+    static var showsThumbnail: Bool {
+        preference("show-thumbnail") as? Bool ?? true
+    }
+
     static var folder: URL {
         guard let path = preference("location") as? String, !path.isEmpty else {
             return desktop

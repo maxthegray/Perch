@@ -58,20 +58,27 @@ enum Diagnostics {
 
     private static func folderAccessCheck(key: String, url: URL) -> DiagnosticCheck {
         let path = abbreviated(url)
-        let watching = RecentArrivals.watchingPaths.contains(url.resolvingSymlinksInPath().path)
+        let watch = RecentArrivals.watchState(for: url)
+        let watching = watch == .ok
+        var suffix = ""
+        if key == "watch.desktop" {
+            let synced = (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?
+                .isUbiquitousItem == true
+            suffix = "  icloud=\(synced ? "on" : "off")"
+        }
         do {
             _ = try FileManager.default.contentsOfDirectory(atPath: url.path)
             return DiagnosticCheck(
                 title: key,
                 status: watching ? .ok : .problem,
-                detail: "\(path)  read=ok  watch=\(watching ? "ok" : "none")",
+                detail: "\(path)  read=ok  watch=\(watch.rawValue)\(suffix)",
                 fix: watching ? nil : .init(title: "Restart") { Relauncher.restart() }
             )
         } catch {
             return DiagnosticCheck(
                 title: key,
                 status: .problem,
-                detail: "\(path)  read=\(errorCode(error))  watch=\(watching ? "ok" : "none")",
+                detail: "\(path)  read=\(errorCode(error))  watch=\(watch.rawValue)\(suffix)",
                 fix: .init(title: "Files & Folders") { openSettings("Privacy_FilesAndFolders") }
             )
         }
@@ -83,8 +90,10 @@ enum Diagnostics {
         var isDirectory: ObjCBool = false
         let exists = FileManager.default.fileExists(atPath: folder.path, isDirectory: &isDirectory)
             && isDirectory.boolValue
-        let watched = RecentArrivals.watchingPaths.contains(folder.resolvingSymlinksInPath().path)
-        let detail = "location=\(abbreviated(folder))  target=\(target)  exists=\(exists)  watched=\(watched)"
+        let watched = RecentArrivals.watchState(for: folder) == .ok
+        let thumbnail = ScreenshotLocation.showsThumbnail ? "on" : "off"
+        let detail = "location=\(abbreviated(folder))  target=\(target)  exists=\(exists)  "
+            + "watched=\(watched)  thumbnail=\(thumbnail)"
 
         if target == "clipboard" {
             return DiagnosticCheck(title: "screencapture", status: .note, detail: detail)
@@ -172,9 +181,22 @@ enum Diagnostics {
         return Array(lines.suffix(limit))
     }
 
+    /// What the recent-arrivals watcher saw and decided this run, oldest first.
+    static func recentArrivals() -> [String] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return PerchLog.arrivals.recent.map {
+            "\(formatter.string(from: $0.date))  \($0.message)"
+        }
+    }
+
     // MARK: Report
 
-    static func report(checks: [DiagnosticCheck], errors: [String]) -> String {
+    static func report(
+        checks: [DiagnosticCheck],
+        errors: [String],
+        arrivals: [String] = []
+    ) -> String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
@@ -197,6 +219,9 @@ enum Diagnostics {
         lines.append("")
         lines.append("log (\(errors.count))")
         lines += errors
+        lines.append("")
+        lines.append("arrivals (\(arrivals.count))")
+        lines += arrivals
         return lines.joined(separator: "\n")
     }
 

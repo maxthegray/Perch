@@ -208,6 +208,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var asynchronousNameResizeTask: Task<Void, Never>?
     /// Coalesces the several writes/renames produced by one browser download.
     private var arrivalRefreshTask: Task<Void, Never>?
+    /// Folders that changed since the last debounced scan, for the arrivals trace.
+    private var pendingArrivalLocations: Set<ArrivalLocation> = []
     /// A shelf opened only to advertise a new arrival goes away again after a short
     /// glance; adopting, pinning, locking, or hovering it hands control to normal UI.
     private var arrivalAutoHideTask: Task<Void, Never>?
@@ -621,8 +623,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         mouseMonitor.start()
 
-        arrivals.startWatching { [weak self] in
-            self?.arrivalDirectoryDidChange()
+        arrivals.startWatching { [weak self] location in
+            self?.arrivalDirectoryDidChange(location)
         }
 
         // Keep a dragged free shelf's chosen position: when the user moves the panel via
@@ -824,11 +826,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// A watched folder changed. Wait for Chrome's temporary download + rename burst
     /// to settle, then update a visible shelf or briefly reveal a hidden one.
-    private func arrivalDirectoryDidChange() {
+    private func arrivalDirectoryDidChange(_ location: ArrivalLocation) {
+        pendingArrivalLocations.insert(location)
         arrivalRefreshTask?.cancel()
         arrivalRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(700))
             guard let self, !Task.isCancelled else { return }
+            let folders = self.pendingArrivalLocations.map(\.rawValue).sorted()
+            self.pendingArrivalLocations = []
 
             let previousIDs = Set(
                 self.arrivals.sessions.flatMap(\.offers).map(\.id)
@@ -837,21 +842,47 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             let newIDs = Set(
                 self.arrivals.sessions.flatMap(\.offers).map(\.id)
             ).subtracting(previousIDs)
-            guard !newIDs.isEmpty else { return }
+            let trace = { (outcome: String) in
+                self.traceArrivalScan(folders: folders, newIDs: newIDs, outcome: outcome)
+            }
+            guard self.arrivals.enabled else { return trace("arrivals off") }
+            guard !newIDs.isEmpty else { return trace("nothing new") }
 
             if self.panel.isVisible {
                 // Includes locked free shelves: they never re-enter a reveal path, so
                 // the watcher is what makes their ghost rows appear and resize in place.
                 self.resizeToFitVisible()
-                return
+                return trace("shelf already open, rows added")
             }
 
-            guard self.shelvedStrip == nil else { return }
+            guard self.shelvedStrip == nil else {
+                return trace("not revealed, shelf is on the strip")
+            }
             self.refreshArrivals(markRevealed: true)
-            guard !self.arrivals.visibleGhosts.isEmpty else { return }
+            guard !self.arrivals.visibleGhosts.isEmpty else {
+                return trace("not revealed, no ghosts left")
+            }
             self.arrivalPreviewFollowsPointer = true
-            self.revealAtNearestEdge(to: NSEvent.mouseLocation)
+            guard self.revealAtNearestEdge(to: NSEvent.mouseLocation),
+                  self.panel.isVisible
+            else {
+                self.arrivalPreviewFollowsPointer = false
+                return trace("not revealed, no enabled edge")
+            }
             self.scheduleArrivalAutoHide()
+            trace("revealed")
+        }
+    }
+
+    private func traceArrivalScan(folders: [String], newIDs: Set<String>, outcome: String) {
+        let names = newIDs.map { ($0 as NSString).lastPathComponent }.sorted()
+        var line = folders.joined(separator: ",") + "  " + outcome
+        if !names.isEmpty {
+            line += "  new=" + names.joined(separator: ", ")
+        }
+        PerchLog.arrivals.record(line)
+        for skip in arrivals.lastScanSkips {
+            PerchLog.arrivals.record("  skipped " + skip)
         }
     }
 
@@ -870,8 +901,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                   self.shouldAutomaticallyRetractShelf(
                     pointerInKeepAliveRegion: self.pointerInRegion
                   )
-            else { return }
+            else {
+                PerchLog.arrivals.record("preview kept open")
+                return
+            }
             self.hideShelf(animated: true)
+            PerchLog.arrivals.record("preview hid after 5s")
         }
     }
 
@@ -3335,12 +3370,14 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
     /// A recent-arrival ghost is a temporary preview, so choose its edge from the live
     /// pointer without changing the user's normal home edge.
-    private func revealAtNearestEdge(to point: NSPoint) {
+    @discardableResult
+    private func revealAtNearestEdge(to point: NSPoint) -> Bool {
         guard let strip = nearestStrip(to: point) else {
             NSLog("Perch arrival reveal skipped: no enabled edge dock is available")
-            return
+            return false
         }
         reveal(at: strip, rememberingAsPreferred: false)
+        return true
     }
 
     private func reveal(

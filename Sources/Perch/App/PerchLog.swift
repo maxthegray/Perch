@@ -1,6 +1,29 @@
 import Foundation
 import os
 
+/// A fixed-size, thread-safe buffer of the newest log lines.
+final class LogRing: Sendable {
+    private let capacity: Int
+    private let entries = OSAllocatedUnfairLock<[PerchLog.Entry]>(initialState: [])
+
+    init(capacity: Int) {
+        self.capacity = capacity
+    }
+
+    func record(_ message: String) {
+        entries.withLock { entries in
+            entries.append(PerchLog.Entry(date: Date(), message: message))
+            if entries.count > capacity {
+                entries.removeFirst(entries.count - capacity)
+            }
+        }
+    }
+
+    var recent: [PerchLog.Entry] {
+        entries.withLock { $0 }
+    }
+}
+
 /// The last messages Perch logged this run, kept in memory for the troubleshooting
 /// report. The unified log redacts `NSLog` text as `<private>`, so it can't be read back.
 enum PerchLog {
@@ -9,20 +32,17 @@ enum PerchLog {
         let message: String
     }
 
-    private static let capacity = 200
-    private static let entries = OSAllocatedUnfairLock<[Entry]>(initialState: [])
+    private static let main = LogRing(capacity: 200)
+    /// What the recent-arrivals watcher saw and decided, kept apart so a burst of
+    /// Downloads churn never evicts the failures in `main`.
+    static let arrivals = LogRing(capacity: 40)
 
     static func record(_ message: String) {
-        entries.withLock { entries in
-            entries.append(Entry(date: Date(), message: message))
-            if entries.count > capacity {
-                entries.removeFirst(entries.count - capacity)
-            }
-        }
+        main.record(message)
     }
 
     static var recent: [Entry] {
-        entries.withLock { $0 }
+        main.recent
     }
 }
 

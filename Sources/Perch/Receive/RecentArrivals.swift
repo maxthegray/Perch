@@ -26,6 +26,8 @@ final class RecentArrivals: ObservableObject {
     /// How long after arriving a ghost keeps the edge live with hover reveal off.
     static let hoverRecallWindow: TimeInterval = 5 * 60
     static let maxSessions = 5
+    /// Files this fresh get a skip reason in the arrivals trace; older ones are silent.
+    static let traceWindow: TimeInterval = 60
     static let maxReveals = 3
 
     private static let dismissedKey = PerchSettings.arrivalDismissed
@@ -43,6 +45,8 @@ final class RecentArrivals: ObservableObject {
     /// True while a system drag is in flight: ghosts hide so they never shift the
     /// drop target under the cursor.
     @Published var suppressed = false
+    /// Why each fresh file the last scan saw was not offered (`name: reason`).
+    private(set) var lastScanSkips: [String] = []
 
     /// path → when its ghost was dismissed or excluded; never offered again.
     private var dismissedPaths: [String: Date]
@@ -62,6 +66,29 @@ final class RecentArrivals: ObservableObject {
     private var directorySources: [DispatchSourceFileSystemObject] = []
     /// Resolved paths of the folders actually being watched, for troubleshooting.
     private(set) static var watchingPaths: Set<String> = []
+    /// Resolved path → the folder identity its descriptor was opened on. A folder that
+    /// is replaced (iCloud Desktop sync can do this) keeps the old descriptor, which
+    /// then never fires again.
+    private static var watchedIdentities: [String: FolderIdentity] = [:]
+
+    struct FolderIdentity: Equatable {
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    enum WatchState: String {
+        case ok, none, stale
+    }
+
+    static func watchState(for url: URL) -> WatchState {
+        let path = url.resolvingSymlinksInPath().path
+        guard watchingPaths.contains(path) else { return .none }
+        var info = stat()
+        guard stat(path, &info) == 0,
+              watchedIdentities[path] == FolderIdentity(device: info.st_dev, inode: info.st_ino)
+        else { return .stale }
+        return .ok
+    }
 
     init() {
         dismissedPaths = UserDefaults.standard.dictionary(forKey: Self.dismissedKey)
@@ -77,9 +104,9 @@ final class RecentArrivals: ObservableObject {
     /// Watch Downloads and Desktop for additions, writes, and Chrome's final rename.
     /// The callback is intentionally only a change signal: eligibility is decided by
     /// `refresh`, after the controller's debounce lets the final file settle.
-    func startWatching(onChange: @escaping @MainActor () -> Void) {
+    func startWatching(onChange: @escaping @MainActor (ArrivalLocation) -> Void) {
         stopWatching()
-        for (_, directory) in Self.watchedDirectories() {
+        for (location, directory) in Self.watchedDirectories() {
             let descriptor = open(directory.path, O_EVTONLY)
             guard descriptor >= 0 else {
                 NSLog("Perch could not watch arrival folder \(directory.path)")
@@ -91,21 +118,35 @@ final class RecentArrivals: ObservableObject {
                 queue: DispatchQueue.global(qos: .utility)
             )
             source.setEventHandler {
-                Task { @MainActor in onChange() }
+                Task { @MainActor in onChange(location) }
             }
             source.setCancelHandler {
                 close(descriptor)
             }
             source.resume()
             directorySources.append(source)
-            Self.watchingPaths.insert(directory.resolvingSymlinksInPath().path)
+            let resolvedPath = directory.resolvingSymlinksInPath().path
+            Self.watchingPaths.insert(resolvedPath)
+            var info = stat()
+            if fstat(descriptor, &info) == 0 {
+                Self.watchedIdentities[resolvedPath] = FolderIdentity(
+                    device: info.st_dev,
+                    inode: info.st_ino
+                )
+            }
         }
+        let watched = Self.watchingPaths
+            .map { ($0 as NSString).abbreviatingWithTildeInPath }
+            .sorted()
+            .joined(separator: ", ")
+        PerchLog.arrivals.record("watching " + (watched.isEmpty ? "nothing" : watched))
     }
 
     func stopWatching() {
         directorySources.forEach { $0.cancel() }
         directorySources.removeAll()
         Self.watchingPaths = []
+        Self.watchedIdentities = [:]
     }
 
     /// Re-scan the watched folders. `markRevealed` should be true when this refresh
@@ -113,6 +154,7 @@ final class RecentArrivals: ObservableObject {
     /// chances (skipped while suppressed: an invisible ghost consumes nothing).
     func refresh(excluding excludedPaths: Set<String>, markRevealed: Bool = false) {
         guard enabled else {
+            lastScanSkips = []
             sessions = []
             expandedSessionIDs = []
             smartNamesByPath = [:]
@@ -123,6 +165,7 @@ final class RecentArrivals: ObservableObject {
 
         let now = Date()
         var candidates: [ArrivalOffer] = []
+        var skips: [String] = []
         let keys: Set<URLResourceKey> = [
             .addedToDirectoryDateKey, .creationDateKey, .isDirectoryKey, .fileSizeKey
         ]
@@ -135,18 +178,41 @@ final class RecentArrivals: ObservableObject {
 
             for url in entries {
                 guard let values = try? url.resourceValues(forKeys: keys),
-                      values.isDirectory != true,
-                      (values.fileSize ?? 0) > 0,
-                      !Self.partialExtensions.contains(url.pathExtension.lowercased()),
-                      let added = values.addedToDirectoryDate ?? values.creationDate,
-                      now.timeIntervalSince(added) < Self.window
+                      values.isDirectory != true
                 else { continue }
+                guard let added = values.addedToDirectoryDate ?? values.creationDate,
+                      now.timeIntervalSince(added) < Self.window
+                else {
+                    if let created = values.creationDate,
+                       now.timeIntervalSince(created) < Self.traceWindow {
+                        let addedAge = values.addedToDirectoryDate.map {
+                            "added \(Int(now.timeIntervalSince($0)))s ago"
+                        } ?? "no added date"
+                        skips.append("\(url.lastPathComponent): created just now but \(addedAge)")
+                    }
+                    continue
+                }
 
                 let path = url.path
-                guard dismissedPaths[path] == nil,
-                      revealCounts[path, default: 0] < Self.maxReveals,
-                      !excludedPaths.contains(path)
-                else { continue }
+                let skipReason: String? = if (values.fileSize ?? 0) <= 0 {
+                    "empty"
+                } else if Self.partialExtensions.contains(url.pathExtension.lowercased()) {
+                    "partial download"
+                } else if dismissedPaths[path] != nil {
+                    "dismissed or placed by Perch"
+                } else if revealCounts[path, default: 0] >= Self.maxReveals {
+                    "already offered \(Self.maxReveals) times"
+                } else if excludedPaths.contains(path) {
+                    "on the shelf or vended by Perch"
+                } else {
+                    nil
+                }
+                if let skipReason {
+                    if now.timeIntervalSince(added) < Self.traceWindow {
+                        skips.append("\(url.lastPathComponent): \(skipReason)")
+                    }
+                    continue
+                }
 
                 candidates.append(ArrivalOffer(
                     url: url,
@@ -161,9 +227,13 @@ final class RecentArrivals: ObservableObject {
             }
         }
 
-        let groups = Array(
-            DownloadSessionGrouper.group(candidates).prefix(Self.maxSessions)
-        )
+        let allGroups = DownloadSessionGrouper.group(candidates)
+        let groups = Array(allGroups.prefix(Self.maxSessions))
+        for offer in allGroups.dropFirst(Self.maxSessions).joined()
+        where now.timeIntervalSince(offer.addedAt) < Self.traceWindow {
+            skips.append("\(offer.name): more than \(Self.maxSessions) newer arrivals")
+        }
+        lastScanSkips = skips
         var usedSessionIDs: Set<UUID> = []
         let fresh = groups.map { offers -> ArrivalSession in
             let existingID = offers

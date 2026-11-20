@@ -9,6 +9,7 @@ struct TroubleshootingView: View {
 
     @State private var checks: [DiagnosticCheck] = []
     @State private var errors: [String] = []
+    @State private var arrivals: [String] = []
     @State private var copied = false
 
     private let mono = Font.system(size: 11, design: .monospaced)
@@ -48,6 +49,13 @@ struct TroubleshootingView: View {
                     Text("log (\(errors.count))")
                         .font(mono.weight(.semibold))
                     Text(errors.isEmpty ? "none" : errors.joined(separator: "\n"))
+                        .foregroundStyle(.secondary)
+
+                    Divider()
+
+                    Text("arrivals (\(arrivals.count))")
+                        .font(mono.weight(.semibold))
+                    Text(arrivals.isEmpty ? "none" : arrivals.joined(separator: "\n"))
                         .foregroundStyle(.secondary)
                 }
                 .font(mono)
@@ -91,12 +99,13 @@ struct TroubleshootingView: View {
         copied = false
         checks = Diagnostics.run(clipboard: clipboard)
         errors = Diagnostics.recentErrors()
+        arrivals = Diagnostics.recentArrivals()
     }
 
     private func copyReport() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(Diagnostics.report(checks: checks, errors: errors), forType: .string)
+        pasteboard.setString(Diagnostics.report(checks: checks, errors: errors, arrivals: arrivals), forType: .string)
         copied = true
     }
 }

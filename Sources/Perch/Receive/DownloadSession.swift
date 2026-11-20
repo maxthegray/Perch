@@ -1,7 +1,7 @@
 import Foundation
 import SmartPerchCore
 
-enum ArrivalLocation: String, Equatable, Sendable {
+enum ArrivalLocation: String, Hashable, Sendable {
     case downloads
     case desktop
     /// The Screenshot app's save folder, when it is neither of the above.
