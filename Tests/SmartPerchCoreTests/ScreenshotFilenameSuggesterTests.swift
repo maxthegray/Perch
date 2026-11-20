@@ -81,7 +81,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "YouTube — Disturbing Case",
+                displayName: "YouTube - Disturbing Case",
                 suggestedFilename: "youtube-disturbing-case.png"
             )
         )
@@ -121,7 +121,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Messages — Lachlan Wession",
+                displayName: "Messages - Lachlan Wession",
                 suggestedFilename: "messages-lachlan-wession.png"
             )
         )
@@ -475,7 +475,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal — Perch",
+                displayName: "Terminal - Perch",
                 suggestedFilename: "terminal-perch.png"
             )
         )
@@ -515,7 +515,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal — Dotfiles",
+                displayName: "Terminal - Dotfiles",
                 suggestedFilename: "terminal-dotfiles.png"
             )
         )
@@ -555,7 +555,7 @@ final class ScreenshotFilenameSuggesterTests: XCTestCase {
         XCTAssertEqual(
             suggestion,
             ScreenshotNameSuggestion(
-                displayName: "Terminal — Perch",
+                displayName: "Terminal - Perch",
                 suggestedFilename: "terminal-perch.png"
             )
         )

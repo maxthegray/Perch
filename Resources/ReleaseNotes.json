@@ -1,5 +1,5 @@
 {
-  "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch — a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
+  "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch, since a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
       "version": "1.10.0",
@@ -345,7 +345,7 @@
         {
           "symbol": "bell.slash",
           "title": "quieter updates",
-          "detail": "the update prompt is a small note with a link to the changelog instead of a wall of release notes, and perch no longer opens a window after every update — only after the rare release worth stopping for."
+          "detail": "the update prompt is a small note with a link to the changelog instead of a wall of release notes, and perch no longer opens a window after every update, only after the rare release worth stopping for."
         }
       ]
     },
@@ -355,7 +355,7 @@
         {
           "symbol": "arrow.left.and.right",
           "title": "snapping while you drag",
-          "detail": "pulling the shelf off its edge now offers the other edges — and the Dock, if you snap beside it — as you go, instead of only after you put it down and pick it up again."
+          "detail": "pulling the shelf off its edge now offers the other edges (and the Dock, if you snap beside it) as you go, instead of only after you put it down and pick it up again."
         }
       ]
     },

@@ -43,7 +43,7 @@ enum CollectedDataReader {
     static func describe(_ value: DatabaseValue) -> String {
         switch value.storage {
         case .null:
-            return "—"
+            return "null"
         case let .int64(number):
             return String(number)
         case let .double(number):

@@ -12,8 +12,42 @@ struct LabsSettingsPane: View {
         Form {
             ShelfExperimentsSection(themeStore: themeStore)
             SmartPerchSettingsSections(smartPerch: smartPerch, onShowData: onShowData)
+            ReturnToRegularPerchSection(themeStore: themeStore, smartPerch: smartPerch)
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The one clear way out of Labs: delete Smart Perch's data, switch every experiment
+/// off, and hide the tab until it is unlocked again.
+struct ReturnToRegularPerchSection: View {
+    @ObservedObject var themeStore: ThemeStore
+    @ObservedObject var smartPerch: SmartPerchCoordinator
+
+    @State private var confirming = false
+
+    var body: some View {
+        Section {
+            Button(role: .destructive) {
+                confirming = true
+            } label: {
+                Text("Return to Regular Perch…")
+                Text("Turns off every Labs feature, deletes Smart Perch’s data, and hides Labs. Shelf items are not affected.")
+            }
+            .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
+        }
+        .alert("Return to regular Perch?", isPresented: $confirming) {
+            Button("Turn Off and Delete", role: .destructive) {
+                Task {
+                    guard await smartPerch.removeData() else { return }
+                    themeStore.showsEdgeTab = false
+                    LabsAccess.lock()
+                }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Every Labs feature turns off and Smart Perch’s database is deleted from this Mac. Triple-click “Made by” in General to bring Labs back.")
+        }
     }
 }
 
@@ -106,11 +140,11 @@ struct SmartPerchSettingsSections: View {
             Section {
                 Button("See Collected Data…", action: onShowData)
                 VStack(alignment: .leading, spacing: 4) {
-                    Button("Remove Smart Perch and Delete Data", role: .destructive) {
+                    Button("Delete Smart Perch Data…", role: .destructive) {
                         showsUninstallConfirmation = true
                     }
                     .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
-                    Text("Returns to regular Perch and permanently deletes everything Smart Perch learned. Shelf items are not affected.")
+                    Text("Turns Smart Perch off and deletes everything it learned. Shelf items are not affected.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -124,8 +158,8 @@ struct SmartPerchSettingsSections: View {
                 }
             }
         }
-        .alert("Remove Smart Perch?", isPresented: $showsUninstallConfirmation) {
-            Button("Remove and Delete Data", role: .destructive) {
+        .alert("Delete Smart Perch’s data?", isPresented: $showsUninstallConfirmation) {
+            Button("Delete Data", role: .destructive) {
                 Task {
                     await smartPerch.removeData()
                 }
@@ -144,7 +178,7 @@ struct SmartPerchSettingsSections: View {
     private var smartPerchCaption: String {
         smartPerch.isEnabled
             ? "Names screenshots and remembers where you usually put things."
-            : "Off — nothing you drop is analyzed or remembered."
+            : "Off. Nothing you drop is analyzed or remembered."
     }
 
     private var smartPerchBinding: Binding<Bool> {

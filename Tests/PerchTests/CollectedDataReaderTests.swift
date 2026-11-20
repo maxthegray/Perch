@@ -62,7 +62,7 @@ final class CollectedDataReaderTests: XCTestCase {
     }
 
     func testDescribesValues() {
-        XCTAssertEqual(CollectedDataReader.describe(.null), "—")
+        XCTAssertEqual(CollectedDataReader.describe(.null), "null")
         XCTAssertEqual(CollectedDataReader.describe(42.databaseValue), "42")
         XCTAssertEqual(
             CollectedDataReader.describe(String(repeating: "x", count: 400).databaseValue).count,

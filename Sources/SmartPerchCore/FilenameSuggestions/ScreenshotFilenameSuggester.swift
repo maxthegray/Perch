@@ -84,7 +84,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
             let nameWords = titleWords.map { ["messages"] + $0 }
                 ?? ["messages", "conversation"]
             let displayName = titleWords.map {
-                "Messages — \(humanizedName(from: $0))"
+                "Messages - \(humanizedName(from: $0))"
             } ?? "Messages conversation"
             return makeSuggestion(
                 filenameWords: nameWords,
@@ -149,7 +149,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
         if let context,
            !selectedWords.contains(context.filenameWord) {
             filenameWords.insert(context.filenameWord, at: 0)
-            displayName = "\(context.displayName) — \(displayName)"
+            displayName = "\(context.displayName) - \(displayName)"
         } else if let context, selectedWords == [context.filenameWord, "screenshot"] {
             displayName = "\(context.displayName) screenshot"
         }
@@ -528,7 +528,7 @@ public struct ScreenshotFilenameSuggester: Sendable {
 
         if let projectWords = projectWordsFromTerminalPaths(paths) {
             return TerminalWorkspaceContext(
-                displayName: "Terminal — \(humanizedName(from: projectWords))",
+                displayName: "Terminal - \(humanizedName(from: projectWords))",
                 filenameWords: ["terminal"] + projectWords
             )
         }

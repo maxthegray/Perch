@@ -47,7 +47,7 @@ struct TroubleshootingView: View {
 
                     Text("log (\(errors.count))")
                         .font(mono.weight(.semibold))
-                    Text(errors.isEmpty ? "—" : errors.joined(separator: "\n"))
+                    Text(errors.isEmpty ? "none" : errors.joined(separator: "\n"))
                         .foregroundStyle(.secondary)
                 }
                 .font(mono)

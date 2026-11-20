@@ -16,7 +16,7 @@ final class CollectedDataWindowController {
                 rootView: CollectedDataView(title: title, databaseURL: databaseURL)
             )
         )
-        window.title = "\(title) — Collected Data"
+        window.title = "\(title) Data"
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.setContentSize(NSSize(width: 820, height: 560))
         window.isReleasedWhenClosed = false

@@ -487,7 +487,7 @@ final class SmartPerchEventStoreTests: XCTestCase {
                     fileID: file.fileID,
                     shelfItemID: event.shelfItemID,
                     originalFilename: "Screenshot.png",
-                    displayName: "Messages — Lachlan Wession",
+                    displayName: "Messages - Lachlan Wession",
                     suggestedFilename: "messages-lachlan-wession.png"
                 )
             ]

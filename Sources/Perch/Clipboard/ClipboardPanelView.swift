@@ -235,7 +235,7 @@ struct ClipboardPanelView: View {
             .padding(.bottom, 8)
 
             if model.results.isEmpty {
-                Text(model.query.isEmpty ? "Copy something — it’ll land here." : "Nothing matches “\(model.query)”.")
+                Text(model.query.isEmpty ? "Copy something and it’ll land here." : "Nothing matches “\(model.query)”.")
                     .font(.system(size: 13))
                     .foregroundStyle(Self.dim)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
