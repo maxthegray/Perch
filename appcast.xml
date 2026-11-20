@@ -2,24 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.10.1/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.10.2/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.10.1</title>
+      <title>Version 1.10.2</title>
       <description><![CDATA[
 <ul>
-  <li><b>Updates stay in reach</b><br>Skipped an update? Right-click the shelf and choose Update Perch whenever you're ready.</li>
-  <li><b>Leaner Troubleshoot</b><br>Troubleshoot now shows raw status lines and error codes, ready to copy and send.</li>
-  <li><b>Tidier Settings</b><br>Tighter margins throughout, and a clear Return to Regular Perch option for anyone who tried the experiments.</li>
+  <li><b>Run Setup Again</b><br>The welcome screen is now Run Setup Again, in Settings and the menu bar menu, so it's clear it can change how Perch behaves.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Fri, 20 Nov 2026 02:08:50 +0000</pubDate>
-      <sparkle:version>1100010</sparkle:version>
-      <sparkle:shortVersionString>1.10.1</sparkle:shortVersionString>
+      <pubDate>Fri, 20 Nov 2026 02:27:27 +0000</pubDate>
+      <sparkle:version>1100020</sparkle:version>
+      <sparkle:shortVersionString>1.10.2</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.10.1/Perch.zip" sparkle:edSignature="1SOSVoUhDX/G+EJQsDAprUvRhMlpqJtUChsRm/RzFUAni/VkvRUB+CUVWS2w1PWOP0hiOqQg/zW6Qm1ShqlzBg==" length="4538150" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.10.2/Perch.zip" sparkle:edSignature="kOJzRJ4rqXx8VlfYP/M+D5hAYDqbDaEGjBC6A0bGExC6k4RDWxZMNy1CRmjIYNDvpsYrQPK64sthAtpDpp73BQ==" length="4538455" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
