@@ -129,7 +129,7 @@ struct ClipboardPanelView: View {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
                     .foregroundStyle(Self.dim)
-                TextField("Type to search…", text: $model.query)
+                TextField("Type to search", text: $model.query)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13))
                     .focused($searchFocused)

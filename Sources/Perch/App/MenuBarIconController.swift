@@ -86,11 +86,11 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
         toggleShelfItem.target = self
         menu.addItem(toggleShelfItem)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Shortcuts…", action: #selector(showShortcuts), keyEquivalent: "")
+        menu.addItem(withTitle: "Shortcuts", action: #selector(showShortcuts), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Settings…", action: #selector(showSettings), keyEquivalent: "")
+        menu.addItem(withTitle: "Settings", action: #selector(showSettings), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Run Setup Again…", action: #selector(showWelcome), keyEquivalent: "")
+        menu.addItem(withTitle: "Run Setup Again", action: #selector(showWelcome), keyEquivalent: "")
             .target = self
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Menu Bar Icon", action: #selector(hideIcon), keyEquivalent: "")

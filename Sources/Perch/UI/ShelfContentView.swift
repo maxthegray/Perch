@@ -666,7 +666,7 @@ struct ShelfContentView: View {
 
     private func transformPlaceholderSubtitle(_ placeholder: TransformPlaceholder) -> String {
         switch placeholder.state {
-        case .pending: return "Working…"
+        case .pending: return "Working"
         case let .failed(message): return message
         }
     }

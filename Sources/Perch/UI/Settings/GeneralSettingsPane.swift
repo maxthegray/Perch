@@ -29,7 +29,7 @@ struct GeneralSettingsPane: View {
                 LabeledContent("Version") {
                     HStack(spacing: 10) {
                         Text("\(productName) \(appVersion)")
-                        Button("Check for Updates…") {
+                        Button("Check for Updates") {
                             Updater.shared.checkForUpdates()
                         }
                     }
@@ -39,8 +39,8 @@ struct GeneralSettingsPane: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
                 HStack {
-                    Button("Troubleshoot…") { showsTroubleshooting = true }
-                    Button("Run Setup Again…", action: onShowWelcome)
+                    Button("Troubleshoot") { showsTroubleshooting = true }
+                    Button("Run Setup Again", action: onShowWelcome)
                     Button("Restart Perch", action: Relauncher.restart)
                 }
             }

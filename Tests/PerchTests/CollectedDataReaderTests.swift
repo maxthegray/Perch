@@ -65,8 +65,8 @@ final class CollectedDataReaderTests: XCTestCase {
         XCTAssertEqual(CollectedDataReader.describe(.null), "null")
         XCTAssertEqual(CollectedDataReader.describe(42.databaseValue), "42")
         XCTAssertEqual(
-            CollectedDataReader.describe(String(repeating: "x", count: 400).databaseValue).count,
-            CollectedDataReader.textLimit + 1
+            CollectedDataReader.describe(String(repeating: "x", count: 400).databaseValue),
+            String(repeating: "x", count: CollectedDataReader.textLimit) + " [truncated]"
         )
     }
 }

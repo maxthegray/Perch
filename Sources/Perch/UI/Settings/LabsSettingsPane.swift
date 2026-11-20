@@ -31,7 +31,7 @@ struct ReturnToRegularPerchSection: View {
             Button(role: .destructive) {
                 confirming = true
             } label: {
-                Text("Return to Regular Perch…")
+                Text("Return to Regular Perch")
                 Text("Turns off every Labs feature, deletes Smart Perch’s data, and hides Labs. Shelf items are not affected.")
             }
             .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)
@@ -138,9 +138,9 @@ struct SmartPerchSettingsSections: View {
             }
 
             Section {
-                Button("See Collected Data…", action: onShowData)
+                Button("See Collected Data", action: onShowData)
                 VStack(alignment: .leading, spacing: 4) {
-                    Button("Delete Smart Perch Data…", role: .destructive) {
+                    Button("Delete Smart Perch Data", role: .destructive) {
                         showsUninstallConfirmation = true
                     }
                     .disabled(smartPerch.isRemoving || smartPerch.isTransitioning)

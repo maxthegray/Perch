@@ -198,19 +198,19 @@ enum ShelfTransformAction: Hashable, Sendable {
     func pendingTitle(for filename: String) -> String {
         switch self {
         case let .convert(format):
-            return "Converting \(filename) to \(format.displayName)…"
+            return "Converting \(filename) to \(format.displayName)"
         case let .optimize(preset):
-            return "Optimizing \(filename) (\(preset.displayName))…"
+            return "Optimizing \(filename) (\(preset.displayName))"
         case .stripMetadata:
-            return "Removing metadata from \(filename)…"
+            return "Removing metadata from \(filename)"
         case .extractAudio:
-            return "Extracting audio from \(filename)…"
+            return "Extracting audio from \(filename)"
         case .splitPDF:
-            return "Splitting \(filename)…"
+            return "Splitting \(filename)"
         case .mergePDF:
-            return "Creating Merged.pdf…"
+            return "Creating Merged.pdf"
         case .zip:
-            return "Creating Archive.zip…"
+            return "Creating Archive.zip"
         }
     }
 

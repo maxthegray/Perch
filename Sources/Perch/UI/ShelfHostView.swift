@@ -1632,7 +1632,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             let shareable = targets.filter(sharing.canShare)
             if !shareable.isEmpty {
                 let shareItem = NSMenuItem(
-                    title: "Share…",
+                    title: "Share",
                     action: #selector(shareMenuAction(_:)),
                     keyEquivalent: ""
                 )
@@ -1695,7 +1695,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         }
         if let version = Updater.shared.availableUpdate {
             let update = NSMenuItem(
-                title: "Update Perch to \(version)…",
+                title: "Update Perch to \(version)",
                 action: #selector(updateAction(_:)),
                 keyEquivalent: ""
             )
@@ -1703,7 +1703,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             menu.addItem(update)
         }
         let settings = NSMenuItem(
-            title: "Settings…",
+            title: "Settings",
             action: #selector(showSettingsAction(_:)),
             keyEquivalent: ""
         )
@@ -1782,13 +1782,13 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         )
         if actions.contains(splitPDFAction) {
             transformMenu.addItem(transformMenuItem(
-                title: "Split PDF…",
+                title: "Split PDF",
                 action: splitPDFAction
             ))
         }
         if actions.contains(.mergePDF) {
             transformMenu.addItem(transformMenuItem(
-                title: "Merge to PDF…",
+                title: "Merge to PDF",
                 action: .mergePDF
             ))
         }

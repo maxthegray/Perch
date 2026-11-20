@@ -36,8 +36,8 @@ struct ClipboardSettingsSections: View {
 
             Section {
                 HStack {
-                    Button("See Collected Data…", action: onShowData)
-                    Button("Clear History…") { showsClearConfirmation = true }
+                    Button("See Collected Data", action: onShowData)
+                    Button("Clear History") { showsClearConfirmation = true }
                 }
             }
 
@@ -77,7 +77,7 @@ struct HotKeyRecorder: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Button(isRecording ? "Type shortcut…" : clipboard.hotKey.displayString) {
+            Button(isRecording ? "Type shortcut" : clipboard.hotKey.displayString) {
                 isRecording ? stopRecording() : startRecording()
             }
             .frame(minWidth: 110, alignment: .trailing)

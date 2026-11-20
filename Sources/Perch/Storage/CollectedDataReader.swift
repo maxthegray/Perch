@@ -49,7 +49,7 @@ enum CollectedDataReader {
         case let .double(number):
             return String(number)
         case let .string(text):
-            return text.count > textLimit ? String(text.prefix(textLimit)) + "…" : text
+            return text.count > textLimit ? String(text.prefix(textLimit)) + " [truncated]" : text
         case let .blob(data):
             return "<\(ByteCountFormatter.string(fromByteCount: Int64(data.count), countStyle: .file)) of data>"
         }

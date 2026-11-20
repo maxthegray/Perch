@@ -2,6 +2,16 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch, since a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
+      "version": "1.10.3",
+      "highlights": [
+        {
+          "symbol": "textformat",
+          "title": "Cleaner labels",
+          "detail": "Menus and buttons drop their trailing dots, so Settings, Share and Run Setup Again read as they are."
+        }
+      ]
+    },
+    {
       "version": "1.10.2",
       "highlights": [
         {
@@ -48,7 +58,7 @@
         {
           "symbol": "stethoscope",
           "title": "Troubleshoot",
-          "detail": "Settings › General › Troubleshoot… shows what’s stopping Perch and how to fix it, and copies a report you can send."
+          "detail": "Settings › General › Troubleshoot shows what’s stopping Perch and how to fix it, and copies a report you can send."
         },
         {
           "symbol": "camera.viewfinder",
@@ -161,7 +171,7 @@
         {
           "symbol": "list.bullet.rectangle",
           "title": "Every shortcut in one place",
-          "detail": "Shortcuts… in the shelf's right-click menu or the menu bar lists everything Perch can do. Welcome Screen… brings back the tour anytime."
+          "detail": "Shortcuts in the shelf's right-click menu or the menu bar lists everything Perch can do. Welcome Screen brings back the tour anytime."
         }
       ]
     },
@@ -181,7 +191,7 @@
         {
           "symbol": "arrow.triangle.2.circlepath",
           "title": "Updates in the shelf menu",
-          "detail": "Check for a newer Perch from Updates… in the shelf's right-click menu."
+          "detail": "Check for a newer Perch from Updates in the shelf's right-click menu."
         }
       ]
     },

@@ -308,7 +308,7 @@ struct ItemRowView: View {
     /// useful than what it is, and the row has room for exactly one of them.
     private var displayedSubtitle: String {
         if isNameAnalysisPending {
-            return "Finding a useful name…"
+            return "Finding a useful name"
         }
         if let transformResultDetail {
             return transformResultDetail

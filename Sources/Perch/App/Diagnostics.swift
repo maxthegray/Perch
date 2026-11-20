@@ -72,7 +72,7 @@ enum Diagnostics {
                 title: key,
                 status: .problem,
                 detail: "\(path)  read=\(errorCode(error))  watch=\(watching ? "ok" : "none")",
-                fix: .init(title: "Files & Folders…") { openSettings("Privacy_FilesAndFolders") }
+                fix: .init(title: "Files & Folders") { openSettings("Privacy_FilesAndFolders") }
             )
         }
     }
@@ -124,7 +124,7 @@ enum Diagnostics {
                 title: title,
                 status: .problem,
                 detail: "status=requiresApproval  \(path)",
-                fix: .init(title: "Login Items…") { SMAppService.openSystemSettingsLoginItems() }
+                fix: .init(title: "Login Items") { SMAppService.openSystemSettingsLoginItems() }
             )
         case .notRegistered:
             return DiagnosticCheck(title: title, status: .note, detail: "status=notRegistered  \(path)")
@@ -141,7 +141,7 @@ enum Diagnostics {
             title: "ax.trusted",
             status: trusted ? .ok : .problem,
             detail: String(trusted),
-            fix: trusted ? nil : .init(title: "Accessibility…") { openSettings("Privacy_Accessibility") }
+            fix: trusted ? nil : .init(title: "Accessibility") { openSettings("Privacy_Accessibility") }
         )
     }
 
