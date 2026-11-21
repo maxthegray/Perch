@@ -38,6 +38,15 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(PerchLog.recent.last?.message, "filler 249")
     }
 
+    func testAgesReadAtAGlance() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        XCTAssertEqual(Diagnostics.age(of: nil, now: now), "none")
+        XCTAssertEqual(Diagnostics.age(of: now.addingTimeInterval(-30), now: now), "30s")
+        XCTAssertEqual(Diagnostics.age(of: now.addingTimeInterval(-600), now: now), "10m")
+        XCTAssertEqual(Diagnostics.age(of: now.addingTimeInterval(-7 * 86400), now: now), "7d")
+        XCTAssertEqual(Diagnostics.age(of: now.addingTimeInterval(5), now: now), "in 5s")
+    }
+
     func testArrivalTraceStaysOutOfTheErrorLog() {
         let marker = UUID().uuidString
         PerchLog.arrivals.record("desktop  not revealed, shelf is on the strip \(marker)")

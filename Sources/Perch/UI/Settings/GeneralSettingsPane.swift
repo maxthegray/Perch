@@ -9,8 +9,8 @@ struct GeneralSettingsPane: View {
     /// Unlocks Labs and brings its tab forward.
     let onRevealLabs: () -> Void
     let onShowWelcome: () -> Void
+    @ObservedObject var troubleshooting: TroubleshootingPresentation
     @State private var launchAtLogin = false
-    @State private var showsTroubleshooting = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
 
     var body: some View {
@@ -39,14 +39,14 @@ struct GeneralSettingsPane: View {
                     .contentShape(Rectangle())
                     .onTapGesture(count: 3, perform: onRevealLabs)
                 HStack {
-                    Button("Troubleshoot") { showsTroubleshooting = true }
+                    Button("Troubleshoot") { troubleshooting.isPresented = true }
                     Button("Run Setup Again", action: onShowWelcome)
                     Button("Restart Perch", action: Relauncher.restart)
                 }
             }
         }
         .formStyle(.grouped)
-        .sheet(isPresented: $showsTroubleshooting) {
+        .sheet(isPresented: $troubleshooting.isPresented) {
             TroubleshootingView(clipboard: clipboard)
         }
     }

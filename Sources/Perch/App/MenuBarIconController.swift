@@ -12,6 +12,7 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     var onDrop: ((NSPasteboard) -> Bool)?
     var onShowSettings: (() -> Void)?
     var onShowShortcuts: (() -> Void)?
+    var onShowTroubleshooting: (() -> Void)?
     var onShowWelcome: (() -> Void)?
 
     private var statusItem: NSStatusItem?
@@ -86,12 +87,16 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
         toggleShelfItem.target = self
         menu.addItem(toggleShelfItem)
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Shortcuts", action: #selector(showShortcuts), keyEquivalent: "")
-            .target = self
         menu.addItem(withTitle: "Settings", action: #selector(showSettings), keyEquivalent: "")
             .target = self
-        menu.addItem(withTitle: "Run Setup Again", action: #selector(showWelcome), keyEquivalent: "")
+        let help = NSMenu(title: "Help")
+        help.addItem(withTitle: "Shortcuts", action: #selector(showShortcuts), keyEquivalent: "")
             .target = self
+        help.addItem(withTitle: "Troubleshoot", action: #selector(showTroubleshooting), keyEquivalent: "")
+            .target = self
+        help.addItem(withTitle: "Run Setup Again", action: #selector(showWelcome), keyEquivalent: "")
+            .target = self
+        menu.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Menu Bar Icon", action: #selector(hideIcon), keyEquivalent: "")
             .target = self
@@ -111,6 +116,7 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     }
 
     @objc private func showShortcuts() { onShowShortcuts?() }
+    @objc private func showTroubleshooting() { onShowTroubleshooting?() }
     @objc private func showSettings() { onShowSettings?() }
     @objc private func showWelcome() { onShowWelcome?() }
     @objc private func quit() { NSApp.terminate(nil) }

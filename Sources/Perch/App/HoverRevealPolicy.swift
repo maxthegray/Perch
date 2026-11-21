@@ -8,6 +8,10 @@
 /// A live recent-arrival ghost stands in for the switch: the shelf just offered
 /// something, so the edge stays a way back to it for as long as the offer lasts.
 enum HoverRevealPolicy {
+    /// With hover reveal off, resting this long at the edge counts as asking for the
+    /// shelf, the same as holding Control.
+    static let restRevealDelay: Duration = .milliseconds(1500)
+
     /// Whether a plain (non-drag) pointer entry into an edge catch zone may arm a reveal.
     static func armsReveal(
         revealOnHoverEnabled: Bool,

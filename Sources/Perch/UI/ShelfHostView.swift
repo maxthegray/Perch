@@ -151,6 +151,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Called when the user picks "Settings"; the controller opens the window.
     var onShowSettings: (() -> Void)?
+    var onShowShortcuts: (() -> Void)?
+    var onShowTroubleshooting: (() -> Void)?
+    var onShowWelcome: (() -> Void)?
     /// Triple-click anywhere on the card: put the shelf away.
     var onTripleClick: (() -> Void)?
     /// The second click of what may become a triple-click.
@@ -1736,6 +1739,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         settings.target = self
         menu.addItem(settings)
 
+        let help = NSMenu(title: "Help")
+        for (title, action) in [
+            ("Shortcuts", #selector(showShortcutsAction(_:))),
+            ("Troubleshoot", #selector(showTroubleshootingAction(_:))),
+            ("Run Setup Again", #selector(showWelcomeAction(_:)))
+        ] {
+            help.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
+        }
+        menu.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
+
         let restart = NSMenuItem(
             title: "Restart Perch",
             action: #selector(restartAction(_:)),
@@ -1892,6 +1905,18 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     @objc private func showSettingsAction(_ sender: NSMenuItem) {
         onShowSettings?()
+    }
+
+    @objc private func showShortcutsAction(_ sender: NSMenuItem) {
+        onShowShortcuts?()
+    }
+
+    @objc private func showTroubleshootingAction(_ sender: NSMenuItem) {
+        onShowTroubleshooting?()
+    }
+
+    @objc private func showWelcomeAction(_ sender: NSMenuItem) {
+        onShowWelcome?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {

@@ -15,6 +15,7 @@ final class SettingsWindowController {
     private let smartPerch: SmartPerchCoordinator
     private let clipboard: ClipboardCoordinator
     private var window: NSWindow?
+    private let troubleshooting = TroubleshootingPresentation()
     private let collectedData = CollectedDataWindowController()
     private var labsObserver: NSObjectProtocol?
     /// Which tab is up. Only Shelf summons the live appearance preview.
@@ -69,7 +70,8 @@ final class SettingsWindowController {
                 smartPerch: smartPerch,
                 clipboard: clipboard,
                 onRevealLabs: { [weak self] in self?.revealLabs() },
-                onShowWelcome: { [weak self] in self?.onShowWelcome?() }
+                onShowWelcome: { [weak self] in self?.onShowWelcome?() },
+                troubleshooting: troubleshooting
             )
         )
         addPane(
@@ -121,6 +123,16 @@ final class SettingsWindowController {
 
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Opens Settings on General with the troubleshooting sheet up.
+    func showTroubleshooting() {
+        show()
+        if let tabs = window?.contentViewController as? NSTabViewController,
+           let index = tabs.tabViewItems.firstIndex(where: { $0.label == "General" }) {
+            tabs.selectedTabViewItemIndex = index
+        }
+        troubleshooting.isPresented = true
     }
 
     /// Unlocks Labs and brings its tab forward. Every feature inside stays off.

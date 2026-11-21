@@ -76,6 +76,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Polls for Control while the pointer rests in a catch zone that hover reveal
     /// ignored. Pressing a modifier is not a pointer event, so nothing else would notice.
     private var controlRevealWatch: Task<Void, Never>?
+    /// Set once the pointer has rested at the edge for `restRevealDelay`; cleared when it
+    /// leaves the edge.
+    private var restRevealGranted = false
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
     /// Holds late hover/measurement callbacks off while a free shelf is fading away;
@@ -121,7 +124,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
     /// Hover reveal for this hover: the setting, or Control held to ask for it anyway.
     private var hoverRevealRequested: Bool {
-        revealOnHover || NSEvent.modifierFlags.contains(.control)
+        revealOnHover || restRevealGranted || NSEvent.modifierFlags.contains(.control)
     }
     /// Whether the shake-to-summon gesture is active. User-toggled; defaults off.
     private var shakeToSummonEnabled: Bool {
@@ -464,6 +467,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         hostView.onShowSettings = { [weak self] in
             self?.settingsWindow.show()
         }
+        hostView.onShowShortcuts = { [weak self] in
+            self?.shortcutsWindow.show()
+        }
+        hostView.onShowTroubleshooting = { [weak self] in
+            self?.settingsWindow.showTroubleshooting()
+        }
+        hostView.onShowWelcome = { [weak self] in
+            self?.onShowWelcome?()
+        }
         settingsWindow.onShowWelcome = { [weak self] in
             self?.onShowWelcome?()
         }
@@ -487,6 +499,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         menuBarIcon.onShowShortcuts = { [weak self] in
             self?.shortcutsWindow.show()
+        }
+        menuBarIcon.onShowTroubleshooting = { [weak self] in
+            self?.settingsWindow.showTroubleshooting()
         }
         dropView.onUnclaimedPress = { [weak hostView] event in hostView?.unclaimedPressBegan(event) }
         hostView.onTripleClick = { [weak self] in
@@ -2635,16 +2650,26 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     /// Pressing Control with the pointer already resting at the edge counts as arriving
-    /// with it held. Polls `NSEvent.modifierFlags` rather than monitoring key events,
-    /// which would need Accessibility permission; the watch ends when the pointer
-    /// leaves this strip.
+    /// with it held, and so does resting there for `restRevealDelay`. Polls
+    /// `NSEvent.modifierFlags` rather than monitoring key events, which would need
+    /// Accessibility permission; the watch ends when the pointer leaves this strip.
     private func watchForControlReveal(at strip: EdgeStripWindow) {
         controlRevealWatch?.cancel()
         controlRevealWatch = Task { @MainActor [weak self] in
+            let clock = ContinuousClock()
+            var restStart = clock.now
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(50))
                 guard let self, !Task.isCancelled, self.hoveredStrip === strip else { return }
-                if !self.panel.isVisible, NSEvent.modifierFlags.contains(.control) {
+                guard !self.panel.isVisible else {
+                    restStart = clock.now
+                    continue
+                }
+                let rested = clock.now - restStart >= HoverRevealPolicy.restRevealDelay
+                if rested || NSEvent.modifierFlags.contains(.control) {
+                    if rested {
+                        self.restRevealGranted = true
+                    }
                     self.controlRevealWatch = nil
                     self.edgeStrip(strip, pointerDidEnterViaDrag: false)
                     return
@@ -2654,6 +2679,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     }
 
     func edgeStripPointerDidExit(_ strip: EdgeStripWindow, duringDrag: Bool) {
+        restRevealGranted = false
         guard usesEdgeDock else { return }
         exitRegion(duringDrag: duringDrag)
     }

@@ -36,6 +36,7 @@ enum GestureShortcuts {
         }
         if !revealOnHover {
             rows.append(GestureShortcut(key: "⌃", gesture: "At edge", action: "Show shelf"))
+            rows.append(GestureShortcut(gesture: "Rest at edge 1.5s", action: "Show shelf"))
         }
         if shelvesOnEdgeTouch {
             rows.append(GestureShortcut(gesture: "Hold at edge", action: "Tuck away"))

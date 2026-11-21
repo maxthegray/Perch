@@ -191,7 +191,7 @@ struct WelcomeView: View {
                 RevealOption(
                     symbol: "hand.draw",
                     title: "When I need it",
-                    detail: "Drag something or hold ⌃ Control at the edge",
+                    detail: "Drag something, hold ⌃ Control, or rest at the edge",
                     isSelected: !choices.revealOnHover,
                     select: { choices.revealOnHover = false }
                 )

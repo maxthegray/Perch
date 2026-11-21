@@ -14,7 +14,7 @@ struct BehaviorSettingsPane: View {
             Section("Show the shelf") {
                 Toggle(isOn: $revealOnHover) {
                     Text("When the pointer touches an edge")
-                    Text("When off, hold ⌃ Control at the edge.")
+                    Text("When off, hold ⌃ Control or rest at the edge for 1.5 seconds.")
                 }
                 Toggle("When dragging files", isOn: $revealOnDragStart)
             }

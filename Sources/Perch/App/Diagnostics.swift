@@ -28,6 +28,9 @@ enum Diagnostics {
         for (location, url) in RecentArrivals.watchedDirectories() {
             checks.append(folderAccessCheck(key: "watch.\(location.rawValue)", url: url))
         }
+        for (location, url) in RecentArrivals.watchedDirectories() {
+            checks.append(newestFilesCheck(key: "newest.\(location.rawValue)", url: url))
+        }
         checks.append(screenshotCheck())
         checks.append(loginItemCheck())
         if PerchSettings.labsFlag(PerchSettings.snapBesideDock) {
@@ -110,6 +113,43 @@ enum Diagnostics {
             )
         }
         return DiagnosticCheck(title: "screencapture", status: .ok, detail: detail)
+    }
+
+    /// The newest files in a watched folder with both of their dates. Perch judges
+    /// freshness by date added, so a just-arrived file showing an old one is skipped.
+    private static func newestFilesCheck(key: String, url: URL, now: Date = Date()) -> DiagnosticCheck {
+        let keys: [URLResourceKey] = [.addedToDirectoryDateKey, .creationDateKey, .isDirectoryKey]
+        let entries = (try? FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: .skipsHiddenFiles
+        )) ?? []
+        let dated = entries.compactMap { file -> (String, Date?, Date?)? in
+            guard let values = try? file.resourceValues(forKeys: Set(keys)),
+                  values.isDirectory != true else { return nil }
+            return (file.lastPathComponent, values.addedToDirectoryDate, values.creationDate)
+        }
+        let newest = dated
+            .sorted { max($0.1 ?? .distantPast, $0.2 ?? .distantPast) > max($1.1 ?? .distantPast, $1.2 ?? .distantPast) }
+            .prefix(2)
+            .map { name, added, created in
+                "\(name) added=\(age(of: added, now: now)) created=\(age(of: created, now: now))"
+            }
+        return DiagnosticCheck(
+            title: key,
+            status: .note,
+            detail: newest.isEmpty ? "empty" : newest.joined(separator: "  |  ")
+        )
+    }
+
+    static func age(of date: Date?, now: Date) -> String {
+        guard let date else { return "none" }
+        let seconds = Int(now.timeIntervalSince(date))
+        if seconds < 0 { return "in \(-seconds)s" }
+        if seconds < 120 { return "\(seconds)s" }
+        if seconds < 7200 { return "\(seconds / 60)m" }
+        if seconds < 172_800 { return "\(seconds / 3600)h" }
+        return "\(seconds / 86400)d"
     }
 
     private static func loginItemCheck() -> DiagnosticCheck {
@@ -201,11 +241,14 @@ enum Diagnostics {
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
         let build = info?["CFBundleVersion"] as? String ?? "?"
         let os = ProcessInfo.processInfo.operatingSystemVersion
+        let clock = DateFormatter()
+        clock.dateFormat = "yyyy-MM-dd HH:mm:ss ZZZZZ"
         var lines = [
             "perch     \(version) (\(build))",
             "macos     \(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
             "arch      \(architecture)",
             "bundle    \(abbreviated(Bundle.main.bundleURL))",
+            "clock     \(clock.string(from: Date()))  tz=\(TimeZone.current.identifier)",
             ""
         ]
         let width = (checks.map(\.title.count).max() ?? 0) + 2

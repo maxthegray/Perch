@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+/// Whether the troubleshooting sheet is up, shared so the menu bar's Help menu can open it.
+@MainActor
+final class TroubleshootingPresentation: ObservableObject {
+    @Published var isPresented = false
+}
+
 /// The troubleshooting sheet: raw status lines, a fix button where one exists, the
 /// recent failure log, and the same text copyable as a report.
 struct TroubleshootingView: View {
