@@ -2,6 +2,31 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch, since a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
+      "version": "1.11.0",
+      "highlights": [
+        {
+          "symbol": "trash",
+          "title": "Drag to the Trash",
+          "detail": "Drop a shelf item on the Trash in the Dock to throw it away. Files you only linked to stay where they are."
+        },
+        {
+          "symbol": "cursorarrow.rays",
+          "title": "Rest at the edge",
+          "detail": "With hover reveal off, rest the pointer at an edge for a moment and the shelf comes out, no Control key needed."
+        },
+        {
+          "symbol": "questionmark.circle",
+          "title": "Help menu",
+          "detail": "Shortcuts, Troubleshoot and Run Setup Again now live under Help, in the menu bar and the shelf's right-click menu."
+        },
+        {
+          "symbol": "stethoscope",
+          "title": "Sharper Troubleshoot",
+          "detail": "The report now shows what Perch noticed arriving in Downloads and Desktop, and why anything was skipped."
+        }
+      ]
+    },
+    {
       "version": "1.10.3",
       "highlights": [
         {
