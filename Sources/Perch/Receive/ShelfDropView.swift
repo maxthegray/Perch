@@ -107,12 +107,14 @@ final class ShelfDropView: NSView {
     /// performs the actual move itself (the snapshotter moves the file into the
     /// holding dir), which avoids a conflict with the source's own handling.
     private func dragOperation(for sender: NSDraggingInfo) -> NSDragOperation {
-        sender.draggingPasteboard.availableType(from: Self.acceptedTypes) != nil ? .copy : []
+        guard !(sender.draggingSource is ArrivalCloneDragSource) else { return [] }
+        return sender.draggingPasteboard.availableType(from: Self.acceptedTypes) != nil ? .copy : []
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         // A drop doesn't fire draggingExited, so snap the outline off here.
         dropHandler?.dragOverShelfDidChange(false)
+        guard !(sender.draggingSource is ArrivalCloneDragSource) else { return false }
         let perchSource = sender.draggingSource as? ItemDragSource
         let ok = dropHandler?.handleDrop(
             sender.draggingPasteboard,

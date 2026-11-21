@@ -22,6 +22,8 @@ enum GestureShortcuts {
         if !copiesByDefault {
             rows.append(GestureShortcut(key: "⌥", gesture: "Drag", action: "Drag out a duplicate"))
         }
+        rows.append(GestureShortcut(key: "⌥", gesture: "Click a new file", action: "Add a copy, keep the original"))
+        rows.append(GestureShortcut(key: "⌥", gesture: "Drag a new file", action: "Drag out a copy"))
         rows.append(showsGrabHandle
             ? GestureShortcut(gesture: "Drag handle", action: "Move shelf")
             : GestureShortcut(key: "⌃", gesture: "Drag", action: "Move shelf"))

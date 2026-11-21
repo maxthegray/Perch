@@ -30,6 +30,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     private let hostingView: NSHostingView<ShelfContentView>
     /// Retains the active drag source for the lifetime of an in-flight drag.
     private var activeDragSource: ItemDragSource?
+    private var activeCloneSource: ArrivalCloneDragSource?
     /// Retained beyond AppKit's drag-ended callback while late file promises resolve.
     /// More than one may be pending if the user starts another vend during the grace
     /// period for the previous drag.
@@ -121,8 +122,9 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     /// Recent-arrival actions are performed by the controller because they mutate both
     /// the holding directory and the Smart Perch interaction log.
-    var onAdoptArrival: ((ArrivalOffer, ArrivalSession) -> StoredItem?)?
-    var onAdoptArrivalSession: ((ArrivalSession) -> [StoredItem])?
+    /// The Bool is `copying`: Option held, so the original stays where it is.
+    var onAdoptArrival: ((ArrivalOffer, ArrivalSession, Bool) -> StoredItem?)?
+    var onAdoptArrivalSession: ((ArrivalSession, Bool) -> [StoredItem])?
     var onExpandArrivalSession: ((ArrivalSession) -> Void)?
     var onDismissArrival: ((ArrivalGhost) -> Void)?
 
@@ -696,12 +698,17 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             guard moved >= 4 else { return }
             pendingArrival = nil
 
+            let copying = event.modifierFlags.contains(.option)
+            if copying {
+                startArrivalClone(ghost, event: event)
+                return
+            }
             let adoptedItems: [StoredItem]
             switch ghost {
             case let .offer(offer, session):
-                adoptedItems = onAdoptArrival?(offer, session).map { [$0] } ?? []
+                adoptedItems = onAdoptArrival?(offer, session, copying).map { [$0] } ?? []
             case let .summary(session, _):
-                adoptedItems = onAdoptArrivalSession?(session) ?? []
+                adoptedItems = onAdoptArrivalSession?(session, copying) ?? []
             }
             guard let item = adoptedItems.first else {
                 resetDragState()
@@ -768,13 +775,12 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                let index = arrivalIndex(at: point),
                ghostRows[index].id == ghost.id {
                 NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .default)
+                let copying = event.modifierFlags.contains(.option)
                 switch ghost {
                 case let .offer(offer, session):
-                    _ = onAdoptArrival?(offer, session)
-                case let .summary(session, .expand):
-                    _ = onAdoptArrivalSession?(session)
-                case let .summary(session, .addAll):
-                    _ = onAdoptArrivalSession?(session)
+                    _ = onAdoptArrival?(offer, session, copying)
+                case let .summary(session, _):
+                    _ = onAdoptArrivalSession?(session, copying)
                 }
             }
             resetDragState()
@@ -1069,6 +1075,33 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             }
         }
         NSLog("Perch moved \(items.count) item(s) to the Trash")
+    }
+
+    /// Option-drag of a ghost: a copy of the original goes wherever it is dropped, and
+    /// nothing comes aboard.
+    private func startArrivalClone(_ ghost: ArrivalGhost, event: NSEvent) {
+        let urls: [URL]
+        switch ghost {
+        case let .offer(offer, _):
+            urls = [offer.url]
+        case let .summary(session, _):
+            urls = session.offers.map(\.url)
+        }
+        let existing = urls.filter { FileManager.default.fileExists(atPath: $0.path) }
+        guard !existing.isEmpty else {
+            resetDragState()
+            return
+        }
+        vendStarted = true
+        onVendSessionChange?(true)
+        let source = ArrivalCloneDragSource(urls: existing)
+        source.onEnded = { [weak self] in
+            guard let self else { return }
+            self.activeCloneSource = nil
+            self.onVendSessionChange?(false)
+        }
+        activeCloneSource = source
+        source.beginDrag(from: self, event: event)
     }
 
     /// Track an armed drag of the whole card: past a small slop the window follows
@@ -1618,6 +1651,16 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             adopt.target = self
             menu.addItem(adopt)
 
+            let copy = NSMenuItem(
+                title: arrivalCopyMenuTitle(for: ghost),
+                action: #selector(copyArrivalMenuAction(_:)),
+                keyEquivalent: ""
+            )
+            copy.target = self
+            copy.isAlternate = true
+            copy.keyEquivalentModifierMask = .option
+            menu.addItem(copy)
+
             let dismiss = NSMenuItem(
                 title: arrivalDismissMenuTitle(for: ghostRows[ghostIndex]),
                 action: #selector(dismissArrivalMenuAction(_:)),
@@ -1871,6 +1914,18 @@ final class ShelfHostView: NSView, NSMenuDelegate {
         }
     }
 
+    /// The Option alternate: the same adoption, leaving the original in place.
+    private func arrivalCopyMenuTitle(for ghost: ArrivalGhost) -> String {
+        switch ghost {
+        case .summary(_, .expand):
+            return "Copy All Downloads"
+        case let .summary(session, .addAll):
+            return "Copy All \(session.offers.count) Downloads"
+        case .offer:
+            return "Copy to \(PerchProductIdentity.displayName)"
+        }
+    }
+
     private func arrivalDismissMenuTitle(for ghost: ArrivalGhost) -> String {
         switch ghost {
         case let .summary(session, _):
@@ -1970,14 +2025,22 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     }
 
     @objc private func adoptArrivalMenuAction(_ sender: NSMenuItem) {
+        adoptMenuTargetArrival(copying: false)
+    }
+
+    @objc private func copyArrivalMenuAction(_ sender: NSMenuItem) {
+        adoptMenuTargetArrival(copying: true)
+    }
+
+    private func adoptMenuTargetArrival(copying: Bool) {
         guard let ghost = menuTargetArrival else { return }
         switch ghost {
         case let .offer(offer, session):
-            _ = onAdoptArrival?(offer, session)
+            _ = onAdoptArrival?(offer, session, copying)
         case let .summary(session, .expand):
             onExpandArrivalSession?(session)
         case let .summary(session, .addAll):
-            _ = onAdoptArrivalSession?(session)
+            _ = onAdoptArrivalSession?(session, copying)
         }
         menuTargetArrival = nil
     }

@@ -515,11 +515,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
 
         // Recent downloads can be adopted individually or as one temporal session.
-        hostView.onAdoptArrival = { [weak self] offer, session in
-            self?.adoptArrival(offer, from: session)
+        hostView.onAdoptArrival = { [weak self] offer, session, copying in
+            self?.adoptArrival(offer, from: session, copying: copying)
         }
-        hostView.onAdoptArrivalSession = { [weak self] session in
-            self?.adoptArrivalSession(session) ?? []
+        hostView.onAdoptArrivalSession = { [weak self] session, copying in
+            self?.adoptArrivalSession(session, copying: copying) ?? []
         }
         hostView.onExpandArrivalSession = { [weak self] session in
             self?.expandArrivalSession(session)
@@ -952,6 +952,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func adoptArrival(
         _ offer: ArrivalOffer,
         from session: ArrivalSession,
+        copying: Bool = false,
         refreshAfterAdoption: Bool = true,
         recordsInteraction: Bool = true
     ) -> StoredItem? {
@@ -966,12 +967,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         let destination = filesDir.appendingPathComponent(offer.name, isDirectory: false)
         var originPaths: [String: String]? = [offer.name: offer.url.path]
         do {
-            do {
-                try fileManager.moveItem(at: offer.url, to: destination)
-            } catch {
-                NSLog("Perch could not move arrival \(offer.url.path) (\(error)); copying instead")
+            if copying {
                 try fileManager.copyItem(at: offer.url, to: destination)
                 originPaths = nil
+            } else {
+                do {
+                    try fileManager.moveItem(at: offer.url, to: destination)
+                } catch {
+                    NSLog("Perch could not move arrival \(offer.url.path) (\(error)); copying instead")
+                    try fileManager.copyItem(at: offer.url, to: destination)
+                    originPaths = nil
+                }
             }
         } catch {
             NSLog("Perch failed to adopt arrival \(offer.url.path): \(error)")
@@ -1022,8 +1028,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 affectedFileCount: 1
             )
         }
-        // The copy-fallback case leaves the original in the folder; the origin-path
-        // exclusion keeps it from being re-offered.
+        // A copy leaves the original in the folder, and with no origin path recorded
+        // nothing else would stop it being offered again.
+        if originPaths == nil {
+            arrivals.excludePermanently([offer.url.path])
+        }
         if refreshAfterAdoption {
             refreshArrivals()
         }
@@ -1031,13 +1040,17 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         return item
     }
 
-    private func adoptArrivalSession(_ session: ArrivalSession) -> [StoredItem] {
+    private func adoptArrivalSession(
+        _ session: ArrivalSession,
+        copying: Bool = false
+    ) -> [StoredItem] {
         // Each individual insert goes to the front, so process oldest-first to leave
         // the session's newest-first presentation order intact on the shelf.
         let adopted = session.offers.reversed().compactMap { offer in
             adoptArrival(
                 offer,
                 from: session,
+                copying: copying,
                 refreshAfterAdoption: false,
                 recordsInteraction: false
             )

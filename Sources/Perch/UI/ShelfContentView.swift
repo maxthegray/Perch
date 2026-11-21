@@ -140,12 +140,22 @@ struct ShelfContentView: View {
     }
 
     private var hintedCopyIDs: Set<UUID> {
-        guard interaction.modifierHint == .copyOut else { return [] }
+        guard interaction.modifierHint == .copyOut,
+              interaction.hoveredArrivalID == nil else { return [] }
         return ModifierHintPolicy.copyTargets(
             hovered: interaction.hoveredItemID,
             selected: interaction.selectedItemIDs,
             all: store.items.map(\.id)
         )
+    }
+
+    /// ⌥ over a ghost peels a copy from that ghost; with nothing under the pointer,
+    /// from every ghost, the same as the item rows.
+    private func ghostShowsCopyHint(_ ghost: ArrivalGhost) -> Bool {
+        guard interaction.modifierHint == .copyOut,
+              interaction.hoveredItemID == nil else { return false }
+        guard let hovered = interaction.hoveredArrivalID else { return true }
+        return hovered == ghost.id
     }
 
     private var hintedRangeIDs: Set<UUID> {
@@ -338,7 +348,8 @@ struct ShelfContentView: View {
                     smartName: smartNames.isEnabled
                         ? ghost.offer.flatMap { arrivals.smartName(for: $0) }
                         : nil,
-                    usesScreenshotPlaceholder: smartNames.isEnabled
+                    usesScreenshotPlaceholder: smartNames.isEnabled,
+                    showsCopyHint: ghostShowsCopyHint(ghost)
                 )
                 .transition(.opacity)
             }
@@ -818,11 +829,27 @@ struct ArrivalGhostRowView: View {
     /// With Smart Perch off, a screenshot ghost shows its real filename rather than the
     /// generic "Screenshot" label that stands in while a name is being generated.
     var usesScreenshotPlaceholder = true
+    /// ⌥ held: a copy peels out from behind the icon, still dimmed like the ghost.
+    var showsCopyHint = false
 
     var body: some View {
         HStack(spacing: showsLabels ? RowMetrics.labeledRowSpacing : 0) {
             icon
                 .frame(width: theme.iconSize, height: theme.iconSize)
+                .background {
+                    if showsCopyHint {
+                        icon
+                            .frame(width: theme.iconSize, height: theme.iconSize)
+                            .opacity(0.6)
+                            .overlay(alignment: .topLeading) {
+                                CopyBadgeView()
+                                    .offset(x: -4, y: -4)
+                            }
+                            .rotationEffect(.degrees(-8), anchor: .bottomTrailing)
+                            .offset(x: -5, y: -3)
+                            .transition(.offset(x: 5, y: 3).combined(with: .opacity))
+                    }
+                }
 
             if showsLabels {
                 VStack(alignment: .leading, spacing: 2) {
@@ -868,6 +895,7 @@ struct ArrivalGhostRowView: View {
         .opacity(isHovered ? 0.95 : (isSessionSummary ? 0.76 : 0.55))
         .animation(.easeOut(duration: 0.13), value: isHovered)
         .animation(.easeOut(duration: 0.18), value: title)
+        .animation(.spring(response: 0.34, dampingFraction: 0.58), value: showsCopyHint)
     }
 
     @ViewBuilder
