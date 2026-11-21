@@ -17,6 +17,10 @@ struct BehaviorSettingsPane: View {
                     Text("When off, hold ⌃ Control or rest at the edge for 1.5 seconds.")
                 }
                 Toggle("When dragging files", isOn: $revealOnDragStart)
+                Toggle(isOn: $themeStore.showsEdgeTab) {
+                    Text("Edge reminder during long drags")
+                    Text("Appears after five seconds of dragging.")
+                }
             }
 
             Section {

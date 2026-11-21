@@ -110,6 +110,10 @@ enum PerchSettings {
     /// Once written, later launches preserve whatever the user chooses in Settings.
     static let edgeTabOffByDefaultMigrationCompleted =
         "Perch.EdgeTabOffByDefaultMigrationCompleted"
+    /// One-time migration shipped when the long-drag edge reminder left Labs and became
+    /// a stock feature, on by default.
+    static let edgeReminderOnByDefaultMigrationCompleted =
+        "Perch.EdgeReminderOnByDefaultMigrationCompleted"
     /// The menu bar icon: training wheels for summoning the shelf. Defaults on.
     static let showsMenuBarIcon = "Perch.ShowsMenuBarIcon"
     /// The newest version the updater has found, kept after the user declines it so the

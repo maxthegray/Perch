@@ -130,9 +130,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private var shakeToSummonEnabled: Bool {
         PerchSettings.labsFlag(PerchSettings.shakeToSummon)
     }
-    /// The long-drag edge reminder, a Labs feature.
+    /// The edge reminder shown during long drags. User-toggled; defaults on.
     private var showsEdgeReminder: Bool {
-        LabsAccess.isUnlocked && themeStore.showsEdgeTab
+        themeStore.showsEdgeTab
     }
     /// Whether a free-floating shelf stays put (as the empty drop tile) after its last
     /// item leaves, instead of dismissing itself. User-toggled; defaults on.

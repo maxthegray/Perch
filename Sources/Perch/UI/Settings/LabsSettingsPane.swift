@@ -40,7 +40,6 @@ struct ReturnToRegularPerchSection: View {
             Button("Turn Off and Delete", role: .destructive) {
                 Task {
                     guard await smartPerch.removeData() else { return }
-                    themeStore.showsEdgeTab = false
                     LabsAccess.lock()
                 }
             }
@@ -81,10 +80,6 @@ struct ShelfExperimentsSection: View {
             }
             .onChange(of: snapBesideDock) { _, enabled in
                 if enabled { DockGeometryReader.requestPermissionIfNeeded() }
-            }
-            Toggle(isOn: $themeStore.showsEdgeTab) {
-                Text("Edge reminder during long drags")
-                Text("Appears after five seconds of dragging.")
             }
             Toggle(isOn: $referenceDroppedFiles) {
                 Text("Leave dropped files where they are")

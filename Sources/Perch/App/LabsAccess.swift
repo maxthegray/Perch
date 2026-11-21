@@ -18,7 +18,6 @@ enum LabsAccess {
         PerchSettings.shakeToSummon,
         PerchSettings.moveOpenShelfBetweenEdges,
         PerchSettings.snapBesideDock,
-        PerchSettings.showsEdgeTab,
         PerchSettings.referenceDroppedFiles
     ]
 
