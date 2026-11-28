@@ -135,7 +135,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             choices: WelcomeChoices(
                 launchAtLogin: loginItem.isEnabled,
                 edges: controller.currentEnabledEdges,
-                revealOnHover: PerchSettings.flag(PerchSettings.revealOnHover, default: false),
+                revealOnHover: PerchSettings.flag(PerchSettings.revealOnHover, default: true),
                 showsMenuBarIcon: PerchSettings.flag(PerchSettings.showsMenuBarIcon, default: true),
                 showsLabels: controller.showsItemNames
             )

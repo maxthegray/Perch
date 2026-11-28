@@ -230,12 +230,55 @@ enum Diagnostics {
         }
     }
 
+    /// Every Perch setting this install has written, scalar values only. Dictionaries are
+    /// left out: they hold file paths (dismissed arrivals, reveal counts).
+    static func settingsSnapshot(defaults: UserDefaults = .standard) -> [String] {
+        defaults.dictionaryRepresentation()
+            .filter { $0.key.hasPrefix("Perch.") }
+            .compactMap { key, value -> String? in
+                let name = String(key.dropFirst("Perch.".count))
+                switch value {
+                case let number as NSNumber:
+                    return "\(name)=\(CFGetTypeID(number) == CFBooleanGetTypeID() ? String(number.boolValue) : number.stringValue)"
+                case let string as String:
+                    return "\(name)=\(string)"
+                case let strings as [String]:
+                    return "\(name)=\(strings.joined(separator: ","))"
+                default:
+                    return nil
+                }
+            }
+            .sorted()
+    }
+
+    /// The last lines Perch logged this run, failures or not.
+    static func recentLog(limit: Int = 50) -> [String] {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm:ss"
+        return PerchLog.recent.suffix(limit).map {
+            "\(formatter.string(from: $0.date))  \($0.message)"
+        }
+    }
+
+    /// The whole report as Troubleshoot copies it, for Report a Problem.
+    static func fullReport(clipboard: ClipboardCoordinator) -> String {
+        report(
+            checks: run(clipboard: clipboard),
+            errors: recentErrors(),
+            arrivals: recentArrivals(),
+            settings: settingsSnapshot(),
+            log: recentLog()
+        )
+    }
+
     // MARK: Report
 
     static func report(
         checks: [DiagnosticCheck],
         errors: [String],
-        arrivals: [String] = []
+        arrivals: [String] = [],
+        settings: [String] = [],
+        log: [String] = []
     ) -> String {
         let info = Bundle.main.infoDictionary
         let version = info?["CFBundleShortVersionString"] as? String ?? "?"
@@ -265,6 +308,12 @@ enum Diagnostics {
         lines.append("")
         lines.append("arrivals (\(arrivals.count))")
         lines += arrivals
+        lines.append("")
+        lines.append("settings (\(settings.count))")
+        lines += settings
+        lines.append("")
+        lines.append("recent log (\(log.count))")
+        lines += log
         return lines.joined(separator: "\n")
     }
 

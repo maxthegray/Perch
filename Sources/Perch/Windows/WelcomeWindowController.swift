@@ -24,7 +24,7 @@ final class WelcomeChoices: ObservableObject {
     init(
         launchAtLogin: Bool = true,
         edges: Set<ShelfEdge> = [.left, .right],
-        revealOnHover: Bool = false,
+        revealOnHover: Bool = true,
         showsMenuBarIcon: Bool = true,
         showsLabels: Bool = false
     ) {

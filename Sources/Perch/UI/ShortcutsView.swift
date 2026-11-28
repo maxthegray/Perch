@@ -54,7 +54,7 @@ enum GestureShortcuts {
 struct CurrentShortcuts: DynamicProperty {
     @AppStorage(PerchSettings.showsGrabHandle) private var showsGrabHandle = false
     @AppStorage(PerchSettings.vendCopies) private var vendCopies = false
-    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = false
+    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
     @AppStorage(PerchSettings.shakeToSummon) private var shakeToSummon = false
     @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
     @AppStorage(PerchSettings.tripleClickToHide) private var tripleClickToHide = false

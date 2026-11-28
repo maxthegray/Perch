@@ -34,6 +34,7 @@ final class SettingsWindowController {
     /// Shelf preview can be cleared away with it.
     var onWindowClosed: (() -> Void)?
     var onShowWelcome: (() -> Void)?
+    var onReportProblem: (() -> Void)?
     private var closeObserver: NSObjectProtocol?
 
     init(
@@ -71,6 +72,7 @@ final class SettingsWindowController {
                 clipboard: clipboard,
                 onRevealLabs: { [weak self] in self?.revealLabs() },
                 onShowWelcome: { [weak self] in self?.onShowWelcome?() },
+                onReportProblem: { [weak self] in self?.onReportProblem?() },
                 troubleshooting: troubleshooting
             )
         )

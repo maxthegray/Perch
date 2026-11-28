@@ -9,6 +9,7 @@ struct GeneralSettingsPane: View {
     /// Unlocks Labs and brings its tab forward.
     let onRevealLabs: () -> Void
     let onShowWelcome: () -> Void
+    let onReportProblem: () -> Void
     @ObservedObject var troubleshooting: TroubleshootingPresentation
     @State private var launchAtLogin = false
     @AppStorage(PerchSettings.showsMenuBarIcon) private var showsMenuBarIcon = true
@@ -47,7 +48,7 @@ struct GeneralSettingsPane: View {
         }
         .formStyle(.grouped)
         .sheet(isPresented: $troubleshooting.isPresented) {
-            TroubleshootingView(clipboard: clipboard)
+            TroubleshootingView(clipboard: clipboard, onReportProblem: onReportProblem)
         }
     }
 

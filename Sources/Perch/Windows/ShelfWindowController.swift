@@ -51,6 +51,31 @@ final class ShelfWindowController {
     /// When true, hide scales about the card's center (the cursor-summoned shelf's pop).
     var usesFreeAnimation = false
 
+    /// How visible a peeking shelf is: there to be seen, plainly not yet in the way.
+    static let peekOpacity: CGFloat = 0.4
+    /// A hover peek: drawn faded and transparent to the pointer, so a pass along the edge
+    /// never takes a click from the app underneath. Faded through the content view, so
+    /// the window's own reveal and hide fades run unchanged on top of it.
+    private(set) var isPeeking = false
+
+    func setPeeking(_ peeking: Bool) {
+        guard peeking != isPeeking else { return }
+        isPeeking = peeking
+        applyMouseEventPolicy()
+        guard let content = panel.contentView else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = peeking ? 0.12 : 0.16
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            content.animator().alphaValue = peeking ? Self.peekOpacity : 1
+        }
+    }
+
+    /// A reveal that is not a peek must never inherit a faded content view from a peek
+    /// whose hide was superseded before it could reset it.
+    private func syncPeekOpacity() {
+        panel.contentView?.alphaValue = isPeeking ? Self.peekOpacity : 1
+    }
+
     /// Where the panel is in its reveal/hide cycle, which is what decides whether it may
     /// take mouse events. Every transition below sets it, and the same generation guards
     /// that protect the animations protect this: a superseded fade's completion is
@@ -81,7 +106,7 @@ final class ShelfWindowController {
         panel.ignoresMouseEvents = !ShelfMouseEventPolicy.panelAcceptsMouseEvents(
             phase: phase,
             dragActive: dragSessionActive
-        )
+        ) || (isPeeking && !dragSessionActive)
     }
 
     func reveal(animated: Bool) {
@@ -101,6 +126,7 @@ final class ShelfWindowController {
         visibilityGeneration &+= 1
         panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
         panel.alphaValue = 1
+        syncPeekOpacity()
         panel.orderFrontRegardless()
         phase = .revealed
         healContentViewShear()
@@ -115,6 +141,7 @@ final class ShelfWindowController {
         revealedFrame = targetFrame
         panel.setFrame(targetFrame, display: false)
         panel.contentView?.layer?.removeAnimation(forKey: Self.transformKey)
+        syncPeekOpacity()
 
         guard animated else {
             activeRevealGeneration = nil
@@ -164,6 +191,8 @@ final class ShelfWindowController {
         usesFreeAnimation = true
         revealedFrame = targetFrame
         panel.setFrame(targetFrame, display: false)
+        isPeeking = false
+        syncPeekOpacity()
 
         guard animated, let layer = panel.contentView?.layer else {
             activeRevealGeneration = nil
@@ -310,9 +339,12 @@ final class ShelfWindowController {
         // out, and for the whole 0.18s fade it would otherwise keep them from the app
         // that is being revealed underneath it.
         phase = animated ? .hiding : .hidden
+        // A faded peek fades out from where it is; the content view is reset once gone.
+        isPeeking = false
         guard animated, let layer = panel.contentView?.layer else {
             panel.orderOut(nil)
             panel.alphaValue = 1
+            syncPeekOpacity()
             return
         }
 
@@ -346,6 +378,7 @@ final class ShelfWindowController {
                 guard let self, generation == self.visibilityGeneration else { return }
                 self.panel.orderOut(nil)
                 self.panel.alphaValue = 1
+                self.syncPeekOpacity()
                 self.phase = .hidden
                 self.panel.contentView?.layer?.removeAnimation(forKey: transformKey)
             }

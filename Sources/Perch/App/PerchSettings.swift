@@ -46,6 +46,9 @@ enum PerchSettings {
     /// Reveal the shelf when the pointer rests at an enabled edge. Defaults off, which
     /// leaves the edges inert until a drag.
     static let revealOnHover = "Perch.RevealOnHover"
+    /// With hover reveal on, the shelf first appears faded and click-through, and turns
+    /// solid once the pointer rests on it. Defaults on.
+    static let peekOnHover = "Perch.PeekOnHover"
     /// Shaking the cursor summons a free-floating shelf at the pointer. Defaults off.
     static let shakeToSummon = "Perch.ShakeToSummon"
     /// A free-floating shelf stays put (as the empty drop tile) after its last item

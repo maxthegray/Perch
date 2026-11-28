@@ -156,6 +156,7 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     var onShowShortcuts: (() -> Void)?
     var onShowTroubleshooting: (() -> Void)?
     var onShowWelcome: (() -> Void)?
+    var onReportProblem: (() -> Void)?
     /// Triple-click anywhere on the card: put the shelf away.
     var onTripleClick: (() -> Void)?
     /// The second click of what may become a triple-click.
@@ -1791,6 +1792,13 @@ final class ShelfHostView: NSView, NSMenuDelegate {
             help.addItem(withTitle: title, action: action, keyEquivalent: "").target = self
         }
         menu.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
+        if ReportProblemWindowController.isAvailable {
+            menu.addItem(
+                withTitle: "Report a Problem",
+                action: #selector(reportProblemAction(_:)),
+                keyEquivalent: ""
+            ).target = self
+        }
 
         let restart = NSMenuItem(
             title: "Restart Perch",
@@ -1972,6 +1980,10 @@ final class ShelfHostView: NSView, NSMenuDelegate {
 
     @objc private func showWelcomeAction(_ sender: NSMenuItem) {
         onShowWelcome?()
+    }
+
+    @objc private func reportProblemAction(_ sender: NSMenuItem) {
+        onReportProblem?()
     }
 
     @objc private func closeFreeShelfAction(_ sender: NSMenuItem) {

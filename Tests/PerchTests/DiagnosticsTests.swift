@@ -47,6 +47,38 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertEqual(Diagnostics.age(of: now.addingTimeInterval(5), now: now), "in 5s")
     }
 
+    func testSettingsSnapshotKeepsScalarsAndDropsPathDictionaries() {
+        let suite = "PerchTests.Diagnostics.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { UserDefaults().removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "Perch.RevealOnHover")
+        defaults.set(2, forKey: "Perch.SizePreset")
+        defaults.set(["left", "right"], forKey: "Perch.EnabledEdges")
+        defaults.set(["/Users/x/Downloads/a.png": Date()], forKey: "Perch.ArrivalDismissed")
+
+        let snapshot = Diagnostics.settingsSnapshot(defaults: defaults)
+
+        XCTAssertTrue(snapshot.contains("RevealOnHover=true"))
+        XCTAssertTrue(snapshot.contains("SizePreset=2"))
+        XCTAssertTrue(snapshot.contains("EnabledEdges=left,right"))
+        XCTAssertFalse(snapshot.contains { $0.hasPrefix("ArrivalDismissed") })
+    }
+
+    func testFormRequestEncodesEveryAnswer() throws {
+        let form = ProblemReportForm(
+            formID: "FORM",
+            whatHappenedEntry: "entry.1",
+            reportEntry: "entry.2",
+            versionEntry: "entry.3"
+        )
+        let request = form.request(whatHappened: "it broke & stuff", report: "ok  a=b", version: "1.0")
+        let body = try XCTUnwrap(request.httpBody.flatMap { String(data: $0, encoding: .utf8) })
+
+        XCTAssertEqual(request.url?.absoluteString, "https://docs.google.com/forms/d/e/FORM/formResponse")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(body, "entry.1=it%20broke%20%26%20stuff&entry.2=ok%20%20a%3Db&entry.3=1.0")
+    }
+
     func testArrivalTraceStaysOutOfTheErrorLog() {
         let marker = UUID().uuidString
         PerchLog.arrivals.record("desktop  not revealed, shelf is on the strip \(marker)")

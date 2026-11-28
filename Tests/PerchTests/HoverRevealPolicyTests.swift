@@ -11,6 +11,13 @@ final class HoverRevealPolicyTests: XCTestCase {
         )
     }
 
+    func testOnlyAPlainHoverPeeks() {
+        XCTAssertTrue(HoverRevealPolicy.peeks(peekEnabled: true, revealOnHoverEnabled: true, deliberate: false))
+        XCTAssertFalse(HoverRevealPolicy.peeks(peekEnabled: true, revealOnHoverEnabled: true, deliberate: true))
+        XCTAssertFalse(HoverRevealPolicy.peeks(peekEnabled: true, revealOnHoverEnabled: false, deliberate: false))
+        XCTAssertFalse(HoverRevealPolicy.peeks(peekEnabled: false, revealOnHoverEnabled: true, deliberate: false))
+    }
+
     func testAFreeFloatingShelfHasNoEdgeToHover() {
         XCTAssertFalse(
             HoverRevealPolicy.armsReveal(revealOnHoverEnabled: true, usesEdgeDock: false)

@@ -4,7 +4,8 @@ import SwiftUI
 struct BehaviorSettingsPane: View {
     @ObservedObject var themeStore: ThemeStore
 
-    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = false
+    @AppStorage(PerchSettings.revealOnHover) private var revealOnHover = true
+    @AppStorage(PerchSettings.peekOnHover) private var peekOnHover = true
     @AppStorage(PerchSettings.revealOnDragStart) private var revealOnDragStart = true
     @AppStorage(PerchSettings.shelveOnEdgeTouch) private var shelveOnEdgeTouch = true
     @AppStorage(PerchSettings.keepEmptyShelf) private var keepEmptyShelf = true
@@ -16,6 +17,11 @@ struct BehaviorSettingsPane: View {
                     Text("When the pointer touches an edge")
                     Text("When off, hold ⌃ Control or rest at the edge for 1.5 seconds.")
                 }
+                Toggle(isOn: $peekOnHover) {
+                    Text("Fade in first")
+                    Text("Clicks pass through until the pointer rests on the shelf.")
+                }
+                .disabled(!revealOnHover)
                 Toggle("When dragging files", isOn: $revealOnDragStart)
                 Toggle(isOn: $themeStore.showsEdgeTab) {
                     Text("Edge reminder during long drags")

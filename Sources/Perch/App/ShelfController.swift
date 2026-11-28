@@ -18,6 +18,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private let mergePDFWindow: MergePDFWindowController
     private let splitPDFWindow: SplitPDFWindowController
     private let shortcutsWindow = ShortcutsWindowController()
+    private let reportProblemWindow: ReportProblemWindowController
     private let menuBarIcon = MenuBarIconController()
     /// Shown from the menu bar icon: the shelf stays out until something has been
     /// dragged in and back out again, or it's triple-clicked away.
@@ -79,6 +80,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     /// Set once the pointer has rested at the edge for `restRevealDelay`; cleared when it
     /// leaves the edge.
     private var restRevealGranted = false
+    /// Turns a peeking shelf solid once the pointer has rested on it.
+    private var peekWatch: Task<Void, Never>?
+    private var peekOnHover: Bool {
+        PerchSettings.flag(PerchSettings.peekOnHover, default: true)
+    }
     private var retractTask: Task<Void, Never>?
     private var pointerInRegion = false
     /// Holds late hover/measurement callbacks off while a free shelf is fading away;
@@ -118,9 +124,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         PerchSettings.flag(PerchSettings.revealOnDragStart, default: true)
     }
     /// Whether resting the pointer at an enabled edge reveals the shelf at all.
-    /// User-toggled; defaults off.
+    /// User-toggled; defaults on, as a click-through peek (`peekOnHover`).
     private var revealOnHover: Bool {
-        PerchSettings.flag(PerchSettings.revealOnHover, default: false)
+        PerchSettings.flag(PerchSettings.revealOnHover, default: true)
     }
     /// Hover reveal for this hover: the setting, or Control held to ask for it anyway.
     private var hoverRevealRequested: Bool {
@@ -286,6 +292,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             themeStore: themeStore
         )
         clipboard = ClipboardCoordinator(databaseURL: holding.clipboardHistoryFile)
+        reportProblemWindow = ReportProblemWindowController(clipboard: clipboard)
         settingsWindow = SettingsWindowController(
             themeStore: themeStore,
             edgeSettings: edgeSettings,
@@ -475,6 +482,15 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         hostView.onShowWelcome = { [weak self] in
             self?.onShowWelcome?()
+        }
+        hostView.onReportProblem = { [weak self] in
+            self?.reportProblemWindow.show()
+        }
+        menuBarIcon.onReportProblem = { [weak self] in
+            self?.reportProblemWindow.show()
+        }
+        settingsWindow.onReportProblem = { [weak self] in
+            self?.reportProblemWindow.show()
         }
         settingsWindow.onShowWelcome = { [weak self] in
             self?.onShowWelcome?()
@@ -3211,8 +3227,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         cancelOpen()
         // A quick Control tap arms the reveal; it need not still be held when the dwell ends.
         let controlHeldAtArm = NSEvent.modifierFlags.contains(.control)
+        let peeks = !panel.isVisible && HoverRevealPolicy.peeks(
+            peekEnabled: peekOnHover,
+            revealOnHoverEnabled: revealOnHover,
+            deliberate: controlHeldAtArm || restRevealGranted
+        )
+        // Never peek over a pointer that is busy: a held button is a scrollbar drag or a
+        // text selection running along the edge, not a reach for the shelf.
+        if peeks, NSEvent.pressedMouseButtons != 0 { return }
         openTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .milliseconds(180))
+            try? await Task.sleep(
+                for: peeks ? HoverRevealPolicy.peekRevealDwell : HoverRevealPolicy.solidRevealDwell
+            )
             guard let self, !Task.isCancelled else { return }
             // The pointer has to have *stayed* at the edge. Nothing used to re-check this,
             // so brushing past on the way somewhere else was enough to drop a card under
@@ -3232,11 +3258,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 self.revealProvenance = .unusedHover
             }
             self.pointerInRegion = true
+            let peeking = peeks && !self.panel.isVisible && NSEvent.pressedMouseButtons == 0
+            if peeking {
+                self.windowController.setPeeking(true)
+            }
             // Going back for a ghost with hover reveal off is the user fetching an offer,
             // not the shelf offering it again — it must not spend the ghost's reveals.
             self.revealIfNeeded(
                 spendingArrivalOffers: controlHeldAtArm || self.hoverRevealRequested
             )
+            if peeking {
+                self.startPeekWatch()
+            }
             self.openTask = nil
         }
     }
@@ -3494,6 +3527,37 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
     private func cancelOpen() {
         openTask?.cancel()
         openTask = nil
+    }
+
+    /// While the shelf peeks, solidify it once the pointer has rested on the card for
+    /// `peekCommitDelay`, or at once for a drag or a held Control. Leaving needs nothing
+    /// here: the retract watcher reads the real cursor, which a click-through window
+    /// does not change, and takes back an unused hover reveal as usual.
+    private func startPeekWatch() {
+        peekWatch?.cancel()
+        peekWatch = Task { @MainActor [weak self] in
+            let clock = ContinuousClock()
+            var restingSince: ContinuousClock.Instant?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(30))
+                guard let self, !Task.isCancelled,
+                      self.panel.isVisible, self.windowController.isPeeking else { return }
+                if self.dragActive || NSEvent.modifierFlags.contains(.control) {
+                    self.windowController.setPeeking(false)
+                    return
+                }
+                guard self.panel.frame.contains(NSEvent.mouseLocation) else {
+                    restingSince = nil
+                    continue
+                }
+                let start = restingSince ?? clock.now
+                restingSince = start
+                if clock.now - start >= HoverRevealPolicy.peekCommitDelay {
+                    self.windowController.setPeeking(false)
+                    return
+                }
+            }
+        }
     }
 
     private func cancelRetract() {

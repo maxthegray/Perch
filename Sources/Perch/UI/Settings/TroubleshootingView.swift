@@ -11,6 +11,7 @@ final class TroubleshootingPresentation: ObservableObject {
 /// recent failure log, and the same text copyable as a report.
 struct TroubleshootingView: View {
     @ObservedObject var clipboard: ClipboardCoordinator
+    var onReportProblem: (() -> Void)?
     @Environment(\.dismiss) private var dismiss
 
     @State private var checks: [DiagnosticCheck] = []
@@ -75,6 +76,12 @@ struct TroubleshootingView: View {
 
             HStack {
                 Button(copied ? "Copied" : "Copy", action: copyReport)
+                if let onReportProblem, ReportProblemWindowController.isAvailable {
+                    Button("Report a Problem") {
+                        dismiss()
+                        onReportProblem()
+                    }
+                }
                 Button("Rerun", action: refresh)
                 Spacer()
                 Button("Done") { dismiss() }
@@ -111,7 +118,7 @@ struct TroubleshootingView: View {
     private func copyReport() {
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
-        pasteboard.setString(Diagnostics.report(checks: checks, errors: errors, arrivals: arrivals), forType: .string)
+        pasteboard.setString(Diagnostics.fullReport(clipboard: clipboard), forType: .string)
         copied = true
     }
 }

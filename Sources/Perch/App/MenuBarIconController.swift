@@ -13,6 +13,7 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
     var onShowSettings: (() -> Void)?
     var onShowShortcuts: (() -> Void)?
     var onShowTroubleshooting: (() -> Void)?
+    var onReportProblem: (() -> Void)?
     var onShowWelcome: (() -> Void)?
 
     private var statusItem: NSStatusItem?
@@ -96,6 +97,11 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
             .target = self
         help.addItem(withTitle: "Run Setup Again", action: #selector(showWelcome), keyEquivalent: "")
             .target = self
+        if ReportProblemWindowController.isAvailable {
+            help.addItem(.separator())
+            help.addItem(withTitle: "Report a Problem", action: #selector(reportProblem), keyEquivalent: "")
+                .target = self
+        }
         menu.addItem(withTitle: "Help", action: nil, keyEquivalent: "").submenu = help
         menu.addItem(.separator())
         menu.addItem(withTitle: "Hide Menu Bar Icon", action: #selector(hideIcon), keyEquivalent: "")
@@ -117,6 +123,7 @@ final class MenuBarIconController: NSObject, NSWindowDelegate, NSDraggingDestina
 
     @objc private func showShortcuts() { onShowShortcuts?() }
     @objc private func showTroubleshooting() { onShowTroubleshooting?() }
+    @objc private func reportProblem() { onReportProblem?() }
     @objc private func showSettings() { onShowSettings?() }
     @objc private func showWelcome() { onShowWelcome?() }
     @objc private func quit() { NSApp.terminate(nil) }
