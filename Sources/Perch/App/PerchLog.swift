@@ -36,6 +36,13 @@ enum PerchLog {
     /// What the recent-arrivals watcher saw and decided, kept apart so a burst of
     /// Downloads churn never evicts the failures in `main`.
     static let arrivals = LogRing(capacity: 40)
+    /// What the user did: the shelf showing and hiding and why, drops, drag-outs,
+    /// settings changes. Never file names or contents.
+    static let actions = LogRing(capacity: 40)
+
+    static func action(_ message: String) {
+        actions.record(message)
+    }
 
     static func record(_ message: String) {
         main.record(message)

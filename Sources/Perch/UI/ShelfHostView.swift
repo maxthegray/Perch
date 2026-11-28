@@ -1013,6 +1013,13 @@ final class ShelfHostView: NSView, NSMenuDelegate {
                 at: screenPoint,
                 occurredAt: occurredAt
             )
+            PerchLog.action(Self.dragOutAction(
+                count: items.count,
+                operation: operation,
+                isMove: isMove,
+                returnedToPerch: returnedToPerch,
+                destination: Self.appOwningWindow(at: screenPoint)
+            ))
             if returnedToPerch || operation.isEmpty {
                 // A canceled drag or a drop back onto Perch restores the original rows,
                 // exactly as they were. For cancellation, endedAt fires after AppKit's
@@ -1064,6 +1071,39 @@ final class ShelfHostView: NSView, NSMenuDelegate {
     /// The Dock's Trash moves the vended file URL itself, but that is only the first file
     /// of each item. Trash whatever is still in the holding directory so a multi-file
     /// item stays recoverable rather than being deleted with its directory.
+    static func dragOutAction(
+        count: Int,
+        operation: NSDragOperation,
+        isMove: Bool,
+        returnedToPerch: Bool,
+        destination: String? = nil
+    ) -> String {
+        if returnedToPerch { return "drag out of \(count) item(s) returned to shelf" }
+        if operation.isEmpty { return "drag out of \(count) item(s) canceled" }
+        if operation.contains(.delete) { return "dragged \(count) item(s) to the Trash" }
+        return "dragged out \(count) item(s) (\(isMove ? "move" : "copy"))"
+            + (destination.map { " to \($0)" } ?? "")
+    }
+
+    /// The app whose window is under a drop point. Owner names need no screen recording
+    /// permission, unlike window titles.
+    private static func appOwningWindow(at point: NSPoint) -> String? {
+        guard let primary = NSScreen.screens.first,
+              let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID)
+                as? [[String: Any]] else { return nil }
+        let flipped = CGPoint(x: point.x, y: primary.frame.maxY - point.y)
+        let ownPID = Int(ProcessInfo.processInfo.processIdentifier)
+        for window in windows {
+            guard (window[kCGWindowLayer as String] as? Int) == 0,
+                  (window[kCGWindowOwnerPID as String] as? Int) != ownPID,
+                  let bounds = window[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds),
+                  rect.contains(flipped) else { continue }
+            return window[kCGWindowOwnerName as String] as? String
+        }
+        return "Desktop"
+    }
+
     private static func moveOwnedFilesToTrash(_ items: [StoredItem]) {
         for item in items where ItemDragSource.canTrash(item) {
             for url in item.backingFileURLs()

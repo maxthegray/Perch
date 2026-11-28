@@ -2,6 +2,7 @@ import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var controller: ShelfController?
+    private var settingsChangeLog: SettingsChangeLog?
     private var welcome: WelcomeWindowController?
     private var whatsNew: WhatsNewWindowController?
 
@@ -14,6 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SmartPerchDataRemoval.completeIfPending()
         LegacySmartPerchMigration.run()
         EdgeTabPreferenceMigration.run()
+        settingsChangeLog = SettingsChangeLog()
         do {
             let controller = try ShelfController()
             self.controller = controller

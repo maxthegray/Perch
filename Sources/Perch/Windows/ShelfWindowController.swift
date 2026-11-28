@@ -61,6 +61,9 @@ final class ShelfWindowController {
     func setPeeking(_ peeking: Bool) {
         guard peeking != isPeeking else { return }
         isPeeking = peeking
+        if !peeking, panel.isVisible {
+            PerchLog.action("shelf turned solid")
+        }
         applyMouseEventPolicy()
         guard let content = panel.contentView else { return }
         NSAnimationContext.runAnimationGroup { context in
@@ -331,7 +334,11 @@ final class ShelfWindowController {
         panel.contentView?.layer?.removeAnimation(forKey: Self.shelvingPulseKey)
     }
 
-    func hide(animated: Bool, slidingToEdge: Bool = false) {
+    func hide(animated: Bool, slidingToEdge: Bool = false, reason: String? = nil) {
+        if panel.isVisible, phase != .hiding {
+            let why = reason ?? (slidingToEdge ? "tucked into edge" : nil)
+            PerchLog.action("shelf hidden" + (why.map { " (\($0))" } ?? ""))
+        }
         visibilityGeneration &+= 1
         activeRevealGeneration = nil
         let generation = visibilityGeneration

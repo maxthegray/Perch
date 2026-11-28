@@ -22,7 +22,8 @@ final class DiagnosticsTests: XCTestCase {
         let report = Diagnostics.report(
             checks: checks,
             errors: ["12:00:00  boom"],
-            arrivals: ["12:00:01  desktop  revealed"]
+            arrivals: ["12:00:01  desktop  revealed"],
+            actions: ["12:00:02  shelf turned solid"]
         )
 
         XCTAssertTrue(report.contains("FAIL  Desktop folder"))
@@ -30,6 +31,7 @@ final class DiagnosticsTests: XCTestCase {
         XCTAssertTrue(report.contains("ok    Launch at login"))
         XCTAssertTrue(report.contains("12:00:00  boom"))
         XCTAssertTrue(report.contains("arrivals (1)\n12:00:01  desktop  revealed"))
+        XCTAssertTrue(report.contains("actions (1)\n12:00:02  shelf turned solid"))
     }
 
     func testLogKeepsOnlyTheNewestEntries() {
@@ -85,5 +87,31 @@ final class DiagnosticsTests: XCTestCase {
 
         XCTAssertTrue(Diagnostics.recentArrivals().contains { $0.contains(marker) })
         XCTAssertFalse(PerchLog.recent.contains { $0.message.contains(marker) })
+    }
+
+    func testSettingsChangesNameOnlyWhatTheUserChanged() {
+        let old = SettingsChangeLog.values(["RevealOnHover=true", "ShelfMoveCount=1", "SizePreset=2"])
+        let new = SettingsChangeLog.values(["RevealOnHover=false", "ShelfMoveCount=2", "PeekOnHover=true"])
+
+        XCTAssertEqual(SettingsChangeLog.changes(from: old, to: new), [
+            "setting changed: PeekOnHover=true",
+            "setting changed: RevealOnHover=false",
+            "setting changed: SizePreset=(cleared)"
+        ])
+    }
+
+    func testDragOutActionsReadPlainly() {
+        XCTAssertEqual(
+            ShelfHostView.dragOutAction(count: 2, operation: .copy, isMove: true, returnedToPerch: false, destination: "Finder"),
+            "dragged out 2 item(s) (move) to Finder"
+        )
+        XCTAssertEqual(
+            ShelfHostView.dragOutAction(count: 1, operation: .delete, isMove: true, returnedToPerch: false),
+            "dragged 1 item(s) to the Trash"
+        )
+        XCTAssertEqual(
+            ShelfHostView.dragOutAction(count: 1, operation: [], isMove: false, returnedToPerch: false),
+            "drag out of 1 item(s) canceled"
+        )
     }
 }

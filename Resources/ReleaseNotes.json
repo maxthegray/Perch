@@ -2,6 +2,16 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch, since a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
+      "version": "1.12.1",
+      "highlights": [
+        {
+          "symbol": "list.bullet.clipboard",
+          "title": "Better problem reports",
+          "detail": "Reports now include a short list of what you did right before the problem, like the shelf opening or a drag out. File names and contents are never included."
+        }
+      ]
+    },
+    {
       "version": "1.12.0",
       "showsWhatsNew": true,
       "highlights": [

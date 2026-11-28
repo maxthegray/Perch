@@ -381,12 +381,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 guard !self.keepsEmptyFreeShelf else { return false }
                 self.dismissFreeShelf()
             } else {
-                self.hideShelf(animated: true)
+                self.hideShelf(animated: true, reason: "last item removed")
             }
             return true
         }
         hostView.onVendPrehideNeedsRecovery = { [weak self] in
-            self?.revealIfNeeded()
+            self?.revealIfNeeded(reason: "recovered after drag")
         }
 
         // Dragging the card with the configured gesture (handle or Control-drag) moves
@@ -532,15 +532,18 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
 
         // Recent downloads can be adopted individually or as one temporal session.
         hostView.onAdoptArrival = { [weak self] offer, session, copying in
-            self?.adoptArrival(offer, from: session, copying: copying)
+            PerchLog.action(copying ? "copied a new file onto shelf" : "added a new file to shelf")
+            return self?.adoptArrival(offer, from: session, copying: copying)
         }
         hostView.onAdoptArrivalSession = { [weak self] session, copying in
-            self?.adoptArrivalSession(session, copying: copying) ?? []
+            PerchLog.action("\(copying ? "copied" : "added") \(session.offers.count) new files to shelf")
+            return self?.adoptArrivalSession(session, copying: copying) ?? []
         }
         hostView.onExpandArrivalSession = { [weak self] session in
             self?.expandArrivalSession(session)
         }
         hostView.onDismissArrival = { [weak self] ghost in
+            PerchLog.action("dismissed a new file")
             self?.dismissArrival(ghost)
         }
 
@@ -901,6 +904,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 return trace("not revealed, no enabled edge")
             }
             self.scheduleArrivalAutoHide()
+            PerchLog.action("shelf shown (new file arrived, \(self.shownEdge))")
             trace("revealed")
         }
     }
@@ -936,7 +940,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 PerchLog.arrivals.record("preview kept open")
                 return
             }
-            self.hideShelf(animated: true)
+            self.hideShelf(animated: true, reason: "new file preview timed out")
             PerchLog.arrivals.record("preview hid after 5s")
         }
     }
@@ -1823,7 +1827,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 preferredEdge = nearest.edge
             }
         }
-        revealIfNeeded()
+        revealIfNeeded(reason: "drag started")
     }
 
     /// Move a mouse-directed shelf to the nearest enabled dock. Comparing against the
@@ -1888,7 +1892,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
         hostView.resetInteraction()
-        windowController.hide(animated: true)
+        windowController.hide(animated: true, reason: "drag ended")
     }
 
     // MARK: Cursor summon (free-floating shelf)
@@ -1941,6 +1945,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             windowController.resize(to: frame)
         } else {
             windowController.revealFromCursor(animated: true, targetFrame: frame)
+            PerchLog.action("shelf shown (at pointer)")
         }
     }
 
@@ -2545,6 +2550,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             cancelOpen()
             cancelRetract()
             NSLog("Perch internal drag returned to shelf")
+            PerchLog.action("dragged items back onto shelf")
             return true
         }
 
@@ -2577,6 +2583,8 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             NSLog(
                 "Perch drop stored \(results.count) item(s); count \(beforeCount)->\(afterCount); files [\(backingFiles)]"
             )
+            PerchLog.action("dropped \(results.count) item(s) onto shelf"
+                + (sourceApplication.flatMap { $0.displayName ?? $0.bundleIdentifier }.map { " from \($0)" } ?? ""))
 
             for result in results {
                 let recordingContext = DropRecordingContext(
@@ -2986,7 +2994,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 preferredScreen = nil
                 shownScreen = nil
             }
-            hideShelf(animated: false)
+            hideShelf(animated: false, reason: screenGone ? "screen disconnected" : "edge turned off")
         }
         relocateStrandedFreeShelf()
         NSLog("Perch rebuilt edge tabs (\(NSScreen.screens.count) screen(s), edges \(edgeSettings.enabledEdges.map(\.rawValue).sorted()))")
@@ -3265,7 +3273,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // Going back for a ghost with hover reveal off is the user fetching an offer,
             // not the shelf offering it again — it must not spend the ghost's reveals.
             self.revealIfNeeded(
-                spendingArrivalOffers: controlHeldAtArm || self.hoverRevealRequested
+                spendingArrivalOffers: controlHeldAtArm || self.hoverRevealRequested,
+                reason: controlHeldAtArm ? "control"
+                    : self.restRevealGranted ? "rested at edge" : "hover"
             )
             if peeking {
                 self.startPeekWatch()
@@ -3340,7 +3350,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 }
                 self.hostView.resetInteraction()
                 self.cancelEdgeTransfer(resetWallExit: true)
-                self.windowController.hide(animated: true)
+                self.windowController.hide(animated: true, reason: "pointer left")
                 return
             }
         }
@@ -3397,11 +3407,11 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             // whatever opened it.
             markRevealUsed()
             cancelRetract()
-            revealIfNeeded()
+            revealIfNeeded(reason: "content arrived")
         }
     }
 
-    private func revealIfNeeded(spendingArrivalOffers: Bool = true) {
+    private func revealIfNeeded(spendingArrivalOffers: Bool = true, reason: String = "edge") {
         if !panel.isVisible {
             menuBarPinned = false
             dismissedUnderPointer = false
@@ -3419,6 +3429,9 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         }
         refreshArrivals(markRevealed: spendingArrivalOffers)
         revealAtPreferredEdge()
+        if panel.isVisible {
+            PerchLog.action("shelf shown (\(reason), \(shownEdge))" + (windowController.isPeeking ? " faded" : ""))
+        }
     }
 
     /// Reveal (or reposition) the panel at the current preferred screen + edge.
@@ -3586,7 +3599,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             }
             self.hostView.resetInteraction()
             self.cancelEdgeTransfer(resetWallExit: true)
-            self.windowController.hide(animated: true)
+            self.windowController.hide(animated: true, reason: "pointer left")
             self.retractTask = nil
         }
     }
@@ -3620,7 +3633,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
             return
         }
         markRevealUsed()
-        revealIfNeeded()
+        revealIfNeeded(reason: "menu bar")
         guard panel.isVisible else { return }
         menuBarPinned = true
         menuBarPinReceivedItem = false
@@ -3660,7 +3673,7 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
                 shelvedStrip = tuckTarget
             }
         } else {
-            hideShelf(animated: true)
+            hideShelf(animated: true, reason: "put away")
         }
     }
 
@@ -3692,12 +3705,12 @@ final class ShelfController: ShelfDropHandling, EdgeStripDelegate {
         )
     }
 
-    private func hideShelf(animated: Bool) {
+    private func hideShelf(animated: Bool, reason: String? = nil) {
         cancelEdgeTransfer(resetWallExit: true)
         cancelRetract()
         stopRetractWatcher()
         hostView.resetInteraction()
-        windowController.hide(animated: animated)
+        windowController.hide(animated: animated, reason: reason)
     }
 
     /// Wait for every asynchronous part of a stored item before recording it. This

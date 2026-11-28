@@ -223,9 +223,17 @@ enum Diagnostics {
 
     /// What the recent-arrivals watcher saw and decided this run, oldest first.
     static func recentArrivals() -> [String] {
+        timestamped(PerchLog.arrivals)
+    }
+
+    static func recentActions() -> [String] {
+        timestamped(PerchLog.actions)
+    }
+
+    private static func timestamped(_ ring: LogRing) -> [String] {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
-        return PerchLog.arrivals.recent.map {
+        return ring.recent.map {
             "\(formatter.string(from: $0.date))  \($0.message)"
         }
     }
@@ -266,6 +274,7 @@ enum Diagnostics {
             checks: run(clipboard: clipboard),
             errors: recentErrors(),
             arrivals: recentArrivals(),
+            actions: recentActions(),
             settings: settingsSnapshot(),
             log: recentLog()
         )
@@ -277,6 +286,7 @@ enum Diagnostics {
         checks: [DiagnosticCheck],
         errors: [String],
         arrivals: [String] = [],
+        actions: [String] = [],
         settings: [String] = [],
         log: [String] = []
     ) -> String {
@@ -308,6 +318,9 @@ enum Diagnostics {
         lines.append("")
         lines.append("arrivals (\(arrivals.count))")
         lines += arrivals
+        lines.append("")
+        lines.append("actions (\(actions.count))")
+        lines += actions
         lines.append("")
         lines.append("settings (\(settings.count))")
         lines += settings
