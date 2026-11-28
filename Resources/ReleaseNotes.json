@@ -2,6 +2,32 @@
   "comment": "The one source of truth for what changed in each release. Scripts/release.sh turns the matching entry into the appcast description Sparkle links to before installing, and into the GitHub release body. Newest first. A release with no entry here is refused by release.sh. By default an entry opens no window on launch, since a fix does not earn an interruption. Add \"showsWhatsNew\": true for a release notable enough to announce itself. The welcome window is only ever shown automatically to new installs.",
   "versions": [
     {
+      "version": "1.12.0",
+      "showsWhatsNew": true,
+      "highlights": [
+        {
+          "symbol": "cursorarrow.rays",
+          "title": "A shelf that stays out of the way",
+          "detail": "Touch the edge and the shelf fades in right away. Clicks pass through to the app underneath until you rest on it, then it's all yours."
+        },
+        {
+          "symbol": "plus.square.on.square",
+          "title": "Copy new files",
+          "detail": "Hold Option over a new download or screenshot to drag out a copy, or click to add a copy. The original stays put."
+        },
+        {
+          "symbol": "exclamationmark.bubble",
+          "title": "Report a Problem",
+          "detail": "Something off? Right-click the shelf and choose Report a Problem. Say what happened and send it, no email needed."
+        },
+        {
+          "symbol": "arrow.left.and.right",
+          "title": "Edge reminder for everyone",
+          "detail": "During a long drag, Perch now points out where the shelf is. Turn it off in Behavior if you don't need it."
+        }
+      ]
+    },
+    {
       "version": "1.11.0",
       "highlights": [
         {
