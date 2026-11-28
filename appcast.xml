@@ -2,25 +2,22 @@
 <rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
     <title>Perch</title>
-    <link>https://github.com/maxthegray/Perch/releases/download/v1.12.0/Perch.zip</link>
+    <link>https://github.com/maxthegray/Perch/releases/download/v1.12.1/Perch.zip</link>
     <description>Auto-update feed for Perch.</description>
     <language>en</language>
     <item>
-      <title>Version 1.12.0</title>
+      <title>Version 1.12.1</title>
       <description><![CDATA[
 <ul>
-  <li><b>A shelf that stays out of the way</b><br>Touch the edge and the shelf fades in right away. Clicks pass through to the app underneath until you rest on it, then it's all yours.</li>
-  <li><b>Copy new files</b><br>Hold Option over a new download or screenshot to drag out a copy, or click to add a copy. The original stays put.</li>
-  <li><b>Report a Problem</b><br>Something off? Right-click the shelf and choose Report a Problem. Say what happened and send it, no email needed.</li>
-  <li><b>Edge reminder for everyone</b><br>During a long drag, Perch now points out where the shelf is. Turn it off in Behavior if you don't need it.</li>
+  <li><b>Better problem reports</b><br>Reports now include a short list of what you did right before the problem, like the shelf opening or a drag out. File names and contents are never included.</li>
 </ul>
       ]]></description>
       <sparkle:fullReleaseNotesLink>https://github.com/maxthegray/Perch/releases</sparkle:fullReleaseNotesLink>
-      <pubDate>Sat, 28 Nov 2026 00:17:36 +0000</pubDate>
-      <sparkle:version>1120000</sparkle:version>
-      <sparkle:shortVersionString>1.12.0</sparkle:shortVersionString>
+      <pubDate>Sat, 28 Nov 2026 04:18:10 +0000</pubDate>
+      <sparkle:version>1120010</sparkle:version>
+      <sparkle:shortVersionString>1.12.1</sparkle:shortVersionString>
       <sparkle:minimumSystemVersion>14.0</sparkle:minimumSystemVersion>
-      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.12.0/Perch.zip" sparkle:edSignature="cc3HRA4S+Jkb1yS4Xw+raSmgooMbGvT/bZi7vJMC440WFOhWBFbO/l4L49uU5+8KSWvKPpN07taT3uOImn1XCg==" length="4611208" type="application/octet-stream" />
+      <enclosure url="https://github.com/maxthegray/Perch/releases/download/v1.12.1/Perch.zip" sparkle:edSignature="qCa7oWKWhhl8nh8Zn8yYW7NhXkaeVENjUpQ/9Ad07XC2f+OR6ZiccGfwHhPXgcCSdYzOX3fBX4a+n0GSpGfBBA==" length="4619603" type="application/octet-stream" />
     </item>
   </channel>
 </rss>
